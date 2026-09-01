@@ -1,0 +1,27 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius: .25rem;
+}
+:root { --background:#f2f0e9; --foreground:#19312e; --card:#fff; --card-foreground:#19312e; --popover:#fff; --popover-foreground:#19312e; --primary:#19312e; --primary-foreground:#fff; --secondary:#e8eee9; --secondary-foreground:#19312e; --muted:#f3f2ed; --muted-foreground:#78716c; --accent:#dff0e7; --accent-foreground:#1d5549; --destructive:#be4c45; --border:#e7e5e4; --input:#e7e5e4; --ring:#4d8a76; }
+@layer base { * { @apply border-border outline-ring/50; } body { @apply bg-background text-foreground; font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif; } button,select { cursor:pointer; } .font-serif { font-family:"Songti SC","STSong","Noto Serif CJK SC",serif; } }
