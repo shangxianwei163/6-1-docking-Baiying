@@ -25,3 +25,15 @@
 }
 :root { --background:#f2f0e9; --foreground:#19312e; --card:#fff; --card-foreground:#19312e; --popover:#fff; --popover-foreground:#19312e; --primary:#19312e; --primary-foreground:#fff; --secondary:#e8eee9; --secondary-foreground:#19312e; --muted:#f3f2ed; --muted-foreground:#78716c; --accent:#dff0e7; --accent-foreground:#1d5549; --destructive:#be4c45; --border:#e7e5e4; --input:#e7e5e4; --ring:#4d8a76; }
 @layer base { * { @apply border-border outline-ring/50; } body { @apply bg-background text-foreground; font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif; } button,select { cursor:pointer; } .font-serif { font-family:"Songti SC","STSong","Noto Serif CJK SC",serif; } }
+
+/* 产品信息架构：保留页面路由，按业务语义显示左侧八项菜单。 */
+aside nav > button:nth-child(1) span::after { content: '总览'; }
+aside nav > button:nth-child(2) span::after { content: '影楼管理'; }
+aside nav > button:nth-child(3) span::after { content: '呼叫任务'; }
+aside nav > button:nth-child(4) span::after { content: '字段映射'; }
+aside nav > button:nth-child(5) span::after { content: '百应账单'; }
+aside nav > button:nth-child(6) span::after { content: '门店账单'; }
+aside nav > button:nth-child(7) span::after { content: '充值记录'; }
+aside nav > button:nth-child(8) span::after { content: '操作日志'; }
+aside nav > button span { font-size: 0; }
+aside nav > button span::after { font-size: 12px; }
