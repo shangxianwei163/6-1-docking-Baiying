@@ -34,6 +34,7 @@ aside nav > button:nth-child(4) span::after { content: '字段映射'; }
 aside nav > button:nth-child(5) span::after { content: '百应账单'; }
 aside nav > button:nth-child(6) span::after { content: '门店账单'; }
 aside nav > button:nth-child(7) span::after { content: '充值记录'; }
-aside nav > button:nth-child(8) span::after { content: '操作日志'; }
+aside nav > button:nth-child(8) span::after { content: '话费设置'; }
+aside nav > button:nth-child(9) span::after { content: '操作日志'; }
 aside nav > button span { font-size: 0; }
 aside nav > button span::after { font-size: 12px; }

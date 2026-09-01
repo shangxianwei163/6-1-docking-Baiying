@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
 type Tab = '总览'|'任务编排'|'单通与留存'|'账户与计费'|'供应商对账'|'事件与审计'|'客户与资源';
-const tabs: [Tab, typeof Gauge, string?][] = [['总览',Gauge],['客户与资源',Settings2],['任务编排',PhoneCall],['单通与留存',AudioLines],['供应商对账',ReceiptText],['账户与计费',CircleDollarSign],['账户与计费',WalletCards],['事件与审计',BellRing]];
+const tabs: [Tab, typeof Gauge, string?][] = [['总览',Gauge],['客户与资源',Settings2],['任务编排',PhoneCall],['单通与留存',AudioLines],['供应商对账',ReceiptText],['账户与计费',CircleDollarSign],['账户与计费',WalletCards],['账户与计费',CircleDollarSign],['事件与审计',BellRing]];
 const tasks=[['PT-20260831-00024','婚博会意向客户回访','紫藤影像 · 上海总店','ERP','6,104 / 10,000','运行中','61%'],['PT-20260831-00023','秋季档期二次触达','远山摄影 · 杭州店','CRM','1,238 / 3,600','运行中','34%'],['PT-20260831-00022','到店未成交激活','罗曼映像 · 南京店','ERP','0 / 7,200','等待容量','0%'],['PT-20260831-00021','老客周年礼遇','晨光摄影 · 苏州园区店','CRM','0 / 2,800','余额不足暂停','0%'],['PT-20260831-00020','七夕咨询回访','纪念日影像 · 无锡店','ERP','0 / 1,200','准备就绪','0%']];
 const badge=(s:string)=>s==='运行中'?'bg-sky-50 text-sky-700 border-sky-200':s==='准备就绪'?'bg-emerald-50 text-emerald-700 border-emerald-200':s==='等待容量'?'bg-amber-50 text-amber-700 border-amber-200':'bg-rose-50 text-rose-700 border-rose-200';
 function Card({title,children}:{title:string;children:React.ReactNode}){return <section className="border border-[#d8dfda] bg-white shadow-[0_14px_30px_-28px_#16302c]"><header className="border-b border-[#edf0ed] px-5 py-3.5 font-serif text-lg text-[#19312e]">{title}</header>{children}</section>}
