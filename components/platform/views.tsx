@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { ArrowRight, Check, ChevronRight, Download, Filter, Pause, Play, RefreshCcw, Search, Upload } from 'lucide-react';
 import { Metric, PageIntro, Panel, Status } from './shared';
 
@@ -22,8 +22,120 @@ export function OverviewView() {
   return <><PageIntro eyebrow="OPERATIONS OVERVIEW" title="总览" summary="聚焦今天需要处理的外呼、余额与异常。业务任务由 ERP/CRM 创建，平台只负责校验、调度和留痕。" /><div className="metric-grid"><Metric label="今日外呼任务" value="24" note="ERP 15 · CRM 9" color="#4fad78" /><Metric label="正在呼叫" value="1,842" note="全局容量占用 68%" color="#4a9bc2" /><Metric label="已冻结话费" value="¥49,780" note="按 2 分钟 / 号码冻结" color="#d49a37" /><Metric label="待人工处理" value="17" note="3 项为高优先级" color="#c7625b" /></div><div className="split-grid"><Panel title="今日任务走向" meta="09:00 – 20:30"><div className="chart-wrap"><div className="chart-labels"><span>有效接通</span><b>7,268</b><small>较昨日 +12.6%</small></div><div className="bars">{[38,48,43,62,70,57,88,76,95,73,64,82].map((height, index) => <div className="bar-column" key={index}><i style={{ height: `${height}%` }} /><small>{9 + index}:00</small></div>)}</div></div></Panel><Panel title="需要处理" meta="按优先级"><div className="timeline"><div className="timeline-item"><i className="timeline-dot" /><b>罗曼映像 · 任务等待容量</b><p>全局资源余量不足，下一次自动复检：09:35。</p></div><div className="timeline-item"><i className="timeline-dot" /><b>晨光摄影 · 余额不足暂停</b><p>待拨 2,800 人，需先充值并满足启动冻结。</p></div><div className="timeline-item"><i className="timeline-dot" /><b>未知任务回调 · 1 条</b><p>已隔离原始报文，等待人工映射。</p></div></div></Panel></div><div className="mt-[14px]"><TaskTable /></div></>;
 }
 
+type StudioStatus = '正常' | '停用';
+type BalanceTab = '全部' | '余额充足' | '余额不足' | '欠费';
+type StudioModal = 'create' | 'edit' | 'disable' | 'enable' | 'recharge' | 'refund' | null;
+
+type Studio = {
+  id: string;
+  name: string;
+  contact: string;
+  phone: string;
+  balance: number;
+  taskCount: number;
+  rate: string;
+  minutes: number;
+  mcCode: string;
+  erpUrl: string;
+  crmUrl: string;
+  status: StudioStatus;
+  createdAt: string;
+  creator: string;
+};
+
+const initialStudios: Studio[] = [
+  { id: 'YL-202609-0006', name: '晨光摄影', contact: '周敏', phone: '139****5578', balance: 280, taskCount: 6, rate: '0.48', minutes: 3820, mcCode: 'MC-CG-102', erpUrl: 'https://erp.chenguang.example/callback', crmUrl: 'https://crm.chenguang.example/callback', status: '正常', createdAt: '2026-09-02 09:16:24', creator: '王琪' },
+  { id: 'YL-202609-0005', name: '罗曼映像', contact: '李卓', phone: '185****0986', balance: -80.5, taskCount: 11, rate: '0.48', minutes: 6470, mcCode: 'MC-LM-064', erpUrl: 'https://erp.luoman.example/callback', crmUrl: '', status: '正常', createdAt: '2026-09-01 16:48:06', creator: '王琪' },
+  { id: 'YL-202609-0004', name: '紫藤影像', contact: '陈思', phone: '138****8210', balance: 13279.4, taskCount: 24, rate: '0.48', minutes: 26840, mcCode: 'MC-ZTY-001', erpUrl: 'https://erp.ziteng.example/callback', crmUrl: 'https://crm.ziteng.example/callback', status: '正常', createdAt: '2026-09-01 14:20:31', creator: '王琪' },
+  { id: 'YL-202609-0003', name: '远山摄影', contact: '吴倩', phone: '186****1932', balance: 4315.8, taskCount: 13, rate: '0.48', minutes: 15259, mcCode: 'MC-YS-028', erpUrl: 'https://erp.yuanshan.example/callback', crmUrl: '', status: '正常', createdAt: '2026-08-31 10:12:48', creator: '李萌' },
+  { id: 'YL-202609-0002', name: '白屿婚纱摄影', contact: '许宁', phone: '137****1263', balance: 860, taskCount: 3, rate: '0.48', minutes: 970, mcCode: 'MC-BY-019', erpUrl: '', crmUrl: 'https://crm.baiyu.example/callback', status: '停用', createdAt: '2026-08-29 17:35:09', creator: '王琪' },
+];
+
+const getBalanceTab = (balance: number): Exclude<BalanceTab, '全部'> => balance <= 0 ? '欠费' : balance < 500 ? '余额不足' : '余额充足';
+const formatMoney = (amount: number) => `¥${amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const studioFormDefaults = { name: '', contact: '', phone: '', mcCode: '', erpUrl: '', crmUrl: '' };
+
 export function StudioView() {
-  return <><PageIntro eyebrow="TENANT & STORE DIRECTORY" title="影楼管理" summary="维护客户、影楼门店与 ERP/CRM 来源映射；每一条外呼任务都必须明确归属到唯一门店。" action={<button className="primary-button">+ 新增影楼</button>} /><Panel title="影楼与门店" meta="3 个客户 · 9 家门店"><div className="toolbar"><label className="search-box"><Search size={15} /><input placeholder="搜索影楼、门店或 store_id" /></label><button className="filter-button">全部状态</button></div><div className="table-wrap"><table className="data-table"><thead><tr><th>影楼 / 门店</th><th>门店标识</th><th>来源映射</th><th>默认呼叫线路</th><th>账户状态</th><th>操作</th></tr></thead><tbody>{[['紫藤影像','上海总店','ST-0012-SH','ERP：ZTY-001 · CRM：ZTY_SH','138****8210','正常','green'],['远山摄影','杭州店','ST-0017-HZ','ERP：YS-028 · CRM：—','186****1932','正常','green'],['晨光摄影','苏州园区店','ST-0021-SZ','ERP：CG-102 · CRM：MG-102','139****5578','余额受限','red']].map(([brand, store, id, source, line, state, tone]) => <tr key={id}><td><b>{brand}</b><span className="table-meta">{store}</span></td><td><span className="mapping-code">{id}</span></td><td>{source}</td><td>{line}<span className="table-meta">AI 外呼 · 可用</span></td><td><Status tone={tone as 'green' | 'red'}>{state}</Status></td><td><button className="table-action">配置 <ChevronRight size={13} className="inline" /></button></td></tr>)}</tbody></table></div></Panel><div className="triple-grid"><Panel title="资源选择规则"><div className="note-list"><p><b>唯一归属</b><br />customer_id + source_system + source_store_code</p><p><b>线路筛选</b><br />仅使用 useAvailable=true 的 AI 外呼资源</p><p><b>不可用处理</b><br />不自动切线，任务进入线路不可用状态</p></div></Panel><Panel title="本日变更"><div className="note-list"><p><b>09:16</b><br />新增「余晖摄影 · 浦东店」CRM 映射</p><p><b>08:52</b><br />紫藤影像默认线路变更为 138****8210</p></div></Panel><Panel title="配置提示"><div className="notice">门店映射变更不会改写已创建任务的归属快照；历史账单仍按任务创建时的归属核算。</div></Panel></div></>;
+  const [studios, setStudios] = useState(initialStudios);
+  const [keyword, setKeyword] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'全部' | StudioStatus>('全部');
+  const [balanceTab, setBalanceTab] = useState<BalanceTab>('全部');
+  const [pageSize, setPageSize] = useState(20);
+  const [page, setPage] = useState(1);
+  const [modal, setModal] = useState<StudioModal>(null);
+  const [activeStudio, setActiveStudio] = useState<Studio | null>(null);
+  const [form, setForm] = useState(studioFormDefaults);
+  const [feedback, setFeedback] = useState('');
+
+  const filteredStudios = useMemo(() => studios.filter((studio) => {
+    const matchesKeyword = `${studio.id}${studio.name}${studio.contact}${studio.phone}`.toLowerCase().includes(keyword.toLowerCase());
+    return matchesKeyword && (statusFilter === '全部' || studio.status === statusFilter) && (balanceTab === '全部' || getBalanceTab(studio.balance) === balanceTab);
+  }), [studios, keyword, statusFilter, balanceTab]);
+  const totalPages = Math.max(1, Math.ceil(filteredStudios.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pagedStudios = filteredStudios.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const tabCounts = (tab: BalanceTab) => tab === '全部' ? studios.length : studios.filter((studio) => getBalanceTab(studio.balance) === tab).length;
+  const openModal = (nextModal: Exclude<StudioModal, null>, studio?: Studio) => {
+    setFeedback('');
+    setActiveStudio(studio ?? null);
+    setForm(studio ? { name: studio.name, contact: studio.contact, phone: studio.phone, mcCode: studio.mcCode, erpUrl: studio.erpUrl, crmUrl: studio.crmUrl } : studioFormDefaults);
+    setModal(nextModal);
+  };
+  const closeModal = () => { setModal(null); setActiveStudio(null); };
+  const saveStudio = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (modal === 'create') {
+      const nextId = `YL-202609-${String(studios.length + 2).padStart(4, '0')}`;
+      setStudios((current) => [{ id: nextId, ...form, balance: 0, taskCount: 0, rate: '0.48', minutes: 0, status: '正常', createdAt: '2026-09-02 10:05:00', creator: '平台管理员' }, ...current]);
+      setFeedback('影楼已新增，默认状态为正常。');
+    } else if (activeStudio) {
+      setStudios((current) => current.map((studio) => studio.id === activeStudio.id ? { ...studio, ...form } : studio));
+      setFeedback('影楼信息已更新。');
+    }
+    closeModal();
+  };
+  const saveAction = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!activeStudio || !modal) return;
+    const data = new FormData(event.currentTarget);
+    const amount = Number(data.get('amount') || 0);
+    const actionLabels = { disable: '影楼已停用，停用期间不允许拨打电话。', enable: '影楼已启用。', recharge: `充值成功，已加入账户余额 ${formatMoney(amount)}。`, refund: `退款成功，账户余额已扣减 ${formatMoney(amount)}。` };
+    setStudios((current) => current.map((studio) => {
+      if (studio.id !== activeStudio.id) return studio;
+      if (modal === 'disable') return { ...studio, status: '停用' };
+      if (modal === 'enable') return { ...studio, status: '正常' };
+      if (modal === 'recharge') return { ...studio, balance: studio.balance + amount };
+      if (modal === 'refund') return { ...studio, balance: studio.balance - amount };
+      return studio;
+    }));
+    setFeedback(actionLabels[modal as Exclude<StudioModal, 'create' | 'edit' | null>]);
+    closeModal();
+  };
+  const changePage = (next: number) => setPage(Math.max(1, Math.min(next, totalPages)));
+  const setTab = (tab: BalanceTab) => { setBalanceTab(tab); setPage(1); };
+
+  return <>
+    <PageIntro eyebrow="STUDIO ACCOUNT MANAGEMENT" title="影楼管理" summary="维护影楼账户、余额、外呼任务与 ERP/CRM 回传地址；停用状态下即使账户有余额也不可拨打电话。" action={<button className="primary-button" onClick={() => openModal('create')}>+ 新增影楼</button>} />
+    {feedback ? <div className="notice mb-[14px]">{feedback}</div> : null}
+    <Panel title="影楼列表" meta={`共 ${filteredStudios.length} 家`}>
+      <div className="flex flex-wrap gap-2 border-b border-[#edf0ec] px-[17px] pt-3">
+        {(['全部', '余额充足', '余额不足', '欠费'] as BalanceTab[]).map((tab) => <button key={tab} onClick={() => setTab(tab)} className={`border-b-2 px-1 pb-3 text-[12px] ${balanceTab === tab ? 'border-[#31785d] text-[#1b624b] font-semibold' : 'border-transparent text-[#748079]'}`}>{tab} <span className="ml-1 rounded-full bg-[#f0f4f1] px-1.5 py-0.5 text-[10px]">{tabCounts(tab)}</span></button>)}
+      </div>
+      <div className="toolbar">
+        <label className="search-box"><Search size={15} /><input value={keyword} onChange={(event) => { setKeyword(event.target.value); setPage(1); }} placeholder="搜索影楼编号、影楼名称、联系人或联系人手机号" /></label>
+        <select aria-label="影楼状态" className="filter-button" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as '全部' | StudioStatus); setPage(1); }}><option value="全部">全部状态</option><option value="正常">正常</option><option value="停用">停用</option></select>
+        <select aria-label="每页展示数量" className="filter-button" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}><option value="20">20 条 / 页</option><option value="50">50 条 / 页</option><option value="100">100 条 / 页</option></select>
+      </div>
+      <div className="table-wrap"><table className="data-table studio-table"><thead><tr><th>操作</th><th>影楼编号</th><th>影楼名称</th><th>联系人</th><th>联系人手机号</th><th>账户余额</th><th>余额状态</th><th>任务数量</th><th>电话费（分钟 / 元）</th><th>已拨打分钟数</th><th>MC code</th><th>ERP 回传地址</th><th>CRM 回传地址</th><th>影楼状态</th><th>创建时间</th><th>创建人</th></tr></thead><tbody>{pagedStudios.map((studio) => {
+        const balanceTabName = getBalanceTab(studio.balance);
+        const balanceTone = balanceTabName === '余额充足' ? 'green' : balanceTabName === '余额不足' ? 'amber' : 'red';
+        return <tr key={studio.id}><td><div className="flex flex-wrap gap-x-2 gap-y-1 whitespace-nowrap"><button className="table-action" onClick={() => openModal('edit', studio)}>编辑</button>{studio.status === '正常' ? <button className="table-action text-[#a86814]" onClick={() => openModal('disable', studio)}>停用</button> : <button className="table-action" onClick={() => openModal('enable', studio)}>启用</button>}<button className="table-action" onClick={() => openModal('recharge', studio)}>充值</button><button className="table-action text-[#a86814]" onClick={() => openModal('refund', studio)}>退款</button></div></td><td><span className="mapping-code">{studio.id}</span></td><td><b>{studio.name}</b></td><td>{studio.contact}</td><td>{studio.phone}</td><td><b>{formatMoney(studio.balance)}</b></td><td><Status tone={balanceTone}>{balanceTabName}</Status></td><td>{studio.taskCount}</td><td>{studio.rate}</td><td>{studio.minutes.toLocaleString('zh-CN')}</td><td><span className="mapping-code">{studio.mcCode}</span></td><td className="max-w-[180px] truncate" title={studio.erpUrl}>{studio.erpUrl || '—'}</td><td className="max-w-[180px] truncate" title={studio.crmUrl}>{studio.crmUrl || '—'}</td><td><Status tone={studio.status === '正常' ? 'green' : 'gray'}>{studio.status}</Status></td><td className="whitespace-nowrap">{studio.createdAt}</td><td>{studio.creator}</td></tr>;
+      })}</tbody></table></div>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#edf0ec] px-[17px] py-3 text-[11px] text-[#748079]"><span>按创建时间倒序 · 第 {currentPage} / {totalPages} 页</span><div className="flex gap-2"><button className="filter-button h-7" disabled={currentPage === 1} onClick={() => changePage(currentPage - 1)}>上一页</button><button className="filter-button h-7" disabled={currentPage === totalPages} onClick={() => changePage(currentPage + 1)}>下一页</button></div></div>
+    </Panel>
+    {modal ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#132e28]/40 p-4" role="dialog" aria-modal="true" aria-labelledby="studio-dialog-title"><div className="w-full max-w-[560px] rounded-lg bg-white shadow-2xl"><div className="flex items-center justify-between border-b border-[#edf0ec] px-5 py-4"><h3 id="studio-dialog-title" className="font-[Songti_SC,STSong,serif] text-[20px] text-[#1b3832]">{modal === 'create' ? '新增影楼' : modal === 'edit' ? '编辑影楼' : modal === 'disable' ? '停用影楼' : modal === 'enable' ? '启用影楼' : modal === 'recharge' ? '影楼充值' : '影楼退款'}</h3><button aria-label="关闭" className="text-lg text-[#748079]" onClick={closeModal}>×</button></div>
+      {(modal === 'create' || modal === 'edit') ? <form onSubmit={saveStudio} className="grid gap-4 p-5"><div className="grid grid-cols-2 gap-4"><label className="field-label">影楼名称 <b className="text-[#b64c46]">*</b><input required className="rate-input mt-1" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label><label className="field-label">联系人 <b className="text-[#b64c46]">*</b><input required className="rate-input mt-1" value={form.contact} onChange={(event) => setForm({ ...form, contact: event.target.value })} /></label><label className="field-label">联系人手机号 <b className="text-[#b64c46]">*</b><input required className="rate-input mt-1" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} /></label><label className="field-label">MC code <b className="text-[#b64c46]">*</b><input required className="rate-input mt-1" value={form.mcCode} onChange={(event) => setForm({ ...form, mcCode: event.target.value })} /></label></div><label className="field-label">ERP 回传地址<input className="rate-input mt-1" value={form.erpUrl} onChange={(event) => setForm({ ...form, erpUrl: event.target.value })} /></label><label className="field-label">CRM 回传地址<input className="rate-input mt-1" value={form.crmUrl} onChange={(event) => setForm({ ...form, crmUrl: event.target.value })} /></label><div className="flex justify-end gap-2 pt-2"><button type="button" className="filter-button" onClick={closeModal}>取消</button><button className="primary-button">保存</button></div></form> : <form onSubmit={saveAction} className="p-5"><p className="text-[13px] leading-6 text-[#68746e]">{modal === 'disable' ? <>停用后，<b>{activeStudio?.name}</b> 即使余额大于 0 也不能拨打电话。</> : modal === 'enable' ? <>确认启用 <b>{activeStudio?.name}</b>？</> : modal === 'recharge' ? <>为 <b>{activeStudio?.name}</b> 充值，到账金额将加入账户余额。</> : <>为 <b>{activeStudio?.name}</b> 退款，退款金额将从账户余额中扣减。</>}</p>{modal === 'disable' ? <label className="field-label mt-4">停用原因 <b className="text-[#b64c46]">*</b><textarea required name="reason" className="rate-input mt-1 h-20 py-2" /></label> : null}{modal === 'recharge' || modal === 'refund' ? <div className="mt-4 grid gap-4"><label className="field-label">{modal === 'recharge' ? '充值金额' : '退款金额'} <b className="text-[#b64c46]">*</b><input required min="0.01" step="0.01" name="amount" type="number" className="rate-input mt-1" /></label>{modal === 'refund' ? <label className="field-label">退款原因 <b className="text-[#b64c46]">*</b><textarea required name="reason" className="rate-input mt-1 h-20 py-2" /></label> : null}<label className="field-label">{modal === 'recharge' ? '付款凭证' : '退款凭证'} <b className="text-[#b64c46]">*</b><input required name="receipt" type="file" className="mt-1 block w-full text-[12px] text-[#68746e]" /></label></div> : null}<div className="mt-6 flex justify-end gap-2"><button type="button" className="filter-button" onClick={closeModal}>取消</button><button className="primary-button">{modal === 'enable' ? '确认启用' : modal === 'disable' ? '确认停用' : '保存'}</button></div></form>}</div></div> : null}
+  </>;
 }
 
 export function TaskView() {
