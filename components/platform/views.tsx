@@ -117,7 +117,7 @@ export function StudioView() {
   return <>
     <PageIntro eyebrow="STUDIO ACCOUNT MANAGEMENT" title="影楼管理" summary="维护影楼账户、余额、外呼任务与 ERP/CRM 回传地址；停用状态下即使账户有余额也不可拨打电话。" action={<button className="primary-button" onClick={() => openModal('create')}>+ 新增影楼</button>} />
     {feedback ? <div className="notice mb-[14px]">{feedback}</div> : null}
-    <Panel title="影楼列表" meta={`共 ${filteredStudios.length} 家`}>
+    <Panel title="影楼列表" meta={`共 ${filteredStudios.length} 家`} className="studio-list-panel">
       <div className="flex flex-wrap gap-2 border-b border-[#edf0ec] px-[17px] pt-3">
         {(['全部', '余额充足', '余额不足', '欠费'] as BalanceTab[]).map((tab) => <button key={tab} onClick={() => setTab(tab)} className={`border-b-2 px-1 pb-3 text-[12px] ${balanceTab === tab ? 'border-[#31785d] text-[#1b624b] font-semibold' : 'border-transparent text-[#748079]'}`}>{tab} <span className="ml-1 rounded-full bg-[#f0f4f1] px-1.5 py-0.5 text-[10px]">{tabCounts(tab)}</span></button>)}
       </div>
