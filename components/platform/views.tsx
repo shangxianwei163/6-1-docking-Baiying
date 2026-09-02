@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState, type FormEvent } from 'react';
-import { ArrowRight, Check, ChevronRight, Download, Filter, Pause, Play, RefreshCcw, Search, Upload } from 'lucide-react';
+import { ArrowRight, Check, ChevronDown, ChevronRight, Download, Filter, Pause, Play, RefreshCcw, Search, Upload } from 'lucide-react';
 import { Metric, PageIntro, Panel, Status } from './shared';
 
 const taskRows = [
@@ -64,6 +64,7 @@ export function StudioView() {
   const [page, setPage] = useState(1);
   const [modal, setModal] = useState<StudioModal>(null);
   const [activeStudio, setActiveStudio] = useState<Studio | null>(null);
+  const [actionMenuId, setActionMenuId] = useState<string | null>(null);
   const [form, setForm] = useState(studioFormDefaults);
   const [feedback, setFeedback] = useState('');
 
@@ -77,6 +78,7 @@ export function StudioView() {
   const tabCounts = (tab: BalanceTab) => tab === '全部' ? studios.length : studios.filter((studio) => getBalanceTab(studio.balance) === tab).length;
   const openModal = (nextModal: Exclude<StudioModal, null>, studio?: Studio) => {
     setFeedback('');
+    setActionMenuId(null);
     setActiveStudio(studio ?? null);
     setForm(studio ? { name: studio.name, contact: studio.contact, phone: studio.phone, mcCode: studio.mcCode, erpUrl: studio.erpUrl, crmUrl: studio.crmUrl } : studioFormDefaults);
     setModal(nextModal);
@@ -129,7 +131,7 @@ export function StudioView() {
       <div className="table-wrap"><table className="data-table studio-table"><thead><tr><th>操作</th><th>影楼编号</th><th>影楼名称</th><th>联系人</th><th>联系人手机号</th><th>账户余额</th><th>余额状态</th><th>任务数量</th><th>电话费（分钟 / 元）</th><th>已拨打分钟数</th><th>MC code</th><th>ERP 回传地址</th><th>CRM 回传地址</th><th>影楼状态</th><th>创建时间</th><th>创建人</th></tr></thead><tbody>{pagedStudios.map((studio) => {
         const balanceTabName = getBalanceTab(studio.balance);
         const balanceTone = balanceTabName === '余额充足' ? 'green' : balanceTabName === '余额不足' ? 'amber' : 'red';
-        return <tr key={studio.id}><td><div className="flex flex-wrap gap-x-2 gap-y-1 whitespace-nowrap"><button className="table-action" onClick={() => openModal('edit', studio)}>编辑</button>{studio.status === '正常' ? <button className="table-action text-[#a86814]" onClick={() => openModal('disable', studio)}>停用</button> : <button className="table-action" onClick={() => openModal('enable', studio)}>启用</button>}<button className="table-action" onClick={() => openModal('recharge', studio)}>充值</button><button className="table-action text-[#a86814]" onClick={() => openModal('refund', studio)}>退款</button></div></td><td><span className="mapping-code">{studio.id}</span></td><td><b>{studio.name}</b></td><td>{studio.contact}</td><td>{studio.phone}</td><td><b>{formatMoney(studio.balance)}</b></td><td><Status tone={balanceTone}>{balanceTabName}</Status></td><td>{studio.taskCount}</td><td>{studio.rate}</td><td>{studio.minutes.toLocaleString('zh-CN')}</td><td><span className="mapping-code">{studio.mcCode}</span></td><td className="max-w-[180px] truncate" title={studio.erpUrl}>{studio.erpUrl || '—'}</td><td className="max-w-[180px] truncate" title={studio.crmUrl}>{studio.crmUrl || '—'}</td><td><Status tone={studio.status === '正常' ? 'green' : 'gray'}>{studio.status}</Status></td><td className="whitespace-nowrap">{studio.createdAt}</td><td>{studio.creator}</td></tr>;
+        return <tr key={studio.id}><td><div className="operation-cell"><button className="operation-trigger" onClick={() => setActionMenuId(actionMenuId === studio.id ? null : studio.id)} aria-expanded={actionMenuId === studio.id} aria-haspopup="menu">操作 <ChevronDown size={13} /></button>{actionMenuId === studio.id ? <div className="operation-menu" role="menu"><button role="menuitem" onClick={() => openModal('edit', studio)}>编辑</button>{studio.status === '正常' ? <button role="menuitem" className="operation-danger" onClick={() => openModal('disable', studio)}>停用</button> : <button role="menuitem" onClick={() => openModal('enable', studio)}>启用</button>}<button role="menuitem" onClick={() => openModal('recharge', studio)}>充值</button><button role="menuitem" className="operation-danger" onClick={() => openModal('refund', studio)}>退款</button></div> : null}</div></td><td><span className="mapping-code">{studio.id}</span></td><td><b>{studio.name}</b></td><td>{studio.contact}</td><td>{studio.phone}</td><td><b>{formatMoney(studio.balance)}</b></td><td><Status tone={balanceTone}>{balanceTabName}</Status></td><td>{studio.taskCount}</td><td>{studio.rate}</td><td>{studio.minutes.toLocaleString('zh-CN')}</td><td><span className="mapping-code">{studio.mcCode}</span></td><td className="max-w-[180px] truncate" title={studio.erpUrl}>{studio.erpUrl || '—'}</td><td className="max-w-[180px] truncate" title={studio.crmUrl}>{studio.crmUrl || '—'}</td><td><Status tone={studio.status === '正常' ? 'green' : 'gray'}>{studio.status}</Status></td><td className="whitespace-nowrap">{studio.createdAt}</td><td>{studio.creator}</td></tr>;
       })}</tbody></table></div>
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#edf0ec] px-[17px] py-3 text-[11px] text-[#748079]"><span>按创建时间倒序 · 第 {currentPage} / {totalPages} 页</span><div className="flex gap-2"><button className="filter-button h-7" disabled={currentPage === 1} onClick={() => changePage(currentPage - 1)}>上一页</button><button className="filter-button h-7" disabled={currentPage === totalPages} onClick={() => changePage(currentPage + 1)}>下一页</button></div></div>
     </Panel>
