@@ -115,7 +115,7 @@ export function StudioView() {
   const setTab = (tab: BalanceTab) => { setBalanceTab(tab); setPage(1); };
 
   return <>
-    <PageIntro eyebrow="STUDIO ACCOUNT MANAGEMENT" title="影楼管理" summary="维护影楼账户、余额、外呼任务与 ERP/CRM 回传地址；停用状态下即使账户有余额也不可拨打电话。" action={<button className="primary-button" onClick={() => openModal('create')}>+ 新增影楼</button>} />
+    <header className="studio-page-intro"><div className="studio-page-heading"><h2>影楼管理</h2><p>维护影楼账户、余额、外呼任务与 ERP/CRM 回传地址；停用状态下即使账户有余额也不可拨打电话。</p></div><button className="primary-button" onClick={() => openModal('create')}>+ 新增影楼</button></header>
     {feedback ? <div className="notice mb-[14px]">{feedback}</div> : null}
     <Panel title="影楼列表" meta={`共 ${filteredStudios.length} 家`} className="studio-list-panel">
       <div className="flex flex-wrap gap-2 border-b border-[#edf0ec] px-[17px] pt-3">
