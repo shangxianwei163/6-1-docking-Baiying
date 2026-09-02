@@ -1,0 +1,6 @@
+import type { ReactNode } from 'react';
+
+export function PageIntro({ eyebrow, title, summary, action }: { eyebrow: string; title: string; summary: string; action?: ReactNode }) { return <div className="page-intro"><div><p className="eyebrow">{eyebrow}</p><h2 className="page-title">{title}</h2><p className="page-summary">{summary}</p></div>{action}</div>; }
+export function Panel({ title, meta, children, className = '' }: { title: string; meta?: string; children: ReactNode; className?: string }) { return <section className={`panel ${className}`}><header className="panel-heading"><span>{title}</span>{meta ? <small>{meta}</small> : null}</header><div className="panel-body">{children}</div></section>; }
+export function Status({ tone, children }: { tone: 'green' | 'amber' | 'red' | 'blue' | 'gray'; children: ReactNode }) { return <span className={`status status-${tone}`}>{children}</span>; }
+export function Metric({ label, value, note, color }: { label: string; value: string; note: string; color: string }) { return <article className="metric-card" style={{ '--metric-color': color } as React.CSSProperties}><p className="metric-label">{label}</p><p className="metric-value">{value}</p><p className="metric-note">{note}</p></article>; }
