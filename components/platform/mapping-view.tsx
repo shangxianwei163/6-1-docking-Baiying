@@ -38,6 +38,8 @@ const initialRules: MappingRule[] = [
   { id: 'm3', variable: '门店名称', erpField: 'store_name', crmField: 'branch_name', transform: 'TEXT', transformConfig: '去除首尾空格', emptyPolicy: 'BLOCK', defaultValue: '', status: 'PUBLISHED', version: 12, sampleInput: '上海总店', sampleOutput: '上海总店' },
   { id: 'm4', variable: '顾问姓名', erpField: 'consultant_name', crmField: 'owner_name', transform: 'TEMPLATE', transformConfig: '{{value}}老师', emptyPolicy: 'DEFAULT', defaultValue: '门店顾问', status: 'PUBLISHED', version: 12, sampleInput: '陈顾问', sampleOutput: '陈顾问老师' },
   { id: 'm5', variable: '老客权益', erpField: '', crmField: 'member_benefit', transform: 'TEXT', transformConfig: '去除首尾空格', emptyPolicy: 'DEFAULT', defaultValue: '周年礼遇', status: 'PUBLISHED', version: 11, sampleInput: '周年加片', sampleOutput: '周年加片' },
+  { id: 'm6', variable: '客户来源', erpField: 'customer_source', crmField: 'lead_source', transform: 'TEXT', transformConfig: '去除首尾空格', emptyPolicy: 'DEFAULT', defaultValue: '未知来源', status: 'PUBLISHED', version: 12, sampleInput: '婚博会', sampleOutput: '婚博会' },
+  { id: 'm7', variable: '活动名称', erpField: 'campaign_name', crmField: 'campaignName', transform: 'TEXT', transformConfig: '去除首尾空格', emptyPolicy: 'DEFAULT', defaultValue: '日常邀约', status: 'PUBLISHED', version: 12, sampleInput: '秋季档期', sampleOutput: '秋季档期' },
 ];
 
 const initialIssues: MappingIssue[] = [
@@ -69,7 +71,7 @@ const initialScenes: Scene[] = [
 ];
 
 const initialVersions: VersionRecord[] = [
-  { version: 12, publishedAt: '2026-09-01 17:24', publisher: '王琪', ruleCount: 5, change: '新增顾问姓名模板转换，调整套餐意向默认值' },
+  { version: 12, publishedAt: '2026-09-01 17:24', publisher: '王琪', ruleCount: 7, change: '新增顾问姓名模板转换，调整套餐意向默认值' },
   { version: 11, publishedAt: '2026-08-22 14:08', publisher: '李萌', ruleCount: 5, change: '新增老客权益映射' },
   { version: 10, publishedAt: '2026-08-12 10:32', publisher: '王琪', ruleCount: 4, change: '更新套餐意向枚举规则' },
 ];
@@ -137,6 +139,22 @@ export function MappingView() {
     return merged.filter((rule) => `${rule.variable}${rule.erpField}${rule.crmField}${rule.transform}`.toLowerCase().includes(query.toLowerCase()) && (ruleStatus === 'ALL' || rule.displayStatus === ruleStatus));
   }, [rules, drafts, query, ruleStatus, currentVersion]);
   const filteredScenes = scenes.filter((scene) => `${scene.name}${scene.robotDefId}${scene.companies}`.toLowerCase().includes(sceneQuery.toLowerCase()) && (sceneStatus === 'ALL' || scene.status === sceneStatus));
+  const sceneVariableRows = useMemo(() => {
+    if (!selectedScene) return [];
+    const publishedPool = rules.filter((rule) => rule.status === 'PUBLISHED').map((rule) => rule.variable);
+    const mappedCount = Math.max(0, selectedScene.expected - selectedScene.missingVariables.length);
+    const variables = [...publishedPool.slice(0, mappedCount), ...selectedScene.missingVariables].slice(0, selectedScene.expected);
+    return variables.map((variable) => {
+      const rule = rules.find((item) => item.variable === variable);
+      const draft = drafts.find((item) => item.variable === variable);
+      const issue = issues.find((item) => item.variable === variable && item.sceneNames.includes(selectedScene.name));
+      const effective = draft ?? rule;
+      const apiStatus = issue?.change === 'REMOVED' ? '最新快照已删除' : issue?.change === 'DRIFT' ? '公司间不一致' : issue?.change === 'NEW' ? '本次新增' : selectedScene.status === 'STALE_SYNC' ? '沿用上次快照' : '当前已返回';
+      const mappingStatus = draft?.remove ? '待发布移除' : draft ? '草稿待发布' : issue?.change === 'REMOVED' ? '待确认移除' : issue?.change === 'DRIFT' ? '漂移待处理' : !rule ? '待配置' : `v${rule.version} 已发布`;
+      const tone: 'green' | 'amber' | 'red' | 'blue' | 'gray' = issue?.change === 'REMOVED' ? 'gray' : issue?.change === 'DRIFT' ? 'red' : !rule || issue?.change === 'NEW' ? 'amber' : draft ? 'blue' : 'green';
+      return { variable, erpField: effective?.erpField ?? '', crmField: effective?.crmField ?? '', apiStatus, mappingStatus, tone };
+    });
+  }, [selectedScene, rules, drafts, issues]);
 
   const openMapping = (variable: string) => {
     const savedDraft = drafts.find((item) => item.variable === variable);
@@ -281,7 +299,26 @@ export function MappingView() {
 
     <Dialog open={publishOpen} onOpenChange={setPublishOpen}><DialogContent className="publish-dialog max-w-[540px]" showCloseButton={false}><DialogHeader><DialogTitle>发布全局映射版本 v{currentVersion + 1}</DialogTitle><DialogDescription>发布后，新创建任务和新名单导入将锁定此版本；已创建任务不受影响。</DialogDescription></DialogHeader><div className="publish-summary"><div><span>待发布变更</span><b>{drafts.length}</b></div><div><span>新增 / 修改</span><b>{drafts.filter((draft) => !draft.remove).length}</b></div><div><span>移除规则</span><b>{drafts.filter((draft) => draft.remove).length}</b></div></div><div className="publish-change-list">{drafts.map((draft) => <p key={draft.variable}><span>{draft.remove ? '移除' : rules.some((rule) => rule.variable === draft.variable) ? '修改' : '新增'}</span><b>{draft.variable}</b><small>{draft.remove ? '旧版本继续保留快照' : `ERP ${draft.erpField || '—'} / CRM ${draft.crmField || '—'} · ${draft.transform}`}</small></p>)}</div><div className="notice warn"><b>发布前确认：</b>版本发布后不可原地修改，如需调整必须创建新版本。</div><DialogFooter className="publish-footer"><button className="filter-button" onClick={() => setPublishOpen(false)}>取消</button><button className="primary-button" onClick={publishDrafts} disabled={!drafts.length}>确认发布</button></DialogFooter></DialogContent></Dialog>
 
-    <Dialog open={Boolean(selectedScene)} onOpenChange={(open) => { if (!open) setSelectedScene(null); }}><DialogContent className="scene-dialog max-w-[610px]" showCloseButton={false}><DialogHeader><DialogTitle>{selectedScene?.name}</DialogTitle><DialogDescription>{selectedScene?.robotDefId} · {selectedScene?.companies} · 最近同步 {selectedScene?.lastSync}</DialogDescription></DialogHeader>{selectedScene ? <><div className="scene-detail-status"><Status tone={sceneStatusMeta[selectedScene.status].tone}>{sceneStatusMeta[selectedScene.status].label}</Status><p>{selectedScene.issue || '变量集合与已发布映射一致，可以创建新任务和导入名单。'}</p></div><div className="scene-variable-summary"><div><span>变量覆盖</span><b>{selectedScene.coverage} / {selectedScene.expected}</b></div><div><span>映射版本</span><b>{selectedScene.status === 'ACTIVE' ? `v${currentVersion}` : '不可用'}</b></div><div><span>新任务 / 导入</span><b>{selectedScene.status === 'ACTIVE' ? '允许' : '阻断'}</b></div></div>{selectedScene.status === 'DRIFT_DETECTED' ? <div className="drift-compare"><h4>跨公司变量差异</h4><p><span>晨光摄影</span><code>客户名称、联系方式、婚期、客户等级</code></p><p><span>紫藤影像</span><code>客户名称、联系方式、婚期</code></p><p><span>远山摄影</span><code>客户名称、联系方式、婚期</code></p></div> : selectedScene.missingVariables.length ? <div className="missing-variable-list"><span>缺失已发布映射</span>{selectedScene.missingVariables.map((variable) => <button key={variable} onClick={() => { setSelectedScene(null); openMapping(variable); }}>{variable} <ChevronRight size={12} /></button>)}</div> : null}<DialogFooter className="scene-dialog-footer"><button className="filter-button" onClick={() => setSelectedScene(null)}>关闭</button>{selectedScene.status === 'DRIFT_DETECTED' ? <button className="primary-button" onClick={() => { setSelectedScene(null); openMapping('客户等级'); }}>按变量并集配置</button> : null}</DialogFooter></> : null}</DialogContent></Dialog>
+    <Dialog open={Boolean(selectedScene)} onOpenChange={(open) => { if (!open) setSelectedScene(null); }}>
+      <DialogContent className="scene-dialog scene-variable-dialog max-w-[820px]" showCloseButton={false}>
+        <DialogHeader className="scene-variable-dialog-header">
+          <div><p className="eyebrow">SCENE VARIABLE SNAPSHOT</p><DialogTitle>{selectedScene?.name}</DialogTitle><DialogDescription>{selectedScene?.robotDefId} · {selectedScene?.companies} · 4.10 接口最近同步 {selectedScene?.lastSync}</DialogDescription></div>
+          <button type="button" className="dialog-close-button" aria-label="关闭" onClick={() => setSelectedScene(null)}>×</button>
+        </DialogHeader>
+        {selectedScene ? <>
+          <div className="scene-detail-status scene-detail-status-wide"><Status tone={sceneStatusMeta[selectedScene.status].tone}>{sceneStatusMeta[selectedScene.status].label}</Status><p>{selectedScene.issue || '当前变量均已配置发布映射，可以创建新任务和导入名单。'}</p></div>
+          <div className="scene-variable-summary scene-variable-summary-compact"><div><span>4.10 返回变量</span><b>{selectedScene.expected}</b></div><div><span>已发布映射</span><b>{selectedScene.coverage}</b></div><div><span>待处理变量</span><b>{selectedScene.expected - selectedScene.coverage}</b></div><div><span>新任务 / 导入</span><b>{selectedScene.status === 'ACTIVE' ? '允许' : '阻断'}</b></div></div>
+
+          <section className="scene-variable-section">
+            <div className="scene-variable-section-heading"><div><b>当前话术变量</b><small>以本次 4.10 接口快照为准</small></div><span>{sceneVariableRows.length} 个变量</span></div>
+            <div className="table-wrap"><table className="data-table scene-variable-table"><thead><tr><th>百应变量</th><th>接口当前情况</th><th>ERP 字段</th><th>CRM 字段</th><th>映射状态</th><th>操作</th></tr></thead><tbody>{sceneVariableRows.map((row) => <tr key={row.variable}><td><b>{row.variable}</b><small className="table-meta">properties.{row.variable}</small></td><td><span className="api-variable-state">{row.apiStatus}</span></td><td><code className={`scene-source-value scene-source-erp ${row.erpField ? '' : 'is-empty'}`}>{row.erpField || '未配置'}</code></td><td><code className={`scene-source-value scene-source-crm ${row.crmField ? '' : 'is-empty'}`}>{row.crmField || '未配置'}</code></td><td><Status tone={row.tone}>{row.mappingStatus}</Status></td><td><button className="table-action" onClick={() => { setSelectedScene(null); if (row.mappingStatus === '待确认移除') stageRemoval(row.variable); else openMapping(row.variable); }}>{row.mappingStatus === '待确认移除' ? '确认移除' : row.mappingStatus.includes('已发布') ? '编辑' : '配置'}</button></td></tr>)}</tbody></table></div>
+          </section>
+
+          {selectedScene.status === 'DRIFT_DETECTED' ? <div className="drift-compare"><h4>跨公司变量差异</h4><p><span>晨光摄影</span><code>婚期、套餐意向、门店名称、顾问姓名、客户等级</code></p><p><span>紫藤影像</span><code>婚期、套餐意向、门店名称、顾问姓名</code></p><p><span>远山摄影</span><code>婚期、套餐意向、门店名称、顾问姓名</code></p></div> : null}
+          <DialogFooter className="scene-dialog-footer scene-variable-dialog-footer"><p>变量状态变化后，需要重新发布映射并同步复核。</p><button className="filter-button" onClick={() => setSelectedScene(null)}>关闭</button></DialogFooter>
+        </> : null}
+      </DialogContent>
+    </Dialog>
   </div>;
 }
 
