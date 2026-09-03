@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState, type FormEvent } from 'react';
-import { ArrowRight, Check, ChevronDown, ChevronRight, Download, Pause, Play, RefreshCcw, Search, Upload } from 'lucide-react';
+import { ArrowRight, Check, ChevronDown, ChevronRight, Download, Pause, Play, RefreshCcw, Search, Upload, X } from 'lucide-react';
 import { Metric, PageIntro, Panel, Status } from './shared';
 
 type TaskStatus = '执行中' | '执行完成' | '执行失败';
@@ -198,8 +198,107 @@ export function TaskView() {
 }
 
 export function MappingView() {
-  const [enabled, setEnabled] = useState(true);
-  return <><PageIntro eyebrow="FIELD CONTRACT" title="字段映射" summary="配置 ERP/CRM 业务字段与百应任务变量的契约。任务创建时写入快照，后续调整不会影响已导入名单。" action={<button className="primary-button">+ 新增映射版本</button>} /><div className="split-grid !mt-0"><Panel title="紫藤影像 · 婚博会回访" meta="v3.4 · 已发布"><div className="mapping-row"><div><b>客户姓名</b><span className="table-meta">ERP.customer_name</span></div><ArrowRight className="mapping-arrow" /><div><span className="mapping-code">contactName</span><p className="mt-1 text-[10px] text-[#79847e]">百应联系人变量</p></div><Status tone="green">必填</Status></div><div className="mapping-row"><div><b>咨询品类</b><span className="table-meta">CRM.interest_package</span></div><ArrowRight className="mapping-arrow" /><div><span className="mapping-code">interestPackage</span><p className="mt-1 text-[10px] text-[#79847e]">话术分支变量</p></div><Status tone="green">必填</Status></div><div className="mapping-row"><div><b>婚期</b><span className="table-meta">ERP.wedding_date</span></div><ArrowRight className="mapping-arrow" /><div><span className="mapping-code">weddingDate</span><p className="mt-1 text-[10px] text-[#79847e]">可空日期字段</p></div><Status tone="gray">可选</Status></div><div className="mapping-row"><div><b>顾问姓名</b><span className="table-meta">CRM.owner_name</span></div><ArrowRight className="mapping-arrow" /><div><span className="mapping-code">consultantName</span><p className="mt-1 text-[10px] text-[#79847e]">转人工上下文</p></div><Status tone="gray">可选</Status></div></Panel><Panel title="发布控制"><div className="note-list"><p><b>覆盖范围</b><br />紫藤影像 · 上海总店 · ERP</p><p><b>生效时间</b><br />立即生效，仅作用于新建任务</p><p><b>最后发布</b><br />王琪 · 2026-09-01 17:24</p></div><label className="checkbox-row"><input checked={enabled} onChange={(event) => setEnabled(event.target.checked)} type="checkbox" />允许任务创建时校验必填字段</label><div className="notice mt-5">缺失必填字段的名单不会导入；系统返回明细给 ERP/CRM，由业务侧修正后重新提交。</div></Panel></div><div className="triple-grid"><Panel title="映射校验"><div className="note-list"><p><b className="text-[#287156]">100%</b><br />4 个映射字段均已检测通过</p></div></Panel><Panel title="版本历史"><div className="note-list"><p><b>v3.4 · 当前</b><br />新增顾问姓名变量</p><p><b>v3.3 · 2026-08-12</b><br />更新咨询品类枚举</p></div></Panel><Panel title="业务边界"><div className="notice warn">平台不维护话术白名单；字段映射只定义数据契约与校验，不改变业务来源的数据。</div></Panel></div></>;
+  type TransformType = 'TEXT' | 'DATE' | 'MONEY' | 'ENUM' | 'TEMPLATE';
+  type EmptyPolicy = 'BLOCK' | 'DEFAULT';
+  type RuleStatus = 'PUBLISHED' | 'DRAFT';
+  type MappingRule = { id: string; variable: string; standardField: string; transform: TransformType; emptyPolicy: EmptyPolicy; defaultValue: string; status: RuleStatus; version: number; sample: string; builtin?: boolean };
+  type PendingVariable = { id: string; variable: string; scenes: string[]; change: '新增变量' | '变量漂移'; discoveredAt: string };
+
+  const standardFields = [
+    ['customer_name', '客户名称'], ['mobile', '联系方式'], ['wedding_date', '婚期'], ['package_interest', '套餐意向'],
+    ['store_name', '门店名称'], ['consultant_name', '顾问姓名'], ['budget_range', '预算范围'], ['dress_style', '礼服偏好'],
+  ];
+  const initialRules: MappingRule[] = [
+    { id: 'm1', variable: '客户名称', standardField: 'customer_name', transform: 'TEXT', emptyPolicy: 'BLOCK', defaultValue: '', status: 'PUBLISHED', version: 12, sample: '王女士', builtin: true },
+    { id: 'm2', variable: '联系方式', standardField: 'mobile', transform: 'TEXT', emptyPolicy: 'BLOCK', defaultValue: '', status: 'PUBLISHED', version: 12, sample: '13800000000', builtin: true },
+    { id: 'm3', variable: '婚期', standardField: 'wedding_date', transform: 'DATE', emptyPolicy: 'BLOCK', defaultValue: '', status: 'PUBLISHED', version: 12, sample: '2026-10-18' },
+    { id: 'm4', variable: '套餐意向', standardField: 'package_interest', transform: 'ENUM', emptyPolicy: 'DEFAULT', defaultValue: '待确认', status: 'PUBLISHED', version: 12, sample: '轻奢婚纱照' },
+    { id: 'm5', variable: '门店名称', standardField: 'store_name', transform: 'TEXT', emptyPolicy: 'BLOCK', defaultValue: '', status: 'PUBLISHED', version: 12, sample: '上海总店' },
+    { id: 'm6', variable: '顾问姓名', standardField: 'consultant_name', transform: 'TEMPLATE', emptyPolicy: 'DEFAULT', defaultValue: '门店顾问', status: 'PUBLISHED', version: 12, sample: '陈顾问' },
+  ];
+  const initialPending: PendingVariable[] = [
+    { id: 'p1', variable: '预算范围', scenes: ['婚博会回访', '秋季档期触达'], change: '新增变量', discoveredAt: '09-03 09:30' },
+    { id: 'p2', variable: '礼服风格', scenes: ['到店未成交激活'], change: '新增变量', discoveredAt: '09-03 09:30' },
+    { id: 'p3', variable: '客户等级', scenes: ['周年礼遇'], change: '变量漂移', discoveredAt: '09-03 03:30' },
+  ];
+  const emptyDraft = { standardField: 'budget_range', transform: 'TEXT' as TransformType, emptyPolicy: 'BLOCK' as EmptyPolicy, defaultValue: '' };
+
+  const [rules, setRules] = useState(initialRules);
+  const [pending, setPending] = useState(initialPending);
+  const [query, setQuery] = useState('');
+  const [ruleStatus, setRuleStatus] = useState<'全部' | RuleStatus>('全部');
+  const [activeVariable, setActiveVariable] = useState<string | null>(null);
+  const [draft, setDraft] = useState(emptyDraft);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSync, setLastSync] = useState('2026-09-03 09:30');
+  const [feedback, setFeedback] = useState('');
+  const publishedVersion = Math.max(...rules.filter((rule) => rule.status === 'PUBLISHED').map((rule) => rule.version));
+  const draftCount = rules.filter((rule) => rule.status === 'DRAFT').length;
+  const filteredRules = rules.filter((rule) => `${rule.variable}${rule.standardField}${rule.transform}`.toLowerCase().includes(query.toLowerCase()) && (ruleStatus === '全部' || rule.status === ruleStatus));
+
+  const openMapping = (variable: string) => {
+    const existing = rules.find((rule) => rule.variable === variable);
+    const suggestedField = standardFields.find((field) => variable.includes(field[1]) || field[1].includes(variable))?.[0] ?? 'budget_range';
+    setActiveVariable(variable);
+    setDraft(existing ? { standardField: existing.standardField, transform: existing.transform, emptyPolicy: existing.emptyPolicy, defaultValue: existing.defaultValue } : { ...emptyDraft, standardField: suggestedField });
+    setFeedback('');
+  };
+  const saveMapping = (event: { preventDefault(): void }) => {
+    event.preventDefault();
+    if (!activeVariable) return;
+    const existing = rules.find((rule) => rule.variable === activeVariable);
+    const fieldLabel = standardFields.find(([key]) => key === draft.standardField)?.[1] ?? draft.standardField;
+    const nextRule: MappingRule = { id: existing?.id ?? `m${Date.now()}`, variable: activeVariable, ...draft, status: 'DRAFT', version: publishedVersion + 1, sample: draft.emptyPolicy === 'DEFAULT' && draft.defaultValue ? draft.defaultValue : fieldLabel === '预算范围' ? '8,000–12,000 元' : fieldLabel === '礼服偏好' ? '法式轻盈' : `示例${fieldLabel}` };
+    setRules((current) => existing ? current.map((rule) => rule.id === existing.id ? nextRule : rule) : [...current, nextRule]);
+    setPending((current) => current.filter((item) => item.variable !== activeVariable));
+    setActiveVariable(null);
+    setFeedback(`“${activeVariable}”已保存为草稿，发布后供新任务使用。`);
+  };
+  const publishDrafts = () => {
+    if (!draftCount) return;
+    const nextVersion = publishedVersion + 1;
+    setRules((current) => current.map((rule) => rule.status === 'DRAFT' ? { ...rule, status: 'PUBLISHED', version: nextVersion } : rule));
+    setFeedback(`映射版本 v${nextVersion} 已发布。已创建任务继续使用原快照，新任务将锁定此版本。`);
+  };
+  const syncVariables = () => {
+    setSyncing(true);
+    setFeedback('');
+    window.setTimeout(() => {
+      setSyncing(false);
+      setLastSync('2026-09-03 10:06');
+      setFeedback('同步完成：已巡检 18 个话术场景，保留最近一次成功快照，未发现新的变量变化。');
+    }, 800);
+  };
+  const activeScenes = 17 - pending.filter((item) => item.change === '新增变量').length - (pending.some((item) => item.change === '变量漂移') ? 1 : 0);
+
+  return <div className="mapping-center">
+    <PageIntro eyebrow="GLOBAL VARIABLE GOVERNANCE" title="字段映射中心" summary="统一维护百应话术变量与平台标准字段。规则全局共用；只有巡检正常且映射已发布的场景，才允许创建新任务或导入名单。" action={<button className="primary-button sync-button" onClick={syncVariables} disabled={syncing}><RefreshCcw size={14} className={syncing ? 'spin' : ''} />{syncing ? '正在同步…' : '立即同步'}</button>} />
+    {feedback ? <output className="notice mapping-feedback"><Check size={14} />{feedback}</output> : null}
+
+    <section className="inspection-board" aria-label="变量巡检">
+      <div className="inspection-lead"><div><p className="eyebrow">VARIABLE INSPECTION</p><h3>变量巡检</h3><p>每 6 小时自动查询百应场景变量；超过 24 小时未成功同步将阻断使用。</p></div><div className="sync-stamp"><span>最后成功同步</span><b>{lastSync}</b><small>下一次自动同步 15:30</small></div></div>
+      <div className="inspection-metrics">
+        <article><span>场景总数</span><b>18</b><small>覆盖 6 家公司</small></article>
+        <article className="metric-ok"><span>正常</span><b>{activeScenes}</b><small>允许新任务 / 导入</small></article>
+        <article className="metric-warn"><span>待映射</span><b>{pending.filter((item) => item.change === '新增变量').length}</b><small>新增变量待配置</small></article>
+        <article className="metric-danger"><span>漂移</span><b>{pending.some((item) => item.change === '变量漂移') ? 1 : 0}</b><small>变量集合不一致</small></article>
+        <article className="metric-muted"><span>同步失败</span><b>1</b><small>使用上次成功快照</small></article>
+      </div>
+    </section>
+
+    <Panel title="待处理变量" meta={`${pending.length} 项阻断新任务`} className="pending-panel">
+      {pending.length ? <div className="pending-list">{pending.map((item) => <article className="pending-item" key={item.id}><div className={`change-mark ${item.change === '变量漂移' ? 'change-drift' : ''}`}>{item.change === '新增变量' ? '+' : '↯'}</div><div className="pending-variable"><span className="mapping-code">{item.variable}</span><b>{item.change}</b></div><div><span className="pending-label">影响话术场景</span><p>{item.scenes.join('、')}</p></div><div><span className="pending-label">发现时间</span><p>{item.discoveredAt}</p></div><Status tone={item.change === '变量漂移' ? 'red' : 'amber'}>{item.change === '变量漂移' ? 'DRIFT_DETECTED' : 'PENDING_MAPPING'}</Status><button className="table-action pending-action" onClick={() => openMapping(item.variable)}>配置映射 <ChevronRight size={13} /></button></article>)}</div> : <div className="pending-empty"><Check size={18} /><div><b>所有新增变量均已配置</b><p>发布草稿后，相关场景将重新计算就绪状态。</p></div></div>}
+    </Panel>
+
+    <Panel title="全局映射规则" meta={`当前发布版本 v${publishedVersion}`} className="rules-panel">
+      <div className="rules-toolbar"><label className="search-box"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索百应变量、标准字段或转换类型" /></label><select className="filter-button" aria-label="规则状态" value={ruleStatus} onChange={(event) => setRuleStatus(event.target.value as '全部' | RuleStatus)}><option value="全部">全部状态</option><option value="PUBLISHED">已发布</option><option value="DRAFT">草稿</option></select><button className="primary-button" onClick={publishDrafts} disabled={!draftCount}>发布草稿{draftCount ? `（${draftCount}）` : ''}</button></div>
+      <div className="rule-scope"><span>全局规则</span><p>对全部影楼、公司与话术场景生效。发布会生成不可变版本；已创建任务不受影响。</p></div>
+      <div className="table-wrap"><table className="data-table mapping-table"><thead><tr><th>百应变量名</th><th>平台标准字段</th><th>写入位置</th><th>转换规则</th><th>空值策略</th><th>发布版本</th><th>样例预览</th><th>操作</th></tr></thead><tbody>{filteredRules.map((rule) => <tr key={rule.id}><td><b>{rule.variable}</b>{rule.builtin ? <span className="builtin-tag">百应默认</span> : null}</td><td><span className="mapping-code">{rule.standardField}</span></td><td><span className="payload-path">{rule.builtin ? (rule.standardField === 'mobile' ? 'phone' : 'name') : `properties.${rule.variable}`}</span></td><td><b>{rule.transform}</b></td><td>{rule.emptyPolicy === 'BLOCK' ? <Status tone="red">缺失阻断</Status> : <div><Status tone="blue">使用默认值</Status><small className="table-meta">{rule.defaultValue}</small></div>}</td><td><Status tone={rule.status === 'PUBLISHED' ? 'green' : 'amber'}>{rule.status === 'PUBLISHED' ? `v${rule.version} 已发布` : '待发布'}</Status></td><td><span className="sample-preview">{rule.sample}</span></td><td>{rule.builtin ? <span className="locked-rule">系统保护</span> : <button className="table-action" onClick={() => openMapping(rule.variable)}>编辑</button>}</td></tr>)}</tbody></table></div>
+      {!filteredRules.length ? <div className="rule-empty">没有符合条件的映射规则</div> : null}
+    </Panel>
+
+    {activeVariable ? <dialog open className="mapping-dialog-backdrop" aria-labelledby="mapping-dialog-title"><form className="mapping-dialog" onSubmit={saveMapping}><header><div><p className="eyebrow">MAPPING DRAFT</p><h3 id="mapping-dialog-title">配置变量映射</h3></div><button type="button" aria-label="关闭" onClick={() => setActiveVariable(null)}><X size={18} /></button></header><div className="mapping-dialog-body"><div className="readonly-variable"><span>百应变量名 · 来自同步结果，不可修改</span><b>{activeVariable}</b></div><label className="profile-field">平台标准字段 <i>*</i><select required value={draft.standardField} onChange={(event) => setDraft({ ...draft, standardField: event.target.value })}>{standardFields.filter(([key]) => key !== 'customer_name' && key !== 'mobile').map(([key, label]) => <option value={key} key={key}>{label} · {key}</option>)}</select></label><div className="mapping-form-grid"><label className="profile-field">转换规则 <i>*</i><select value={draft.transform} onChange={(event) => setDraft({ ...draft, transform: event.target.value as TransformType })}><option>TEXT</option><option>DATE</option><option>MONEY</option><option>ENUM</option><option>TEMPLATE</option></select></label><label className="profile-field">空值策略 <i>*</i><select value={draft.emptyPolicy} onChange={(event) => setDraft({ ...draft, emptyPolicy: event.target.value as EmptyPolicy })}><option value="BLOCK">BLOCK · 缺失阻断</option><option value="DEFAULT">DEFAULT · 使用默认值</option></select></label></div>{draft.emptyPolicy === 'DEFAULT' ? <label className="profile-field">默认值 <i>*</i><input required value={draft.defaultValue} onChange={(event) => setDraft({ ...draft, defaultValue: event.target.value })} placeholder="字段为空时写入百应的值" /></label> : <div className="notice warn"><b>缺失即阻断：</b>客户该字段为空时会进入导入失败明细，不会静默提交到百应。</div>}<div className="mapping-flow-preview"><span>平台字段</span><code>{draft.standardField}</code><ArrowRight size={14} /><span>百应 properties</span><code>{activeVariable}</code></div></div><footer><p>保存后先进入草稿；统一发布后才供新任务使用。</p><div><button type="button" className="filter-button" onClick={() => setActiveVariable(null)}>取消</button><button className="primary-button">保存为草稿</button></div></footer></form></dialog> : null}
+  </div>;
 }
 
 export function BaiyingBillView() {
