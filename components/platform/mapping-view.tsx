@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Check, ChevronRight, Database, GitCompareArrows, History, RefreshCcw, Search, ShieldCheck, Trash2 } from 'lucide-react';
+import { Check, ChevronRight, GitCompareArrows, History, RefreshCcw, Search, ShieldCheck, Trash2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageIntro, Panel, Status } from './shared';
@@ -15,7 +15,8 @@ type IssueChange = 'NEW' | 'DRIFT' | 'REMOVED';
 type MappingRule = {
   id: string;
   variable: string;
-  standardField: string;
+  erpField: string;
+  crmField: string;
   transform: TransformType;
   transformConfig: string;
   emptyPolicy: EmptyPolicy;
@@ -24,42 +25,19 @@ type MappingRule = {
   version: number;
   sampleInput: string;
   sampleOutput: string;
-  builtin?: boolean;
 };
 
-type MappingDraft = Omit<MappingRule, 'id' | 'version' | 'status' | 'sampleOutput' | 'builtin'> & { remove?: boolean };
+type MappingDraft = Omit<MappingRule, 'id' | 'version' | 'status' | 'sampleOutput'> & { remove?: boolean };
 type MappingIssue = { id: string; variable: string; sceneNames: string[]; change: IssueChange; discoveredAt: string; note: string };
 type Scene = { id: string; name: string; robotDefId: string; companies: string; status: SceneStatus; coverage: number; expected: number; lastSync: string; missingVariables: string[]; issue: string };
 type VersionRecord = { version: number; publishedAt: string; publisher: string; ruleCount: number; change: string };
-type SourceFieldMap = { key: string; label: string; erpField: string; crmField: string; example: string; status: 'BOTH' | 'ERP_ONLY' | 'CRM_ONLY' };
-
-const standardFields = [
-  ['customer_name', '客户名称'], ['mobile', '联系方式'], ['wedding_date', '婚期'], ['package_interest', '套餐意向'],
-  ['store_name', '门店名称'], ['consultant_name', '顾问姓名'], ['budget_range', '预算范围'], ['dress_style', '礼服偏好'],
-  ['customer_level', '客户等级'], ['membership_benefit', '老客权益'],
-];
-
-const initialSourceFields: SourceFieldMap[] = [
-  { key: 'customer_name', label: '客户名称', erpField: 'customer_name', crmField: 'customerName', example: '王女士', status: 'BOTH' },
-  { key: 'mobile', label: '联系方式', erpField: 'mobile', crmField: 'phone', example: '13800000000', status: 'BOTH' },
-  { key: 'wedding_date', label: '婚期', erpField: 'wedding_date', crmField: 'marriage_date', example: '2026-10-18', status: 'BOTH' },
-  { key: 'package_interest', label: '套餐意向', erpField: 'package_interest', crmField: 'interest_package', example: '轻奢婚纱照', status: 'BOTH' },
-  { key: 'store_name', label: '门店名称', erpField: 'store_name', crmField: 'branch_name', example: '上海总店', status: 'BOTH' },
-  { key: 'consultant_name', label: '顾问姓名', erpField: 'consultant_name', crmField: 'owner_name', example: '陈顾问', status: 'BOTH' },
-  { key: 'budget_range', label: '预算范围', erpField: 'budget_range', crmField: 'budget', example: '8000-12000', status: 'BOTH' },
-  { key: 'dress_style', label: '礼服偏好', erpField: 'dress_style', crmField: 'gown_preference', example: '法式轻盈', status: 'BOTH' },
-  { key: 'customer_level', label: '客户等级', erpField: 'customer_level', crmField: '', example: 'VIP', status: 'ERP_ONLY' },
-  { key: 'membership_benefit', label: '老客权益', erpField: '', crmField: 'member_benefit', example: '周年加片', status: 'CRM_ONLY' },
-];
 
 const initialRules: MappingRule[] = [
-  { id: 'm1', variable: '客户名称', standardField: 'customer_name', transform: 'TEXT', transformConfig: '去除首尾空格', emptyPolicy: 'BLOCK', defaultValue: '', status: 'PUBLISHED', version: 12, sampleInput: ' 王女士 ', sampleOutput: '王女士', builtin: true },
-  { id: 'm2', variable: '联系方式', standardField: 'mobile', transform: 'TEXT', transformConfig: '去除首尾空格', emptyPolicy: 'BLOCK', defaultValue: '', status: 'PUBLISHED', version: 12, sampleInput: '13800000000', sampleOutput: '13800000000', builtin: true },
-  { id: 'm3', variable: '婚期', standardField: 'wedding_date', transform: 'DATE', transformConfig: 'YYYY-MM-DD', emptyPolicy: 'BLOCK', defaultValue: '', status: 'PUBLISHED', version: 12, sampleInput: '2026/10/18', sampleOutput: '2026-10-18' },
-  { id: 'm4', variable: '套餐意向', standardField: 'package_interest', transform: 'ENUM', transformConfig: 'A=轻奢婚纱照\nB=高定婚纱照', emptyPolicy: 'DEFAULT', defaultValue: '待确认', status: 'PUBLISHED', version: 12, sampleInput: 'A', sampleOutput: '轻奢婚纱照' },
-  { id: 'm5', variable: '门店名称', standardField: 'store_name', transform: 'TEXT', transformConfig: '去除首尾空格', emptyPolicy: 'BLOCK', defaultValue: '', status: 'PUBLISHED', version: 12, sampleInput: '上海总店', sampleOutput: '上海总店' },
-  { id: 'm6', variable: '顾问姓名', standardField: 'consultant_name', transform: 'TEMPLATE', transformConfig: '{{value}}老师', emptyPolicy: 'DEFAULT', defaultValue: '门店顾问', status: 'PUBLISHED', version: 12, sampleInput: '陈顾问', sampleOutput: '陈顾问老师' },
-  { id: 'm7', variable: '老客权益', standardField: 'membership_benefit', transform: 'TEXT', transformConfig: '去除首尾空格', emptyPolicy: 'DEFAULT', defaultValue: '周年礼遇', status: 'PUBLISHED', version: 11, sampleInput: '周年加片', sampleOutput: '周年加片' },
+  { id: 'm1', variable: '婚期', erpField: 'wedding_date', crmField: 'marriage_date', transform: 'DATE', transformConfig: 'YYYY-MM-DD', emptyPolicy: 'BLOCK', defaultValue: '', status: 'PUBLISHED', version: 12, sampleInput: '2026/10/18', sampleOutput: '2026-10-18' },
+  { id: 'm2', variable: '套餐意向', erpField: 'package_interest', crmField: 'interest_package', transform: 'ENUM', transformConfig: 'A=轻奢婚纱照\nB=高定婚纱照', emptyPolicy: 'DEFAULT', defaultValue: '待确认', status: 'PUBLISHED', version: 12, sampleInput: 'A', sampleOutput: '轻奢婚纱照' },
+  { id: 'm3', variable: '门店名称', erpField: 'store_name', crmField: 'branch_name', transform: 'TEXT', transformConfig: '去除首尾空格', emptyPolicy: 'BLOCK', defaultValue: '', status: 'PUBLISHED', version: 12, sampleInput: '上海总店', sampleOutput: '上海总店' },
+  { id: 'm4', variable: '顾问姓名', erpField: 'consultant_name', crmField: 'owner_name', transform: 'TEMPLATE', transformConfig: '{{value}}老师', emptyPolicy: 'DEFAULT', defaultValue: '门店顾问', status: 'PUBLISHED', version: 12, sampleInput: '陈顾问', sampleOutput: '陈顾问老师' },
+  { id: 'm5', variable: '老客权益', erpField: '', crmField: 'member_benefit', transform: 'TEXT', transformConfig: '去除首尾空格', emptyPolicy: 'DEFAULT', defaultValue: '周年礼遇', status: 'PUBLISHED', version: 11, sampleInput: '周年加片', sampleOutput: '周年加片' },
 ];
 
 const initialIssues: MappingIssue[] = [
@@ -91,9 +69,9 @@ const initialScenes: Scene[] = [
 ];
 
 const initialVersions: VersionRecord[] = [
-  { version: 12, publishedAt: '2026-09-01 17:24', publisher: '王琪', ruleCount: 7, change: '新增顾问姓名模板转换，调整套餐意向默认值' },
-  { version: 11, publishedAt: '2026-08-22 14:08', publisher: '李萌', ruleCount: 7, change: '新增老客权益映射' },
-  { version: 10, publishedAt: '2026-08-12 10:32', publisher: '王琪', ruleCount: 6, change: '更新套餐意向枚举规则' },
+  { version: 12, publishedAt: '2026-09-01 17:24', publisher: '王琪', ruleCount: 5, change: '新增顾问姓名模板转换，调整套餐意向默认值' },
+  { version: 11, publishedAt: '2026-08-22 14:08', publisher: '李萌', ruleCount: 5, change: '新增老客权益映射' },
+  { version: 10, publishedAt: '2026-08-12 10:32', publisher: '王琪', ruleCount: 4, change: '更新套餐意向枚举规则' },
 ];
 
 const sceneStatusMeta: Record<SceneStatus, { label: string; tone: 'green' | 'amber' | 'red' | 'blue' | 'gray'; short: string }> = {
@@ -110,7 +88,7 @@ const issueMeta: Record<IssueChange, { label: string; symbol: string; tone: 'amb
   REMOVED: { label: '变量删除', symbol: '−', tone: 'gray' },
 };
 
-const defaultDraft = (variable = ''): MappingDraft => ({ variable, standardField: 'budget_range', transform: 'TEXT', transformConfig: '去除首尾空格', emptyPolicy: 'BLOCK', defaultValue: '', sampleInput: '' });
+const defaultDraft = (variable = ''): MappingDraft => ({ variable, erpField: '', crmField: '', transform: 'TEXT', transformConfig: '去除首尾空格', emptyPolicy: 'BLOCK', defaultValue: '', sampleInput: '' });
 
 function applyPreview(draft: MappingDraft) {
   const source = draft.sampleInput.trim();
@@ -131,21 +109,17 @@ function applyPreview(draft: MappingDraft) {
 
 export function MappingView() {
   const [rules, setRules] = useState(initialRules);
-  const [sourceFields, setSourceFields] = useState(initialSourceFields);
   const [drafts, setDrafts] = useState<MappingDraft[]>([]);
   const [issues, setIssues] = useState(initialIssues);
   const [scenes, setScenes] = useState(initialScenes);
   const [versions, setVersions] = useState(initialVersions);
-  const [activeTab, setActiveTab] = useState('sources');
+  const [activeTab, setActiveTab] = useState('issues');
   const [query, setQuery] = useState('');
-  const [sourceQuery, setSourceQuery] = useState('');
   const [ruleStatus, setRuleStatus] = useState<'ALL' | 'PUBLISHED' | 'DRAFT' | 'REMOVED'>('ALL');
   const [sceneQuery, setSceneQuery] = useState('');
   const [sceneStatus, setSceneStatus] = useState<'ALL' | SceneStatus>('ALL');
   const [editVariable, setEditVariable] = useState<string | null>(null);
   const [draftForm, setDraftForm] = useState<MappingDraft>(defaultDraft());
-  const [editSourceKey, setEditSourceKey] = useState<string | null>(null);
-  const [sourceForm, setSourceForm] = useState<SourceFieldMap>(initialSourceFields[0]);
   const [selectedScene, setSelectedScene] = useState<Scene | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -160,17 +134,14 @@ export function MappingView() {
       return draft ? { ...rule, ...draft, sampleOutput: applyPreview(draft), displayStatus: draft.remove ? 'REMOVED' : 'DRAFT' } : { ...rule, displayStatus: rule.status };
     });
     drafts.filter((draft) => !rules.some((rule) => rule.variable === draft.variable)).forEach((draft, index) => merged.push({ id: `draft-${index}`, ...draft, status: 'PUBLISHED', version: currentVersion + 1, sampleOutput: applyPreview(draft), displayStatus: 'DRAFT' } as MappingRule & { displayStatus: string }));
-    return merged.filter((rule) => `${rule.variable}${rule.standardField}${rule.transform}`.toLowerCase().includes(query.toLowerCase()) && (ruleStatus === 'ALL' || rule.displayStatus === ruleStatus));
+    return merged.filter((rule) => `${rule.variable}${rule.erpField}${rule.crmField}${rule.transform}`.toLowerCase().includes(query.toLowerCase()) && (ruleStatus === 'ALL' || rule.displayStatus === ruleStatus));
   }, [rules, drafts, query, ruleStatus, currentVersion]);
   const filteredScenes = scenes.filter((scene) => `${scene.name}${scene.robotDefId}${scene.companies}`.toLowerCase().includes(sceneQuery.toLowerCase()) && (sceneStatus === 'ALL' || scene.status === sceneStatus));
-  const filteredSourceFields = sourceFields.filter((field) => `${field.label}${field.key}${field.erpField}${field.crmField}`.toLowerCase().includes(sourceQuery.toLowerCase()));
-  const selectedSourceField = sourceFields.find((field) => field.key === draftForm.standardField);
 
   const openMapping = (variable: string) => {
     const savedDraft = drafts.find((item) => item.variable === variable);
     const existing = rules.find((rule) => rule.variable === variable);
-    const suggested = standardFields.find((field) => variable.includes(field[1]) || field[1].includes(variable))?.[0] ?? 'budget_range';
-    setDraftForm(savedDraft ?? (existing ? { variable, standardField: existing.standardField, transform: existing.transform, transformConfig: existing.transformConfig, emptyPolicy: existing.emptyPolicy, defaultValue: existing.defaultValue, sampleInput: existing.sampleInput } : { ...defaultDraft(variable), standardField: suggested, sampleInput: variable === '预算范围' ? '8000-12000' : variable === '礼服风格' ? '法式轻盈' : 'VIP' }));
+    setDraftForm(savedDraft ?? (existing ? { variable, erpField: existing.erpField, crmField: existing.crmField, transform: existing.transform, transformConfig: existing.transformConfig, emptyPolicy: existing.emptyPolicy, defaultValue: existing.defaultValue, sampleInput: existing.sampleInput } : { ...defaultDraft(variable), sampleInput: variable === '预算范围' ? '8000-12000' : variable === '礼服风格' ? '法式轻盈' : 'VIP' }));
     setEditVariable(variable);
   };
   const saveDraft = (event: { preventDefault(): void }) => {
@@ -179,23 +150,10 @@ export function MappingView() {
     setEditVariable(null);
     setFeedback(`“${draftForm.variable}”已保存为草稿；相关场景仍保持阻断，发布成功后才会重新计算状态。`);
   };
-  const openSourceMapping = (key: string) => {
-    const source = sourceFields.find((field) => field.key === key);
-    if (!source) return;
-    setSourceForm(source);
-    setEditSourceKey(key);
-  };
-  const saveSourceMapping = (event: { preventDefault(): void }) => {
-    event.preventDefault();
-    const status = sourceForm.erpField && sourceForm.crmField ? 'BOTH' : sourceForm.erpField ? 'ERP_ONLY' : 'CRM_ONLY';
-    setSourceFields((current) => current.map((field) => field.key === editSourceKey ? { ...sourceForm, status } : field));
-    setEditSourceKey(null);
-    setFeedback(`“${sourceForm.label}”的 ERP / CRM 来源字段已更新。后续百应映射继续使用标准字段 ${sourceForm.key}。`);
-  };
   const stageRemoval = (variable: string) => {
     const existing = rules.find((rule) => rule.variable === variable);
     if (!existing) return;
-    const removal: MappingDraft = { variable, standardField: existing.standardField, transform: existing.transform, transformConfig: existing.transformConfig, emptyPolicy: existing.emptyPolicy, defaultValue: existing.defaultValue, sampleInput: existing.sampleInput, remove: true };
+    const removal: MappingDraft = { variable, erpField: existing.erpField, crmField: existing.crmField, transform: existing.transform, transformConfig: existing.transformConfig, emptyPolicy: existing.emptyPolicy, defaultValue: existing.defaultValue, sampleInput: existing.sampleInput, remove: true };
     setDrafts((current) => current.some((item) => item.variable === variable) ? current.map((item) => item.variable === variable ? removal : item) : [...current, removal]);
     setFeedback(`“${variable}”已标记为待移除；发布前旧版本仍保持生效。`);
   };
@@ -234,7 +192,7 @@ export function MappingView() {
   };
 
   return <div className="mapping-center mapping-center-complete">
-    <PageIntro eyebrow="GLOBAL VARIABLE GOVERNANCE" title="字段映射中心" summary="统一维护百应话术变量与平台标准字段。只有变量快照正常且映射已发布的场景，才允许创建新任务或导入名单。" action={<button className="primary-button sync-button" onClick={syncVariables} disabled={syncing}><RefreshCcw size={14} className={syncing ? 'spin' : ''} />{syncing ? '正在同步…' : '立即同步'}</button>} />
+    <PageIntro eyebrow="BAIYING VARIABLE MAPPING" title="字段映射中心" summary="只处理百应 4.10 接口返回的话术变量：为每个变量分别指定 ERP 字段和 CRM 字段，发布后供任务与名单导入使用。" action={<button className="primary-button sync-button" onClick={syncVariables} disabled={syncing}><RefreshCcw size={14} className={syncing ? 'spin' : ''} />{syncing ? '正在同步…' : '同步百应变量'}</button>} />
     {feedback ? <output className="notice mapping-feedback"><Check size={14} />{feedback}</output> : null}
 
     <section className="inspection-board" aria-label="变量巡检">
@@ -242,22 +200,21 @@ export function MappingView() {
       <div className="inspection-metrics inspection-metrics-six"><article><span>场景总数</span><b>{scenes.length}</b><small>覆盖 6 家公司</small></article>{(['ACTIVE', 'PENDING_MAPPING', 'DRIFT_DETECTED', 'STALE_SYNC', 'DISABLED'] as SceneStatus[]).map((status) => <article className={status === 'ACTIVE' ? 'metric-ok' : status === 'PENDING_MAPPING' ? 'metric-warn' : status === 'DRIFT_DETECTED' ? 'metric-danger' : 'metric-muted'} key={status}><span>{sceneStatusMeta[status].short}</span><b>{counts[status]}</b><small>{status === 'ACTIVE' ? '允许新任务 / 导入' : status === 'DISABLED' ? '管理员停用' : '阻断新任务 / 导入'}</small></article>)}</div>
     </section>
 
-    <section className="mapping-guide" aria-label="字段映射操作说明">
-      <div className="guide-copy"><span>先看懂这条链路</span><h3>ERP 和 CRM 先统一，再映射给百应</h3><p>不需要在百应变量上二选一。平台会先把两个系统的不同字段名归一成同一个标准字段。</p></div>
+    <section className="mapping-guide mapping-guide-direct" aria-label="字段映射操作说明">
+      <div className="guide-copy"><span>映射范围</span><h3>只映射 4.10 接口拉回的话术变量</h3><p>客户名称、手机号等普通业务字段不在这里维护；百应返回一个变量，平台才新增一条映射。</p></div>
       <div className="mapping-chain-demo">
+        <div className="baiying-node"><span>4.10 返回变量</span><b>婚期</b><small>变量名不可手工新增</small></div><ChevronRight size={17} />
         <div className="source-system-pair"><p><span className="source-badge source-erp">ERP</span><code>wedding_date</code></p><p><span className="source-badge source-crm">CRM</span><code>marriage_date</code></p></div><ChevronRight size={17} />
-        <div className="standard-node"><span>平台标准字段</span><b>wedding_date</b><small>两端数据在这里统一</small></div><ChevronRight size={17} />
-        <div className="baiying-node"><span>百应话术变量</span><b>婚期</b><small>写入 properties.婚期</small></div>
+        <div className="standard-node"><span>导入百应</span><b>properties.婚期</b><small>按数据来源读取对应字段</small></div>
       </div>
-      <button className="guide-action" onClick={() => setActiveTab('sources')}>查看 ERP / CRM 来源字段 <ChevronRight size={13} /></button>
+      <button className="guide-action" onClick={() => setActiveTab('rules')}>查看变量映射 <ChevronRight size={13} /></button>
     </section>
 
     <Tabs value={activeTab} onValueChange={setActiveTab} className="mapping-tabs-shell">
       <TabsList variant="line" className="mapping-tabs-list" aria-label="字段映射功能区">
         <TabsTrigger value="issues" className="mapping-tab-trigger">待处理变量 <small>{issues.length}</small></TabsTrigger>
-        <TabsTrigger value="sources" className="mapping-tab-trigger">ERP / CRM 来源 <small>{sourceFields.length}</small></TabsTrigger>
         <TabsTrigger value="scenes" className="mapping-tab-trigger">场景状态 <small>{scenes.length}</small></TabsTrigger>
-        <TabsTrigger value="rules" className="mapping-tab-trigger">百应映射规则 <small>{rules.filter((rule) => rule.status === 'PUBLISHED').length}</small></TabsTrigger>
+        <TabsTrigger value="rules" className="mapping-tab-trigger">变量映射 <small>{rules.filter((rule) => rule.status === 'PUBLISHED').length}</small></TabsTrigger>
         <TabsTrigger value="versions" className="mapping-tab-trigger">版本记录 <small>{versions.length}</small></TabsTrigger>
       </TabsList>
 
@@ -271,20 +228,16 @@ export function MappingView() {
         {drafts.length ? <div className="draft-publish-bar"><div><ShieldCheck size={17} /><span><b>{drafts.length} 项变更已保存为草稿</b><small>草稿不会解除场景阻断；发布后生成不可变版本 v{currentVersion + 1}</small></span></div><button className="primary-button" onClick={() => setPublishOpen(true)}>审核并发布</button></div> : null}
       </Panel></TabsContent>
 
-      <TabsContent value="sources" className="mapping-tab-panel"><Panel title="ERP / CRM 来源字段" meta="先统一到平台标准字段"><div className="source-explainer"><Database size={17} /><div><b>这里用来区分 ERP 和 CRM 字段</b><p>蓝色列只接收 ERP 入参，橙色列只接收 CRM 入参。两个来源统一后，百应映射规则只需要引用中间的标准字段。</p></div></div><div className="rules-toolbar"><label className="search-box"><Search size={15} /><input value={sourceQuery} onChange={(event) => setSourceQuery(event.target.value)} placeholder="搜索标准字段、ERP 字段或 CRM 字段" /></label><span className="source-coverage-legend"><i className="source-dot erp-dot" />ERP <i className="source-dot crm-dot" />CRM</span></div><div className="table-wrap"><table className="data-table source-mapping-table"><thead><tr><th>业务含义</th><th><span className="source-header source-erp">ERP 原始字段</span></th><th><span className="source-header source-crm">CRM 原始字段</span></th><th>统一后的平台标准字段</th><th>来源覆盖</th><th>样例值</th><th>操作</th></tr></thead><tbody>{filteredSourceFields.map((field) => <tr key={field.key}><td><b>{field.label}</b></td><td><div className="source-field-cell source-field-erp"><span>ERP</span>{field.erpField ? <code>{field.erpField}</code> : <em>未配置</em>}</div></td><td><div className="source-field-cell source-field-crm"><span>CRM</span>{field.crmField ? <code>{field.crmField}</code> : <em>未配置</em>}</div></td><td><span className="mapping-code">{field.key}</span></td><td>{field.status === 'BOTH' ? <Status tone="green">ERP + CRM</Status> : <Status tone="amber">仅 {field.status === 'ERP_ONLY' ? 'ERP' : 'CRM'}</Status>}</td><td><span className="sample-value">{field.example}</span></td><td><button className="table-action" onClick={() => openSourceMapping(field.key)}>编辑来源</button></td></tr>)}</tbody></table></div></Panel></TabsContent>
-
       <TabsContent value="scenes" className="mapping-tab-panel"><Panel title="话术场景就绪状态" meta="只有 ACTIVE 可创建新任务"><div className="rules-toolbar"><label className="search-box"><Search size={15} /><input value={sceneQuery} onChange={(event) => setSceneQuery(event.target.value)} placeholder="搜索话术名称、话术 ID 或公司" /></label><select className="filter-button" aria-label="场景状态" value={sceneStatus} onChange={(event) => setSceneStatus(event.target.value as 'ALL' | SceneStatus)}><option value="ALL">全部状态</option>{Object.entries(sceneStatusMeta).map(([value, meta]) => <option value={value} key={value}>{meta.short}</option>)}</select></div><div className="table-wrap"><table className="data-table scene-readiness-table"><thead><tr><th>话术场景</th><th>公司覆盖</th><th>变量覆盖</th><th>最后成功同步</th><th>就绪状态</th><th>问题摘要</th><th>操作</th></tr></thead><tbody>{filteredScenes.map((scene) => <tr key={scene.id}><td><b>{scene.name}</b><span className="table-meta">{scene.robotDefId}</span></td><td>{scene.companies}</td><td><b>{scene.coverage} / {scene.expected}</b><div className="coverage-track"><i style={{ width: `${scene.coverage / scene.expected * 100}%` }} /></div></td><td>{scene.lastSync}</td><td><Status tone={sceneStatusMeta[scene.status].tone}>{sceneStatusMeta[scene.status].label}</Status></td><td className="scene-issue-cell">{scene.issue || '—'}</td><td><button className="table-action" onClick={() => setSelectedScene(scene)}>查看详情</button></td></tr>)}</tbody></table></div></Panel></TabsContent>
 
-      <TabsContent value="rules" className="mapping-tab-panel"><Panel title="全局映射规则" meta={`当前发布版本 v${currentVersion}`} className="rules-panel"><div className="rules-toolbar"><label className="search-box"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索百应变量、标准字段或转换类型" /></label><select className="filter-button" aria-label="规则状态" value={ruleStatus} onChange={(event) => setRuleStatus(event.target.value as typeof ruleStatus)}><option value="ALL">全部状态</option><option value="PUBLISHED">已发布</option><option value="DRAFT">有草稿</option><option value="REMOVED">已移除</option></select><button className="primary-button" onClick={() => setPublishOpen(true)} disabled={!drafts.length}>发布草稿{drafts.length ? `（${drafts.length}）` : ''}</button></div><div className="rule-scope"><span>全局规则</span><p>对全部影楼、公司与话术场景生效。百应变量名只能来自同步结果，不支持手工新增。</p></div><div className="table-wrap"><table className="data-table mapping-table"><thead><tr><th>百应变量名</th><th>平台标准字段</th><th>ERP / CRM 来源</th><th>写入位置</th><th>转换规则</th><th>空值策略</th><th>版本状态</th><th>样例预览</th><th>操作</th></tr></thead><tbody>{ruleRows.map((rule) => <tr key={rule.id}><td><b>{rule.variable}</b>{rule.builtin ? <span className="builtin-tag">百应默认</span> : null}</td><td><span className="mapping-code">{rule.standardField}</span></td><td><SourceCoverage fieldKey={rule.standardField} sourceFields={sourceFields} /></td><td><span className="payload-path">{rule.builtin ? (rule.standardField === 'mobile' ? 'phone' : 'name') : `properties.${rule.variable}`}</span></td><td><b>{rule.transform}</b><small className="table-meta config-summary">{rule.transformConfig}</small></td><td>{rule.emptyPolicy === 'BLOCK' ? <Status tone="red">缺失阻断</Status> : <div><Status tone="blue">使用默认值</Status><small className="table-meta">{rule.defaultValue}</small></div>}</td><td><Status tone={rule.displayStatus === 'PUBLISHED' ? 'green' : rule.displayStatus === 'REMOVED' ? 'gray' : 'amber'}>{rule.displayStatus === 'PUBLISHED' ? `v${rule.version} 已发布` : rule.displayStatus === 'REMOVED' ? '待移除 / 已移除' : '草稿待发布'}</Status></td><td><span className="sample-preview"><small>{rule.sampleInput || '空值'}</small>{rule.sampleOutput}</span></td><td>{rule.builtin ? <span className="locked-rule">系统保护</span> : rule.displayStatus === 'REMOVED' ? '—' : <button className="table-action" onClick={() => openMapping(rule.variable)}>编辑</button>}</td></tr>)}</tbody></table></div>{!ruleRows.length ? <div className="rule-empty">没有符合条件的映射规则</div> : null}</Panel></TabsContent>
+      <TabsContent value="rules" className="mapping-tab-panel"><Panel title="百应话术变量映射" meta={`当前发布版本 v${currentVersion}`} className="rules-panel"><div className="rules-toolbar"><label className="search-box"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索百应变量、ERP 字段或 CRM 字段" /></label><select className="filter-button" aria-label="规则状态" value={ruleStatus} onChange={(event) => setRuleStatus(event.target.value as typeof ruleStatus)}><option value="ALL">全部状态</option><option value="PUBLISHED">已发布</option><option value="DRAFT">有草稿</option><option value="REMOVED">已移除</option></select><button className="primary-button" onClick={() => setPublishOpen(true)} disabled={!drafts.length}>发布草稿{drafts.length ? `（${drafts.length}）` : ''}</button></div><div className="rule-scope"><span>变量来自百应 4.10 接口</span><p>这里只展示接口同步到的话术变量。每个变量直接配置 ERP 和 CRM 的取值字段，不维护额外的全量业务字段库。</p></div><div className="table-wrap"><table className="data-table mapping-table direct-mapping-table"><thead><tr><th>百应话术变量</th><th><span className="source-header source-erp">ERP 取值字段</span></th><th><span className="source-header source-crm">CRM 取值字段</span></th><th>写入百应</th><th>转换规则</th><th>空值策略</th><th>版本状态</th><th>样例预览</th><th>操作</th></tr></thead><tbody>{ruleRows.map((rule) => <tr key={rule.id}><td><b>{rule.variable}</b><small className="table-meta">4.10 接口同步</small></td><td><MappedSourceField source="ERP" value={rule.erpField} /></td><td><MappedSourceField source="CRM" value={rule.crmField} /></td><td><span className="payload-path">properties.{rule.variable}</span></td><td><b>{rule.transform}</b><small className="table-meta config-summary">{rule.transformConfig}</small></td><td>{rule.emptyPolicy === 'BLOCK' ? <Status tone="red">缺失阻断</Status> : <div><Status tone="blue">使用默认值</Status><small className="table-meta">{rule.defaultValue}</small></div>}</td><td><Status tone={rule.displayStatus === 'PUBLISHED' ? 'green' : rule.displayStatus === 'REMOVED' ? 'gray' : 'amber'}>{rule.displayStatus === 'PUBLISHED' ? `v${rule.version} 已发布` : rule.displayStatus === 'REMOVED' ? '待移除 / 已移除' : '草稿待发布'}</Status></td><td><span className="sample-preview"><small>{rule.sampleInput || '空值'}</small>{rule.sampleOutput}</span></td><td>{rule.displayStatus === 'REMOVED' ? '—' : <button className="table-action" onClick={() => openMapping(rule.variable)}>编辑映射</button>}</td></tr>)}</tbody></table></div>{!ruleRows.length ? <div className="rule-empty">没有符合条件的变量映射</div> : null}</Panel></TabsContent>
 
       <TabsContent value="versions" className="mapping-tab-panel"><Panel title="发布版本记录" meta="版本发布后不可修改"><div className="version-list">{versions.map((version, index) => <article key={version.version}><div className="version-marker"><History size={15} /></div><div><span className="mapping-code">v{version.version}{index === 0 ? ' · 当前' : ''}</span><h4>{version.change}</h4><p>{version.publisher} · {version.publishedAt}</p></div><dl><div><dt>规则数量</dt><dd>{version.ruleCount}</dd></div><div><dt>适用范围</dt><dd>全局</dd></div></dl><button className="table-action" onClick={() => setFeedback(`已选择 v${version.version}：历史版本只读，可用于核对已创建任务快照。`)}>查看快照</button></article>)}</div></Panel></TabsContent>
     </Tabs>
 
-    <Dialog open={Boolean(editVariable)} onOpenChange={(open) => { if (!open) setEditVariable(null); }}><DialogContent className="mapping-dialog max-w-[620px] gap-0 p-0" showCloseButton={false}><form onSubmit={saveDraft}><DialogHeader className="mapping-dialog-header"><div><p className="eyebrow">MAPPING DRAFT</p><DialogTitle>配置变量映射</DialogTitle><DialogDescription>选择平台标准字段后，系统会同时显示它对应的 ERP 和 CRM 来源字段。</DialogDescription></div><button type="button" className="dialog-close-button" aria-label="关闭" onClick={() => setEditVariable(null)}>×</button></DialogHeader><div className="mapping-dialog-body"><div className="readonly-variable"><span>百应变量名</span><b>{editVariable}</b></div><label className="profile-field">平台标准字段 <i>*</i><select required value={draftForm.standardField} onChange={(event) => setDraftForm({ ...draftForm, standardField: event.target.value })}>{standardFields.filter(([key]) => key !== 'customer_name' && key !== 'mobile').map(([key, label]) => <option value={key} key={key}>{label} · {key}</option>)}</select></label>{selectedSourceField ? <div className="selected-source-chain"><div><span className="source-badge source-erp">ERP</span><code>{selectedSourceField.erpField || "未配置"}</code></div><ChevronRight size={13} /><div><span className="source-badge source-crm">CRM</span><code>{selectedSourceField.crmField || "未配置"}</code></div><ChevronRight size={13} /><div className="selected-standard-field"><span>统一为</span><code>{selectedSourceField.key}</code></div></div> : null}<div className="mapping-form-grid"><label className="profile-field">转换规则 <i>*</i><select value={draftForm.transform} onChange={(event) => { const transform = event.target.value as TransformType; setDraftForm({ ...draftForm, transform, transformConfig: transform === 'DATE' ? 'YYYY-MM-DD' : transform === 'MONEY' ? '元 · 保留2位' : transform === 'ENUM' ? 'A=轻奢\nB=高定' : transform === 'TEMPLATE' ? '{{value}}' : '去除首尾空格' }); }}><option>TEXT</option><option>DATE</option><option>MONEY</option><option>ENUM</option><option>TEMPLATE</option></select></label><label className="profile-field">空值策略 <i>*</i><select value={draftForm.emptyPolicy} onChange={(event) => setDraftForm({ ...draftForm, emptyPolicy: event.target.value as EmptyPolicy })}><option value="BLOCK">BLOCK · 缺失阻断</option><option value="DEFAULT">DEFAULT · 使用默认值</option></select></label></div><TransformConfigEditor draft={draftForm} onChange={setDraftForm} />{draftForm.emptyPolicy === 'DEFAULT' ? <label className="profile-field">默认值 <i>*</i><input required value={draftForm.defaultValue} onChange={(event) => setDraftForm({ ...draftForm, defaultValue: event.target.value })} placeholder="字段为空或转换未命中时使用" /></label> : <div className="notice warn"><b>缺失即阻断：</b>客户该字段为空时进入导入失败明细，不会静默提交到百应。</div>}<div className="preview-lab"><label className="profile-field">测试原始值<input value={draftForm.sampleInput} onChange={(event) => setDraftForm({ ...draftForm, sampleInput: event.target.value })} placeholder="输入一条原始值查看转换结果" /></label><div><span>转换结果</span><b>{applyPreview(draftForm)}</b><small>写入 properties.{editVariable}</small></div></div></div><DialogFooter className="mapping-dialog-footer"><p>保存后仍不会解除阻断，必须统一发布。</p><div><button type="button" className="filter-button" onClick={() => setEditVariable(null)}>取消</button><button className="primary-button">保存为草稿</button></div></DialogFooter></form></DialogContent></Dialog>
+    <Dialog open={Boolean(editVariable)} onOpenChange={(open) => { if (!open) setEditVariable(null); }}><DialogContent className="mapping-dialog max-w-[620px] gap-0 p-0" showCloseButton={false}><form onSubmit={saveDraft}><DialogHeader className="mapping-dialog-header"><div><p className="eyebrow">4.10 VARIABLE MAPPING</p><DialogTitle>配置 ERP / CRM 映射</DialogTitle><DialogDescription>变量名由百应 4.10 接口同步，只需填写 ERP 和 CRM 各自用哪个字段提供值。</DialogDescription></div><button type="button" className="dialog-close-button" aria-label="关闭" onClick={() => setEditVariable(null)}>×</button></DialogHeader><div className="mapping-dialog-body"><div className="readonly-variable"><span>百应话术变量 · 4.10 接口返回</span><b>{editVariable}</b></div><div className="source-edit-grid variable-source-grid"><label className="source-input source-input-erp"><span><i>ERP</i> 取值字段</span><input value={draftForm.erpField} onChange={(event) => setDraftForm({ ...draftForm, erpField: event.target.value })} placeholder="例如：wedding_date" /><small>ERP 数据导入时读取此字段</small></label><label className="source-input source-input-crm"><span><i>CRM</i> 取值字段</span><input value={draftForm.crmField} onChange={(event) => setDraftForm({ ...draftForm, crmField: event.target.value })} placeholder="例如：marriage_date" /><small>CRM 数据导入时读取此字段</small></label></div><p className="mapping-source-hint">至少配置一个来源；ERP 数据只读取 ERP 字段，CRM 数据只读取 CRM 字段。</p><div className="mapping-form-grid"><label className="profile-field">转换规则 <i>*</i><select value={draftForm.transform} onChange={(event) => { const transform = event.target.value as TransformType; setDraftForm({ ...draftForm, transform, transformConfig: transform === 'DATE' ? 'YYYY-MM-DD' : transform === 'MONEY' ? '元 · 保留2位' : transform === 'ENUM' ? 'A=轻奢\nB=高定' : transform === 'TEMPLATE' ? '{{value}}' : '去除首尾空格' }); }}><option>TEXT</option><option>DATE</option><option>MONEY</option><option>ENUM</option><option>TEMPLATE</option></select></label><label className="profile-field">空值策略 <i>*</i><select value={draftForm.emptyPolicy} onChange={(event) => setDraftForm({ ...draftForm, emptyPolicy: event.target.value as EmptyPolicy })}><option value="BLOCK">BLOCK · 缺失阻断</option><option value="DEFAULT">DEFAULT · 使用默认值</option></select></label></div><TransformConfigEditor draft={draftForm} onChange={setDraftForm} />{draftForm.emptyPolicy === 'DEFAULT' ? <label className="profile-field">默认值 <i>*</i><input required value={draftForm.defaultValue} onChange={(event) => setDraftForm({ ...draftForm, defaultValue: event.target.value })} placeholder="字段为空或转换未命中时使用" /></label> : <div className="notice warn"><b>缺失即阻断：</b>对应来源字段为空时进入导入失败明细，不会静默提交到百应。</div>}<div className="preview-lab"><label className="profile-field">测试原始值<input value={draftForm.sampleInput} onChange={(event) => setDraftForm({ ...draftForm, sampleInput: event.target.value })} placeholder="输入一条原始值查看转换结果" /></label><div><span>转换结果</span><b>{applyPreview(draftForm)}</b><small>写入 properties.{editVariable}</small></div></div></div><DialogFooter className="mapping-dialog-footer"><p>保存后仍不会解除阻断，必须统一发布。</p><div><button type="button" className="filter-button" onClick={() => setEditVariable(null)}>取消</button><button className="primary-button" disabled={!draftForm.erpField && !draftForm.crmField}>保存为草稿</button></div></DialogFooter></form></DialogContent></Dialog>
 
-    <Dialog open={Boolean(editSourceKey)} onOpenChange={(open) => { if (!open) setEditSourceKey(null); }}><DialogContent className="source-edit-dialog max-w-[570px]" showCloseButton={false}><form onSubmit={saveSourceMapping}><DialogHeader><DialogTitle>配置 ERP / CRM 来源字段</DialogTitle><DialogDescription>分别填写两个系统提交的原始字段名，它们会统一转换为同一个平台标准字段。</DialogDescription></DialogHeader><div className="source-edit-standard"><span>平台标准字段</span><b>{sourceForm.label}</b><code>{sourceForm.key}</code></div><div className="source-edit-grid"><label className="source-input source-input-erp"><span><i>ERP</i> 原始字段名</span><input value={sourceForm.erpField} onChange={(event) => setSourceForm({ ...sourceForm, erpField: event.target.value })} placeholder="例如：wedding_date" /><small>ERP 请求中读取此字段</small></label><label className="source-input source-input-crm"><span><i>CRM</i> 原始字段名</span><input value={sourceForm.crmField} onChange={(event) => setSourceForm({ ...sourceForm, crmField: event.target.value })} placeholder="例如：marriage_date" /><small>CRM 请求中读取此字段</small></label></div><div className="source-normalize-preview"><div><span className="source-badge source-erp">ERP</span><code>{sourceForm.erpField || '未配置'}</code></div><div><span className="source-badge source-crm">CRM</span><code>{sourceForm.crmField || '未配置'}</code></div><ChevronRight size={15} /><div className="selected-standard-field"><span>统一输出</span><code>{sourceForm.key}</code></div></div><div className="notice"><b>注意：</b>这里仅解决 ERP、CRM 字段名不同的问题；对应哪个百应话术变量，请在“百应映射规则”中配置。</div><DialogFooter className="source-edit-footer"><button type="button" className="filter-button" onClick={() => setEditSourceKey(null)}>取消</button><button className="primary-button" disabled={!sourceForm.erpField && !sourceForm.crmField}>保存来源字段</button></DialogFooter></form></DialogContent></Dialog>
-
-    <Dialog open={publishOpen} onOpenChange={setPublishOpen}><DialogContent className="publish-dialog max-w-[540px]" showCloseButton={false}><DialogHeader><DialogTitle>发布全局映射版本 v{currentVersion + 1}</DialogTitle><DialogDescription>发布后，新创建任务和新名单导入将锁定此版本；已创建任务不受影响。</DialogDescription></DialogHeader><div className="publish-summary"><div><span>待发布变更</span><b>{drafts.length}</b></div><div><span>新增 / 修改</span><b>{drafts.filter((draft) => !draft.remove).length}</b></div><div><span>移除规则</span><b>{drafts.filter((draft) => draft.remove).length}</b></div></div><div className="publish-change-list">{drafts.map((draft) => <p key={draft.variable}><span>{draft.remove ? '移除' : rules.some((rule) => rule.variable === draft.variable) ? '修改' : '新增'}</span><b>{draft.variable}</b><small>{draft.remove ? '旧版本继续保留快照' : `${draft.standardField} · ${draft.transform}`}</small></p>)}</div><div className="notice warn"><b>发布前确认：</b>版本发布后不可原地修改，如需调整必须创建新版本。</div><DialogFooter className="publish-footer"><button className="filter-button" onClick={() => setPublishOpen(false)}>取消</button><button className="primary-button" onClick={publishDrafts} disabled={!drafts.length}>确认发布</button></DialogFooter></DialogContent></Dialog>
+    <Dialog open={publishOpen} onOpenChange={setPublishOpen}><DialogContent className="publish-dialog max-w-[540px]" showCloseButton={false}><DialogHeader><DialogTitle>发布全局映射版本 v{currentVersion + 1}</DialogTitle><DialogDescription>发布后，新创建任务和新名单导入将锁定此版本；已创建任务不受影响。</DialogDescription></DialogHeader><div className="publish-summary"><div><span>待发布变更</span><b>{drafts.length}</b></div><div><span>新增 / 修改</span><b>{drafts.filter((draft) => !draft.remove).length}</b></div><div><span>移除规则</span><b>{drafts.filter((draft) => draft.remove).length}</b></div></div><div className="publish-change-list">{drafts.map((draft) => <p key={draft.variable}><span>{draft.remove ? '移除' : rules.some((rule) => rule.variable === draft.variable) ? '修改' : '新增'}</span><b>{draft.variable}</b><small>{draft.remove ? '旧版本继续保留快照' : `ERP ${draft.erpField || '—'} / CRM ${draft.crmField || '—'} · ${draft.transform}`}</small></p>)}</div><div className="notice warn"><b>发布前确认：</b>版本发布后不可原地修改，如需调整必须创建新版本。</div><DialogFooter className="publish-footer"><button className="filter-button" onClick={() => setPublishOpen(false)}>取消</button><button className="primary-button" onClick={publishDrafts} disabled={!drafts.length}>确认发布</button></DialogFooter></DialogContent></Dialog>
 
     <Dialog open={Boolean(selectedScene)} onOpenChange={(open) => { if (!open) setSelectedScene(null); }}><DialogContent className="scene-dialog max-w-[610px]" showCloseButton={false}><DialogHeader><DialogTitle>{selectedScene?.name}</DialogTitle><DialogDescription>{selectedScene?.robotDefId} · {selectedScene?.companies} · 最近同步 {selectedScene?.lastSync}</DialogDescription></DialogHeader>{selectedScene ? <><div className="scene-detail-status"><Status tone={sceneStatusMeta[selectedScene.status].tone}>{sceneStatusMeta[selectedScene.status].label}</Status><p>{selectedScene.issue || '变量集合与已发布映射一致，可以创建新任务和导入名单。'}</p></div><div className="scene-variable-summary"><div><span>变量覆盖</span><b>{selectedScene.coverage} / {selectedScene.expected}</b></div><div><span>映射版本</span><b>{selectedScene.status === 'ACTIVE' ? `v${currentVersion}` : '不可用'}</b></div><div><span>新任务 / 导入</span><b>{selectedScene.status === 'ACTIVE' ? '允许' : '阻断'}</b></div></div>{selectedScene.status === 'DRIFT_DETECTED' ? <div className="drift-compare"><h4>跨公司变量差异</h4><p><span>晨光摄影</span><code>客户名称、联系方式、婚期、客户等级</code></p><p><span>紫藤影像</span><code>客户名称、联系方式、婚期</code></p><p><span>远山摄影</span><code>客户名称、联系方式、婚期</code></p></div> : selectedScene.missingVariables.length ? <div className="missing-variable-list"><span>缺失已发布映射</span>{selectedScene.missingVariables.map((variable) => <button key={variable} onClick={() => { setSelectedScene(null); openMapping(variable); }}>{variable} <ChevronRight size={12} /></button>)}</div> : null}<DialogFooter className="scene-dialog-footer"><button className="filter-button" onClick={() => setSelectedScene(null)}>关闭</button>{selectedScene.status === 'DRIFT_DETECTED' ? <button className="primary-button" onClick={() => { setSelectedScene(null); openMapping('客户等级'); }}>按变量并集配置</button> : null}</DialogFooter></> : null}</DialogContent></Dialog>
   </div>;
@@ -298,8 +251,6 @@ function TransformConfigEditor({ draft, onChange }: { draft: MappingDraft; onCha
   return <label className="profile-field">文本处理 <i>*</i><select value={draft.transformConfig} onChange={(event) => onChange({ ...draft, transformConfig: event.target.value })}><option>去除首尾空格</option><option>保持原值</option><option>转为大写</option><option>转为小写</option></select></label>;
 }
 
-function SourceCoverage({ fieldKey, sourceFields }: { fieldKey: string; sourceFields: SourceFieldMap[] }) {
-  const source = sourceFields.find((field) => field.key === fieldKey);
-  if (!source) return <span className="source-not-configured">来源未配置</span>;
-  return <div className="rule-source-coverage"><span className={source.erpField ? 'available' : ''}>ERP</span><span className={source.crmField ? 'available' : ''}>CRM</span><small>{source.erpField || '—'} / {source.crmField || '—'}</small></div>;
+function MappedSourceField({ source, value }: { source: 'ERP' | 'CRM'; value: string }) {
+  return <div className={`source-field-cell ${source === 'ERP' ? 'source-field-erp' : 'source-field-crm'}`}><span>{source}</span>{value ? <code>{value}</code> : <em>未配置</em>}</div>;
 }
