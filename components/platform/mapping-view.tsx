@@ -235,7 +235,49 @@ export function MappingView() {
       <TabsContent value="versions" className="mapping-tab-panel"><Panel title="发布版本记录" meta="版本发布后不可修改"><div className="version-list">{versions.map((version, index) => <article key={version.version}><div className="version-marker"><History size={15} /></div><div><span className="mapping-code">v{version.version}{index === 0 ? ' · 当前' : ''}</span><h4>{version.change}</h4><p>{version.publisher} · {version.publishedAt}</p></div><dl><div><dt>规则数量</dt><dd>{version.ruleCount}</dd></div><div><dt>适用范围</dt><dd>全局</dd></div></dl><button className="table-action" onClick={() => setFeedback(`已选择 v${version.version}：历史版本只读，可用于核对已创建任务快照。`)}>查看快照</button></article>)}</div></Panel></TabsContent>
     </Tabs>
 
-    <Dialog open={Boolean(editVariable)} onOpenChange={(open) => { if (!open) setEditVariable(null); }}><DialogContent className="mapping-dialog max-w-[620px] gap-0 p-0" showCloseButton={false}><form onSubmit={saveDraft}><DialogHeader className="mapping-dialog-header"><div><p className="eyebrow">4.10 VARIABLE MAPPING</p><DialogTitle>配置 ERP / CRM 映射</DialogTitle><DialogDescription>变量名由百应 4.10 接口同步，只需填写 ERP 和 CRM 各自用哪个字段提供值。</DialogDescription></div><button type="button" className="dialog-close-button" aria-label="关闭" onClick={() => setEditVariable(null)}>×</button></DialogHeader><div className="mapping-dialog-body"><div className="readonly-variable"><span>百应话术变量 · 4.10 接口返回</span><b>{editVariable}</b></div><div className="source-edit-grid variable-source-grid"><label className="source-input source-input-erp"><span><i>ERP</i> 取值字段</span><input value={draftForm.erpField} onChange={(event) => setDraftForm({ ...draftForm, erpField: event.target.value })} placeholder="例如：wedding_date" /><small>ERP 数据导入时读取此字段</small></label><label className="source-input source-input-crm"><span><i>CRM</i> 取值字段</span><input value={draftForm.crmField} onChange={(event) => setDraftForm({ ...draftForm, crmField: event.target.value })} placeholder="例如：marriage_date" /><small>CRM 数据导入时读取此字段</small></label></div><p className="mapping-source-hint">至少配置一个来源；ERP 数据只读取 ERP 字段，CRM 数据只读取 CRM 字段。</p><div className="mapping-form-grid"><label className="profile-field">转换规则 <i>*</i><select value={draftForm.transform} onChange={(event) => { const transform = event.target.value as TransformType; setDraftForm({ ...draftForm, transform, transformConfig: transform === 'DATE' ? 'YYYY-MM-DD' : transform === 'MONEY' ? '元 · 保留2位' : transform === 'ENUM' ? 'A=轻奢\nB=高定' : transform === 'TEMPLATE' ? '{{value}}' : '去除首尾空格' }); }}><option>TEXT</option><option>DATE</option><option>MONEY</option><option>ENUM</option><option>TEMPLATE</option></select></label><label className="profile-field">空值策略 <i>*</i><select value={draftForm.emptyPolicy} onChange={(event) => setDraftForm({ ...draftForm, emptyPolicy: event.target.value as EmptyPolicy })}><option value="BLOCK">BLOCK · 缺失阻断</option><option value="DEFAULT">DEFAULT · 使用默认值</option></select></label></div><TransformConfigEditor draft={draftForm} onChange={setDraftForm} />{draftForm.emptyPolicy === 'DEFAULT' ? <label className="profile-field">默认值 <i>*</i><input required value={draftForm.defaultValue} onChange={(event) => setDraftForm({ ...draftForm, defaultValue: event.target.value })} placeholder="字段为空或转换未命中时使用" /></label> : <div className="notice warn"><b>缺失即阻断：</b>对应来源字段为空时进入导入失败明细，不会静默提交到百应。</div>}<div className="preview-lab"><label className="profile-field">测试原始值<input value={draftForm.sampleInput} onChange={(event) => setDraftForm({ ...draftForm, sampleInput: event.target.value })} placeholder="输入一条原始值查看转换结果" /></label><div><span>转换结果</span><b>{applyPreview(draftForm)}</b><small>写入 properties.{editVariable}</small></div></div></div><DialogFooter className="mapping-dialog-footer"><p>保存后仍不会解除阻断，必须统一发布。</p><div><button type="button" className="filter-button" onClick={() => setEditVariable(null)}>取消</button><button className="primary-button" disabled={!draftForm.erpField && !draftForm.crmField}>保存为草稿</button></div></DialogFooter></form></DialogContent></Dialog>
+    <Dialog open={Boolean(editVariable)} onOpenChange={(open) => { if (!open) setEditVariable(null); }}>
+      <DialogContent className="mapping-dialog mapping-dialog-refined max-w-[760px] gap-0 p-0" showCloseButton={false}>
+        <form onSubmit={saveDraft}>
+          <DialogHeader className="mapping-dialog-header mapping-dialog-header-refined">
+            <div>
+              <p className="mapping-api-label"><span>4.10 API</span> 同步变量映射</p>
+              <DialogTitle>配置 ERP / CRM 取值关系</DialogTitle>
+              <DialogDescription>分别指定两套业务系统为该百应话术变量提供值的字段。</DialogDescription>
+            </div>
+            <button type="button" className="dialog-close-button" aria-label="关闭" onClick={() => setEditVariable(null)}>×</button>
+          </DialogHeader>
+
+          <div className="mapping-dialog-body mapping-dialog-body-refined">
+            <div className="mapping-target-variable">
+              <span>目标百应话术变量</span>
+              <b>{editVariable}</b>
+              <small>来自 4.10 查询话术变量接口，不支持手工修改</small>
+            </div>
+
+            <section className="mapping-editor-section">
+              <div className="mapping-section-heading"><span>01</span><div><b>配置数据来源</b><small>至少配置 ERP 或 CRM 中的一个字段</small></div></div>
+              <div className="source-edit-grid variable-source-grid">
+                <label className="source-input source-input-erp"><span><i>ERP</i> 取值字段</span><input value={draftForm.erpField} onChange={(event) => setDraftForm({ ...draftForm, erpField: event.target.value })} placeholder="例如：package_interest" /><small>ERP 名单导入时只读取这里</small></label>
+                <label className="source-input source-input-crm"><span><i>CRM</i> 取值字段</span><input value={draftForm.crmField} onChange={(event) => setDraftForm({ ...draftForm, crmField: event.target.value })} placeholder="例如：interest_package" /><small>CRM 名单导入时只读取这里</small></label>
+              </div>
+            </section>
+
+            <section className="mapping-editor-section mapping-processing-section">
+              <div className="mapping-section-heading"><span>02</span><div><b>设置值处理方式</b><small>两个来源共用同一套转换与空值策略</small></div></div>
+              <div className="mapping-form-grid"><label className="profile-field">转换规则 <i>*</i><select value={draftForm.transform} onChange={(event) => { const transform = event.target.value as TransformType; setDraftForm({ ...draftForm, transform, transformConfig: transform === 'DATE' ? 'YYYY-MM-DD' : transform === 'MONEY' ? '元 · 保留2位' : transform === 'ENUM' ? 'A=轻奢\nB=高定' : transform === 'TEMPLATE' ? '{{value}}' : '去除首尾空格' }); }}><option>TEXT</option><option>DATE</option><option>MONEY</option><option>ENUM</option><option>TEMPLATE</option></select></label><label className="profile-field">空值策略 <i>*</i><select value={draftForm.emptyPolicy} onChange={(event) => setDraftForm({ ...draftForm, emptyPolicy: event.target.value as EmptyPolicy })}><option value="BLOCK">BLOCK · 缺失阻断</option><option value="DEFAULT">DEFAULT · 使用默认值</option></select></label></div>
+              <div className="mapping-processing-detail"><TransformConfigEditor draft={draftForm} onChange={setDraftForm} />{draftForm.emptyPolicy === 'DEFAULT' ? <label className="profile-field">默认值 <i>*</i><input required value={draftForm.defaultValue} onChange={(event) => setDraftForm({ ...draftForm, defaultValue: event.target.value })} placeholder="字段为空或转换未命中时使用" /></label> : <div className="notice warn"><b>缺失即阻断：</b>对应来源字段为空时进入导入失败明细，不会静默提交到百应。</div>}</div>
+            </section>
+
+            <section className="mapping-editor-section mapping-test-section">
+              <div className="mapping-section-heading"><span>03</span><div><b>测试映射结果</b><small>发布前用一条示例值验证输出</small></div></div>
+              <div className="preview-lab preview-lab-refined"><label className="profile-field">测试原始值<input value={draftForm.sampleInput} onChange={(event) => setDraftForm({ ...draftForm, sampleInput: event.target.value })} placeholder="输入一条原始值" /></label><div><span>转换后写入</span><b>{applyPreview(draftForm)}</b><small>properties.{editVariable}</small></div></div>
+            </section>
+          </div>
+
+          <DialogFooter className="mapping-dialog-footer mapping-dialog-footer-refined"><p><b>保存为草稿</b>后仍需统一发布，才会应用到新任务。</p><div><button type="button" className="filter-button" onClick={() => setEditVariable(null)}>取消</button><button className="primary-button" disabled={!draftForm.erpField && !draftForm.crmField}>保存为草稿</button></div></DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
 
     <Dialog open={publishOpen} onOpenChange={setPublishOpen}><DialogContent className="publish-dialog max-w-[540px]" showCloseButton={false}><DialogHeader><DialogTitle>发布全局映射版本 v{currentVersion + 1}</DialogTitle><DialogDescription>发布后，新创建任务和新名单导入将锁定此版本；已创建任务不受影响。</DialogDescription></DialogHeader><div className="publish-summary"><div><span>待发布变更</span><b>{drafts.length}</b></div><div><span>新增 / 修改</span><b>{drafts.filter((draft) => !draft.remove).length}</b></div><div><span>移除规则</span><b>{drafts.filter((draft) => draft.remove).length}</b></div></div><div className="publish-change-list">{drafts.map((draft) => <p key={draft.variable}><span>{draft.remove ? '移除' : rules.some((rule) => rule.variable === draft.variable) ? '修改' : '新增'}</span><b>{draft.variable}</b><small>{draft.remove ? '旧版本继续保留快照' : `ERP ${draft.erpField || '—'} / CRM ${draft.crmField || '—'} · ${draft.transform}`}</small></p>)}</div><div className="notice warn"><b>发布前确认：</b>版本发布后不可原地修改，如需调整必须创建新版本。</div><DialogFooter className="publish-footer"><button className="filter-button" onClick={() => setPublishOpen(false)}>取消</button><button className="primary-button" onClick={publishDrafts} disabled={!drafts.length}>确认发布</button></DialogFooter></DialogContent></Dialog>
 
