@@ -1,0 +1,478 @@
+openapi: 3.1.0
+info:
+  title: 6+1 Outbound Platform API
+  version: 0.1.0
+  description: 独立于前端部署的外呼集成平台 API。字段映射仅覆盖百应 4.10 接口同步到的话术变量。
+servers:
+  - url: https://api.example.com/api/v1
+paths:
+  /mappings:
+    get:
+      operationId: listPublishedMappings
+      summary: 获取当前已发布映射快照
+      responses:
+        '200':
+          description: 当前映射规则
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [requestId, data]
+                properties:
+                  requestId: { type: string }
+                  data:
+                    type: object
+                    required: [rules]
+                    properties:
+                      rules:
+                        type: array
+                        items: { $ref: '#/components/schemas/MappingRule' }
+  /mappings/drafts:
+    get:
+      operationId: listMappingDrafts
+      summary: 获取待发布映射草稿
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      operationId: saveMappingDraft
+      summary: 保存 ERP/CRM 直接映射草稿
+      parameters:
+        - $ref: '#/components/parameters/ActorId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MappingDraftInput' }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404':
+          description: 变量不在百应 4.10 成功快照内
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /mappings/drafts/remove:
+    post:
+      operationId: stageMappingRemoval
+      summary: 将已发布映射标记为待移除
+      parameters:
+        - $ref: '#/components/parameters/ActorId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [baiyingVariableName, removalReason]
+              properties:
+                baiyingVariableName: { type: string, maxLength: 128 }
+                removalReason: { type: string, maxLength: 500 }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+        '404': { $ref: '#/components/responses/Error' }
+  /mappings/publish:
+    post:
+      operationId: publishMappings
+      summary: 原子发布全部映射草稿并生成不可变版本
+      parameters:
+        - $ref: '#/components/parameters/ActorId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [publisherId, changeSummary]
+              properties:
+                publisherId: { type: string, maxLength: 128 }
+                changeSummary: { type: string, maxLength: 1000 }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+        '409': { $ref: '#/components/responses/Error' }
+  /mapping-versions:
+    get:
+      operationId: listMappingVersions
+      summary: 获取不可变映射版本记录
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /scenes/readiness:
+    get:
+      operationId: listSceneReadiness
+      summary: 获取场景变量覆盖和阻断状态
+      responses:
+        '200':
+          description: 场景就绪状态
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [requestId, data]
+                properties:
+                  requestId: { type: string }
+                  data:
+                    type: object
+                    required: [scenes]
+                    properties:
+                      scenes:
+                        type: array
+                        items: { $ref: '#/components/schemas/SceneReadiness' }
+  /planned-tasks:
+    get:
+      operationId: listPlannedTasks
+      summary: 实时查询百应复杂任务列表 2.0，并合并平台数据分类绑定
+      parameters:
+        - { name: name, in: query, schema: { type: string, maxLength: 200 } }
+        - { name: status, in: query, schema: { enum: [ALL, DRAFT, UNSTART, START, FINISH, PAUSE], default: ALL } }
+        - { name: pageNum, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        '200':
+          description: 百应计划任务分页结果
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [requestId, data]
+                properties:
+                  requestId: { type: string }
+                  data:
+                    type: object
+                    required: [total, pages, pageNum, pageSize, tasks]
+                    properties:
+                      total: { type: integer, minimum: 0 }
+                      pages: { type: integer, minimum: 0 }
+                      pageNum: { type: integer, minimum: 0 }
+                      pageSize: { type: integer, minimum: 1 }
+                      tasks: { type: array, items: { $ref: '#/components/schemas/PlannedTask' } }
+        '400': { $ref: '#/components/responses/Error' }
+  /source-categories:
+    get:
+      operationId: listSourceCategories
+      summary: 获取 ERP 或 CRM 已同步的数据分类
+      parameters:
+        - name: sourceSystem
+          in: query
+          schema: { enum: [ERP, CRM] }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /planned-task-category-bindings:
+    post:
+      operationId: savePlannedTaskCategoryBinding
+      summary: 保存百应计划与 ERP/CRM 数据分类的绑定
+      parameters:
+        - $ref: '#/components/parameters/ActorId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlannedTaskCategoryBindingInput' }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/Error' }
+  /scripts:
+    get:
+      operationId: listBaiyingScripts
+      summary: 实时查询百应话术列表，并合并平台业务绑定
+      parameters:
+        - { name: query, in: query, schema: { type: string, maxLength: 200 } }
+        - { name: robotStatus, in: query, description: '百应查询范围：0 全部，1 已上线，2 发布过', schema: { type: integer, enum: [0, 1, 2], default: 0 } }
+        - { name: pageNum, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        '200':
+          description: 百应话术分页结果
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [requestId, data]
+                properties:
+                  requestId: { type: string }
+                  data:
+                    type: object
+                    required: [total, pages, pageNum, pageSize, scripts]
+                    properties:
+                      total: { type: integer, minimum: 0 }
+                      pages: { type: integer, minimum: 0 }
+                      pageNum: { type: integer, minimum: 0 }
+                      pageSize: { type: integer, minimum: 1 }
+                      scripts: { type: array, items: { $ref: '#/components/schemas/BaiyingScript' } }
+        '400': { $ref: '#/components/responses/Error' }
+  /script-bindings:
+    post:
+      operationId: saveScriptBinding
+      summary: 保存百应话术与数据分类、影楼及线路的绑定
+      parameters:
+        - $ref: '#/components/parameters/ActorId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScriptBindingInput' }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/Error' }
+  /variable-sync-jobs:
+    post:
+      operationId: requestVariableSync
+      summary: 请求异步同步百应 4.10 话术变量
+      parameters:
+        - $ref: '#/components/parameters/ActorId'
+      responses:
+        '202':
+          description: 同步任务已写入可靠出站事件
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [requestId, data]
+                properties:
+                  requestId: { type: string }
+                  data:
+                    type: object
+                    required: [jobId, status, requestedAt]
+                    properties:
+                      jobId: { type: string, format: uuid }
+                      status: { const: QUEUED }
+                      requestedAt: { type: string, format: date-time }
+  /internal/scene-variable-observations:
+    post:
+      operationId: recordSceneVariableObservations
+      summary: 变量同步 worker 回写 4.10 成功快照
+      parameters:
+        - name: X-Worker-Secret
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [observations]
+              properties:
+                observations:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items: { $ref: '#/components/schemas/SceneVariableObservation' }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Error' }
+  /internal/source-categories:
+    post:
+      operationId: syncSourceCategories
+      summary: ERP/CRM 适配器回写数据分类目录
+      parameters:
+        - name: X-Worker-Secret
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [observations]
+              properties:
+                observations:
+                  type: array
+                  minItems: 1
+                  maxItems: 2000
+                  items: { $ref: '#/components/schemas/SourceCategoryObservation' }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Error' }
+components:
+  parameters:
+    ActorId:
+      name: X-Actor-Id
+      in: header
+      required: true
+      description: 当前管理员或服务账户标识；正式身份认证接入后由网关注入。
+      schema: { type: string, maxLength: 128 }
+  responses:
+    Success:
+      description: 请求成功
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [requestId, data]
+            properties:
+              requestId: { type: string }
+              data: { type: object, additionalProperties: true }
+    Error:
+      description: 请求失败
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            requestId: { type: string }
+            details: { type: object, additionalProperties: true }
+    MappingDraftInput:
+      type: object
+      required: [baiyingVariableName, transformConfig, emptyPolicy]
+      properties:
+        baiyingVariableName:
+          type: string
+          maxLength: 128
+          description: 必须存在于百应 4.10 的成功同步快照，禁止手工创造变量名。
+        erpField: { type: [string, 'null'], maxLength: 128 }
+        crmField: { type: [string, 'null'], maxLength: 128 }
+        transformConfig: { $ref: '#/components/schemas/TransformConfig' }
+        emptyPolicy: { enum: [BLOCK, DEFAULT] }
+        defaultValue: { type: [string, 'null'], maxLength: 1000 }
+      anyOf:
+        - required: [erpField]
+        - required: [crmField]
+    MappingRule:
+      allOf:
+        - $ref: '#/components/schemas/MappingDraftInput'
+        - type: object
+          required: [id, status, version]
+          properties:
+            id: { type: string, format: uuid }
+            status: { enum: [PUBLISHED, REMOVED] }
+            version: { type: integer, minimum: 1 }
+    TransformConfig:
+      oneOf:
+        - type: object
+          required: [type, mode]
+          properties:
+            type: { const: TEXT }
+            mode: { enum: [TRIM, PRESERVE, UPPERCASE, LOWERCASE] }
+        - type: object
+          required: [type, outputFormat]
+          properties:
+            type: { const: DATE }
+            outputFormat: { enum: [YYYY-MM-DD, YYYY年MM月DD日, MM/DD/YYYY] }
+        - type: object
+          required: [type, inputUnit, decimalPlaces]
+          properties:
+            type: { const: MONEY }
+            inputUnit: { enum: [YUAN, CENT] }
+            decimalPlaces: { enum: [0, 2] }
+        - type: object
+          required: [type, values]
+          properties:
+            type: { const: ENUM }
+            values: { type: object, additionalProperties: { type: string } }
+        - type: object
+          required: [type, template]
+          properties:
+            type: { const: TEMPLATE }
+            template: { type: string }
+    SceneVariableObservation:
+      type: object
+      required: [companyId, robotDefId, sceneDefId, sceneName, variables, syncedAt]
+      properties:
+        companyId: { type: string, maxLength: 64 }
+        robotDefId: { type: string, maxLength: 128 }
+        sceneDefId: { type: string, maxLength: 128 }
+        sceneName: { type: string, maxLength: 200 }
+        variables:
+          type: array
+          maxItems: 500
+          items: { type: string, maxLength: 128 }
+        syncedAt: { type: string, format: date-time }
+    SceneReadiness:
+      type: object
+      required: [sceneDefId, robotDefId, sceneName, companyCount, status, variables, mappedVariables, expectedVariables, missingVariables]
+      properties:
+        sceneDefId: { type: string }
+        robotDefId: { type: string }
+        sceneName: { type: string }
+        companyCount: { type: integer, minimum: 0 }
+        status: { enum: [ACTIVE, PENDING_MAPPING, DRIFT_DETECTED, STALE_SYNC, DISABLED] }
+        variables: { type: array, items: { type: string } }
+        mappedVariables: { type: integer, minimum: 0 }
+        expectedVariables: { type: integer, minimum: 0 }
+        missingVariables: { type: array, items: { type: string } }
+        lastSuccessfulSyncAt: { type: [string, 'null'], format: date-time }
+        issueSummary: { type: [string, 'null'] }
+        publishedMappingVersion: { type: [integer, 'null'], minimum: 1 }
+    PlannedTask:
+      type: object
+      required: [id, name, workflowExecuteStatus, workflowType, startTime, endTime, categoryBinding]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        workflowExecuteStatus: { enum: [DRAFT, UNSTART, START, FINISH, PAUSE] }
+        workflowType: { type: string }
+        startTime: { type: string }
+        endTime: { type: string }
+        categoryBinding:
+          oneOf:
+            - { $ref: '#/components/schemas/PlannedTaskCategoryBinding' }
+            - { type: 'null' }
+    PlannedTaskCategoryBindingInput:
+      type: object
+      required: [workflowId, sourceSystem, sourceCategoryId, categoryPath]
+      properties:
+        workflowId: { type: string, maxLength: 128 }
+        sourceSystem: { enum: [ERP, CRM] }
+        sourceCategoryId: { type: string, maxLength: 256 }
+        categoryPath: { type: string, maxLength: 500, example: 邀约-百天-SS1 }
+    PlannedTaskCategoryBinding:
+      allOf:
+        - $ref: '#/components/schemas/PlannedTaskCategoryBindingInput'
+        - type: object
+          required: [updatedBy, updatedAt]
+          properties:
+            updatedBy: { type: string }
+            updatedAt: { type: string, format: date-time }
+    BaiyingScript:
+      type: object
+      required: [robotDefId, robotName, robotStatus, industryOneName, industryTwoName, deployTime, binding]
+      properties:
+        robotDefId: { type: string }
+        robotName: { type: string }
+        robotStatus: { type: integer, enum: [0, 1, 2, 3, 4, 5] }
+        industryOneName: { type: string }
+        industryTwoName: { type: string }
+        deployTime: { type: string }
+        binding:
+          oneOf:
+            - { $ref: '#/components/schemas/ScriptBinding' }
+            - { type: 'null' }
+    ScriptBindingInput:
+      type: object
+      required: [robotDefId, sourceSystem, sourceCategoryId, categoryPath, studioId, studioName, lineId, lineName]
+      properties:
+        robotDefId: { type: string, maxLength: 128 }
+        sourceSystem: { enum: [ERP, CRM] }
+        sourceCategoryId: { type: string, maxLength: 256 }
+        categoryPath: { type: string, maxLength: 500, example: 邀约-百天-SS1 }
+        studioId: { type: string, maxLength: 128 }
+        studioName: { type: string, maxLength: 200 }
+        lineId: { type: string, maxLength: 128 }
+        lineName: { type: string, maxLength: 200 }
+    ScriptBinding:
+      allOf:
+        - $ref: '#/components/schemas/ScriptBindingInput'
+        - type: object
+          required: [updatedBy, updatedAt]
+          properties:
+            updatedBy: { type: string }
+            updatedAt: { type: string, format: date-time }
+    SourceCategoryObservation:
+      type: object
+      required: [sourceSystem, externalId, categoryPath, active]
+      properties:
+        sourceSystem: { enum: [ERP, CRM] }
+        externalId: { type: string, maxLength: 256 }
+        categoryPath: { type: string, maxLength: 500, example: 邀约-百天-SS1 }
+        active: { type: boolean, default: true }

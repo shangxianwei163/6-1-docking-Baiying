@@ -1,0 +1,41 @@
+{
+  "name": "@outbound/platform-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "predev": "npm run build --workspace @outbound/contracts",
+    "dev": "tsx watch src/server.ts",
+    "prebuild": "npm run build --workspace @outbound/contracts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "pretypecheck": "npm run build --workspace @outbound/contracts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pretest": "npm run build --workspace @outbound/contracts",
+    "test": "vitest run --config vitest.config.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "preseed": "npm run build --workspace @outbound/contracts",
+    "db:seed": "tsx src/db/seed.ts",
+    "baiying:check": "tsx src/baiying/check-connection.ts",
+    "baiying:sync": "tsx src/baiying/sync-to-postgres.ts",
+    "baiying:worker": "tsx watch src/baiying/local-sync-worker.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.1",
+    "@outbound/contracts": "0.1.0",
+    "dotenv": "17.4.2",
+    "drizzle-orm": "0.45.2",
+    "hono": "4.13.5",
+    "postgres": "3.4.9",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.19",
+    "drizzle-kit": "0.31.10",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}
