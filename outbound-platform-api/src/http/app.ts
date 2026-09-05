@@ -22,7 +22,7 @@ import {
 import type { BaiyingAccountClient, BaiyingLineClient, BaiyingRobotClient, BaiyingWorkflowClient } from '../baiying/client.js';
 import type { LineRepository } from '../line/repository.js';
 import type { PlannedTaskRepository } from '../planned-task/repository.js';
-import type { ScriptRepository } from '../script/repository.js';
+import { ScriptBindingConflictError, type ScriptRepository } from '../script/repository.js';
 import type { CategorySyncService } from '../source-category/sync-service.js';
 
 type AppVariables = { requestId: string };
@@ -383,6 +383,9 @@ export function createApp(dependencies: AppDependencies) {
     }
     if (error instanceof MappingConflictError) {
       return context.json({ error: { code: 'MAPPING_CONFLICT', message: error.message, requestId } }, 409);
+    }
+    if (error instanceof ScriptBindingConflictError) {
+      return context.json({ error: { code: 'SCRIPT_BINDING_CONFLICT', message: error.message, requestId } }, 409);
     }
     if (error instanceof UnauthorizedError) {
       return context.json({ error: { code: 'UNAUTHORIZED', message: error.message, requestId } }, 401);

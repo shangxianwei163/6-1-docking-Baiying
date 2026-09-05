@@ -24,6 +24,9 @@
     "db:logs": "docker compose --env-file .env.postgres.local logs -f postgres",
     "db:migrate": "npm run db:migrate --workspace @outbound/platform-api",
     "db:seed": "npm run db:seed --workspace @outbound/platform-api",
+    "db:import:phase1": "npm run db:import:phase1 --workspace @outbound/platform-api",
+    "db:reconcile:phase1": "npm run db:reconcile:phase1 --workspace @outbound/platform-api",
+    "db:verify:phase1": "npm run db:verify:phase1 --workspace @outbound/platform-api",
     "lint": "oxlint",
     "format": "oxfmt"
   },

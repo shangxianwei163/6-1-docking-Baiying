@@ -3,3 +3,7 @@ export * from './mapping.js';
 export * from './planned-task.js';
 export * from './script.js';
 export * from './line.js';
+export * from './billing.js';
+export * from './recording.js';
+export * from './outbound-task.js';
+export * from './callback-event.js';

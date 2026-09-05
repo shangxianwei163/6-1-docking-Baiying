@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "1.0",
+  "eventId": "11111111-1111-4111-8111-111111111115",
+  "eventType": "OUTBOUND_TASK_COMPLETED",
+  "occurredAt": "2026-09-06T10:35:00+08:00",
+  "sourceSystem": "ERP",
+  "mcCode": "MC-ZTY-001",
+  "taskNo": "PT-20260906-00025",
+  "baiyingCallJobId": "241491320",
+  "executionStatus": "COMPLETED",
+  "summary": {
+    "phoneCount": 1,
+    "importedCount": 1,
+    "callInstanceCount": 1,
+    "answeredCount": 1,
+    "totalDurationSeconds": 24,
+    "billingMinutes": 1,
+    "customerCharge": "0.480000",
+    "recordingDiscoveredCount": 1,
+    "recordingArchivedCount": 1
+  },
+  "completedAt": "2026-09-06T10:34:58+08:00"
+}

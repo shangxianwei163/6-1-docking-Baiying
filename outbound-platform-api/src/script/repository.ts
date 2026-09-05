@@ -5,8 +5,14 @@ export type ScriptBinding = ScriptBindingInput & {
   updatedAt: string;
 };
 
+export class ScriptBindingConflictError extends Error {}
+
 export interface ScriptRepository {
   listAllBindings(): Promise<ScriptBinding[]>;
   listBindings(robotDefIds: string[]): Promise<ScriptBinding[]>;
-  saveBinding(input: ScriptBindingInput, actorId: string, requestId: string): Promise<ScriptBinding>;
+  saveBinding(
+    input: ScriptBindingInput,
+    actorId: string,
+    requestId: string,
+  ): Promise<ScriptBinding>;
 }

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1.0",
+  "externalRequestId": "CRM-REQ-20260906-0038",
+  "sourceSystem": "CRM",
+  "mcCode": "MC-ZTY-001",
+  "taskName": "婚礼跟进客户回访",
+  "customers": [
+    {
+      "externalCustomerId": "CRM-LEAD-88271",
+      "name": "赵先生",
+      "phone": "+8613900000000",
+      "dataCategoryId": "CRM-WEDDING-FOLLOWUP",
+      "fields": {
+        "lead_stage": "quoted",
+        "preferred_date": "2026-10-20",
+        "owner_name": "周婷"
+      }
+    }
+  ]
+}

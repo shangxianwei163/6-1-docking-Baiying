@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1.0",
+  "externalRequestId": "ERP-REQ-20260906-0001",
+  "sourceSystem": "ERP",
+  "mcCode": "MC-ZTY-001",
+  "taskName": "国庆档期客户邀约",
+  "customers": [
+    {
+      "externalCustomerId": "ERP-C-10001",
+      "name": "王女士",
+      "phone": "13800000000",
+      "dataCategoryId": "SS1",
+      "fields": {
+        "wedding_date": "2026-10-18",
+        "package_interest": "A",
+        "consultant_name": "李梅"
+      }
+    }
+  ]
+}
