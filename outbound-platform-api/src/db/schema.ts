@@ -140,8 +140,12 @@ export const auditLogs = pgTable('audit_log', {
 export const sourceDataCategories = pgTable('source_data_category', {
   sourceSystem: varchar('source_system', { length: 32 }).notNull(),
   externalId: varchar('external_id', { length: 256 }).notNull(),
+  name: varchar('name', { length: 500 }).notNull().default(''),
   categoryPath: varchar('category_path', { length: 500 }).notNull(),
+  level: integer('level'),
+  parentId: varchar('parent_id', { length: 256 }),
   active: boolean('active').notNull().default(true),
+  fields: jsonb('fields_json').$type<Record<string, string | number | boolean | null>>().notNull().default(sql`'{}'::jsonb`),
   syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   primaryKey({ columns: [table.sourceSystem, table.externalId] }),
@@ -162,6 +166,7 @@ export const baiyingRobotBindings = pgTable('baiying_robot_binding', {
   sourceSystem: varchar('source_system', { length: 32 }).notNull(),
   sourceCategoryId: varchar('source_category_id', { length: 256 }).notNull(),
   categoryPath: varchar('category_path', { length: 500 }).notNull(),
+  categories: jsonb('categories_json').$type<Array<{ sourceCategoryId: string; categoryPath: string }>>().notNull().default([]),
   studioId: varchar('studio_id', { length: 128 }).notNull(),
   studioName: varchar('studio_name', { length: 200 }).notNull(),
   lineId: varchar('line_id', { length: 128 }).notNull(),

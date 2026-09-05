@@ -6,6 +6,7 @@ export type ScriptBinding = ScriptBindingInput & {
 };
 
 export interface ScriptRepository {
+  listAllBindings(): Promise<ScriptBinding[]>;
   listBindings(robotDefIds: string[]): Promise<ScriptBinding[]>;
   saveBinding(input: ScriptBindingInput, actorId: string, requestId: string): Promise<ScriptBinding>;
 }

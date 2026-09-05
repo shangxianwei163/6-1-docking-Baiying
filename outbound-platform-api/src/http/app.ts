@@ -19,12 +19,44 @@ import {
   MappingNotFoundError,
   type MappingRepository,
 } from '../mapping/repository.js';
-import type { BaiyingLineClient, BaiyingRobotClient, BaiyingWorkflowClient } from '../baiying/client.js';
+import type { BaiyingAccountClient, BaiyingLineClient, BaiyingRobotClient, BaiyingWorkflowClient } from '../baiying/client.js';
 import type { LineRepository } from '../line/repository.js';
 import type { PlannedTaskRepository } from '../planned-task/repository.js';
 import type { ScriptRepository } from '../script/repository.js';
+import type { CategorySyncService } from '../source-category/sync-service.js';
 
 type AppVariables = { requestId: string };
+
+const baiyingCallInstanceCallbackSchema = z.object({
+  code: z.number(),
+  data: z.object({
+    data: z.object({
+      callInstance: z.object({
+        callJobId: z.number().optional(),
+        callInstanceId: z.number().optional(),
+        callInstanceStatus: z.number().optional(),
+        finishStatus: z.number().optional(),
+        customerTelephone: z.string().optional(),
+        robotDefId: z.number().optional(),
+        duration: z.number().nonnegative().optional(),
+        luyinOssUrl: z.string().optional(),
+        userLuyinOssUrl: z.string().optional(),
+      }).loose().optional(),
+      phoneLogs: z.array(z.record(z.string(), z.unknown())).optional(),
+      taskResult: z.array(z.record(z.string(), z.unknown())).optional(),
+      callRepeat: z.array(z.record(z.string(), z.unknown())).optional(),
+      jobPhoneInfos: z.array(z.record(z.string(), z.unknown())).optional(),
+    }).loose(),
+    callbackType: z.literal('CALL_INSTANCE_RESULT'),
+  }).loose(),
+  resultMsg: z.string(),
+}).loose();
+
+export type BaiyingCallInstanceCallback = z.infer<typeof baiyingCallInstanceCallbackSchema>;
+
+export function calculateBillingMinutes(durationSeconds: number) {
+  return durationSeconds > 0 ? Math.ceil(durationSeconds / 60) : 0;
+}
 
 export type AppDependencies = {
   mappingRepository: MappingRepository;
@@ -35,10 +67,13 @@ export type AppDependencies = {
   robotClient?: BaiyingRobotClient;
   scriptRepository?: ScriptRepository;
   lineClient?: BaiyingLineClient;
+  accountClient?: BaiyingAccountClient;
   lineRepository?: LineRepository;
   baiyingCompanyId?: string;
+  erpCategorySyncService?: CategorySyncService;
   clock?: () => Date;
   createId?: () => string;
+  onBaiyingCallInstance?: (payload: BaiyingCallInstanceCallback, requestId: string) => Promise<void> | void;
 };
 
 export function createApp(dependencies: AppDependencies) {
@@ -60,6 +95,38 @@ export function createApp(dependencies: AppDependencies) {
   });
 
   app.get('/health', (context) => context.json({ status: 'ok', service: 'outbound-platform-api', at: clock().toISOString() }));
+
+  app.get('/api/v1/baiying/account-overview', async (context) => {
+    if (!dependencies.accountClient || !dependencies.baiyingCompanyId) {
+      return context.json({
+        error: { code: 'BAIYING_NOT_CONFIGURED', message: '百应账户接口尚未配置', requestId: context.get('requestId') },
+      }, 503);
+    }
+    const companyId = dependencies.baiyingCompanyId;
+    const [communicationBalance, aiBalance, seatOverview] = await Promise.all([
+      settleSection(dependencies.accountClient.getCommunicationBalance(companyId)),
+      settleSection(dependencies.accountClient.getAiBalance(companyId)),
+      settleSection(dependencies.accountClient.getSeatOverview(companyId)),
+    ]);
+    return context.json(success(context.get('requestId'), { communicationBalance, aiBalance, seatOverview }));
+  });
+
+  app.post('/api/v1/callbacks/baiying/call-instance', async (context) => {
+    const payload = baiyingCallInstanceCallbackSchema.parse(await context.req.json());
+    await dependencies.onBaiyingCallInstance?.(payload, context.get('requestId'));
+    const callInstance = payload.data.data.callInstance;
+    console.info(JSON.stringify({
+      level: 'info',
+      message: 'Baiying call instance callback accepted',
+      requestId: context.get('requestId'),
+      callJobId: callInstance?.callJobId,
+      callInstanceId: callInstance?.callInstanceId,
+      finishStatus: callInstance?.finishStatus,
+      durationSeconds: callInstance?.duration,
+      billingMinutes: callInstance?.duration === undefined ? undefined : calculateBillingMinutes(callInstance.duration),
+    }));
+    return context.json({ code: 200 });
+  });
 
   app.get('/api/v1/mappings', async (context) => context.json(success(
     context.get('requestId'),
@@ -140,6 +207,51 @@ export function createApp(dependencies: AppDependencies) {
     return context.json(success(context.get('requestId'), {
       categories: await repository.listSourceCategories(query.sourceSystem),
     }));
+  });
+
+  app.get('/api/v1/data-categories', async (context) => {
+    const query = z.object({
+      sourceSystem: sourceSystemSchema.default('ERP'),
+      studioId: z.string().trim().min(1).max(128).optional(),
+    }).parse(context.req.query());
+    const categories = await sourceCategoryRepository(dependencies).listSourceCategories(query.sourceSystem);
+    const scriptRepository = dependencies.scriptRepository;
+    if (!scriptRepository) throw new Error('话术绑定数据尚未配置');
+    const bindings = (await scriptRepository.listAllBindings()).filter((binding) => (
+      binding.sourceSystem === query.sourceSystem && (!query.studioId || binding.studioId === query.studioId)
+    ));
+    const robotNames = new Map<string, string>();
+    if (dependencies.robotClient && dependencies.baiyingCompanyId) {
+      try {
+        const robots = await dependencies.robotClient.listRobots(dependencies.baiyingCompanyId, 0);
+        for (const robot of robots) robotNames.set(robot.robotDefId, robot.robotName);
+      } catch {
+        // 分类数据仍可使用；话术名称不可用时回退到话术 ID。
+      }
+    }
+    const boundScripts = (externalId: string, categoryPath: string) => Array.from(new Set(bindings
+      .filter((binding) => binding.categories.some((category) => category.sourceCategoryId === externalId || category.categoryPath === categoryPath))
+      .map((binding) => binding.robotDefId)))
+      .map((robotDefId) => ({ robotDefId, robotName: robotNames.get(robotDefId) || '' }));
+
+    return context.json(success(context.get('requestId'), {
+      sourceSystem: query.sourceSystem,
+      studioId: query.studioId ?? null,
+      configured: query.sourceSystem === 'ERP' ? Boolean(dependencies.erpCategorySyncService || categories.length) : Boolean(categories.length),
+      syncedAt: categories[0]?.syncedAt ?? null,
+      categories: categories.map((category) => ({ ...category, boundScripts: boundScripts(category.externalId, category.categoryPath) })),
+    }));
+  });
+
+  app.post('/api/v1/data-categories/sync', async (context) => {
+    requireActor(context.req.header('x-actor-id'));
+    const input = z.object({ sourceSystem: sourceSystemSchema.default('ERP') }).parse(await context.req.json().catch(() => ({})));
+    if (input.sourceSystem !== 'ERP' || !dependencies.erpCategorySyncService) {
+      return context.json({
+        error: { code: 'CATEGORY_SYNC_UNAVAILABLE', message: `${input.sourceSystem} 分类同步尚未配置`, requestId: context.get('requestId') },
+      }, 409);
+    }
+    return context.json(success(context.get('requestId'), await dependencies.erpCategorySyncService.sync()));
   });
 
   app.post('/api/v1/planned-task-category-bindings', async (context) => {
@@ -289,6 +401,11 @@ function plannedTaskDependencies(dependencies: AppDependencies) {
   return { workflowClient: dependencies.workflowClient, repository: dependencies.plannedTaskRepository };
 }
 
+function sourceCategoryRepository(dependencies: AppDependencies) {
+  if (!dependencies.plannedTaskRepository) throw new Error('数据分类存储尚未配置');
+  return dependencies.plannedTaskRepository;
+}
+
 function scriptDependencies(dependencies: AppDependencies) {
   if (!dependencies.robotClient || !dependencies.scriptRepository || !dependencies.baiyingCompanyId) {
     throw new Error('话术列表服务尚未配置');
@@ -318,6 +435,14 @@ function managedLineRepository(dependencies: AppDependencies) {
 
 function success<T>(requestId: string, data: T) {
   return { requestId, data };
+}
+
+async function settleSection<T>(promise: Promise<T>) {
+  try {
+    return { status: 'success' as const, data: await promise };
+  } catch (error) {
+    return { status: 'error' as const, message: error instanceof Error ? error.message : '百应接口请求失败' };
+  }
 }
 
 function requireActor(value: string | undefined): string {

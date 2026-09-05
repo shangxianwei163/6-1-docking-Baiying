@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { PlannedTaskBindingInput, SourceCategoryObservation, SourceSystem } from '@outbound/contracts';
 import type { Database } from '../db/client.js';
 import { auditLogs, plannedTaskCategoryBindings, sourceDataCategories } from '../db/schema.js';
@@ -56,15 +56,34 @@ export class PostgresPlannedTaskRepository implements PlannedTaskRepository {
   }
 
   async syncSourceCategories(observations: SourceCategoryObservation[]): Promise<SourceDataCategory[]> {
+    if (!observations.length) return [];
     const now = this.clock();
     const rows = await this.db.transaction(async (tx) => {
       const synced = [];
-      for (const observation of observations) {
-        const [row] = await tx.insert(sourceDataCategories).values({ ...observation, syncedAt: now }).onConflictDoUpdate({
+      const sourceSystems = [...new Set(observations.map((observation) => observation.sourceSystem))];
+      for (const sourceSystem of sourceSystems) {
+        const sourceObservations = observations.filter((observation) => observation.sourceSystem === sourceSystem);
+        await tx.update(sourceDataCategories).set({ active: false }).where(eq(sourceDataCategories.sourceSystem, sourceSystem));
+        const sourceRows = await tx.insert(sourceDataCategories).values(sourceObservations.map((observation) => ({
+          ...observation,
+          name: observation.name ?? observation.categoryPath,
+          level: observation.level ?? observation.categoryPath.split('-').length,
+          parentId: observation.parentId ?? null,
+          fields: observation.fields ?? {},
+          syncedAt: now,
+        }))).onConflictDoUpdate({
           target: [sourceDataCategories.sourceSystem, sourceDataCategories.externalId],
-          set: { categoryPath: observation.categoryPath, active: observation.active, syncedAt: now },
+          set: {
+            name: sql`excluded.name`,
+            categoryPath: sql`excluded.category_path`,
+            level: sql`excluded.level`,
+            parentId: sql`excluded.parent_id`,
+            active: sql`excluded.active`,
+            fields: sql`excluded.fields_json`,
+            syncedAt: now,
+          },
         }).returning();
-        synced.push(row);
+        synced.push(...sourceRows);
       }
       return synced;
     });

@@ -43,6 +43,24 @@ const lineListResponseSchema = responseEnvelopeSchema.extend({
     billPeriod: lineNumberSchema,
   })).nullable(),
 });
+const communicationBalanceResponseSchema = responseEnvelopeSchema.extend({
+  data: z.object({ amount: z.coerce.number() }).nullable(),
+});
+const aiBalanceResponseSchema = responseEnvelopeSchema.extend({
+  data: z.object({
+    amount: z.coerce.number(),
+    price: z.string(),
+    num: z.coerce.number().int().nonnegative(),
+  }).nullable(),
+});
+const seatOverviewResponseSchema = responseEnvelopeSchema.extend({
+  data: z.object({
+    companyUsingCallSeat: z.coerce.number().int().nonnegative(),
+    companyCallSeatDetail: z.record(z.string(), z.unknown()),
+    companyAllCallSeat: z.coerce.number().int().nonnegative(),
+    callSeatList: z.array(z.unknown()),
+  }).nullable(),
+});
 const workflowIdSchema = z.union([z.string(), z.number()]).transform(String);
 const workflowStatusSchema = z.enum(['DRAFT', 'UNSTART', 'START', 'FINISH', 'PAUSE']);
 const workflowListResponseSchema = responseEnvelopeSchema.extend({
@@ -94,6 +112,21 @@ export type BaiyingLine = {
   billPeriod: number;
 };
 
+export type BaiyingCommunicationBalance = { amount: number };
+
+export type BaiyingAiBalance = {
+  amount: number;
+  price: string;
+  num: number;
+};
+
+export type BaiyingSeatOverview = {
+  companyUsingCallSeat: number;
+  companyCallSeatDetail: Record<string, unknown>;
+  companyAllCallSeat: number;
+  callSeatList: unknown[];
+};
+
 export type BaiyingWorkflow = {
   id: string;
   name: string;
@@ -137,6 +170,12 @@ export interface BaiyingLineClient {
   listPhones(companyId: string, userPhoneId?: string): Promise<BaiyingLine[]>;
 }
 
+export interface BaiyingAccountClient {
+  getCommunicationBalance(companyId: string): Promise<BaiyingCommunicationBalance>;
+  getAiBalance(companyId: string): Promise<BaiyingAiBalance>;
+  getSeatOverview(companyId: string): Promise<BaiyingSeatOverview>;
+}
+
 type HttpClientOptions = {
   baseUrl: string;
   tokenProvider: BaiyingTokenProvider;
@@ -144,7 +183,7 @@ type HttpClientOptions = {
 };
 
 /** 百应 OAuth OpenAPI 客户端；accessToken 依官方要求放在表单 Body 中。 */
-export class HttpBaiyingVariableClient implements BaiyingVariableClient {
+export class HttpBaiyingVariableClient implements BaiyingVariableClient, BaiyingAccountClient {
   private readonly fetch: typeof globalThis.fetch;
 
   constructor(private readonly options: HttpClientOptions) {
@@ -179,6 +218,33 @@ export class HttpBaiyingVariableClient implements BaiyingVariableClient {
     const parsed = lineListResponseSchema.safeParse(body);
     if (!parsed.success || parsed.data.code !== 200 || !parsed.data.data) {
       throw responseError(body, '百应外呼线路列表返回结构不符合约定');
+    }
+    return parsed.data.data;
+  }
+
+  async getCommunicationBalance(companyId: string): Promise<BaiyingCommunicationBalance> {
+    const body = await this.postForm('/api/oauth/byai.openapi.company.communication/1.0.0/balance', { companyId });
+    const parsed = communicationBalanceResponseSchema.safeParse(body);
+    if (!parsed.success || parsed.data.code !== 200 || !parsed.data.data) {
+      throw responseError(body, '百应通信余额返回结构不符合约定');
+    }
+    return parsed.data.data;
+  }
+
+  async getAiBalance(companyId: string): Promise<BaiyingAiBalance> {
+    const body = await this.postForm('/api/oauth/byai.openapi.company.ai/1.0.0/balance', { companyId });
+    const parsed = aiBalanceResponseSchema.safeParse(body);
+    if (!parsed.success || parsed.data.code !== 200 || !parsed.data.data) {
+      throw responseError(body, '百应 AI 账户余额返回结构不符合约定');
+    }
+    return parsed.data.data;
+  }
+
+  async getSeatOverview(companyId: string): Promise<BaiyingSeatOverview> {
+    const body = await this.postForm('/api/oauth/byai.openapi.seatinfo/1.0.0/get', { companyId });
+    const parsed = seatOverviewResponseSchema.safeParse(body);
+    if (!parsed.success || parsed.data.code !== 200 || !parsed.data.data) {
+      throw responseError(body, '百应 AI 坐席概况返回结构不符合约定');
     }
     return parsed.data.data;
   }

@@ -6,6 +6,9 @@ export type PlannedTaskCategoryBinding = PlannedTaskBindingInput & {
 };
 
 export type SourceDataCategory = SourceCategoryObservation & {
+  name: string;
+  level: number | null;
+  parentId: string | null;
   syncedAt: string;
 };
 

@@ -77,6 +77,53 @@ describe('HttpBaiyingVariableClient', () => {
     expect((request!.body as URLSearchParams).get('companyId')).toBe('263120');
   });
 
+  it('reads the documented company communication balance', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(JSON.stringify({
+      code: 200,
+      resultMsg: 'successful',
+      data: { amount: 2680.45 },
+    }), { status: 200 }));
+    const client = new HttpBaiyingVariableClient({ baseUrl: 'https://open.byai.com', tokenProvider: createTokenProvider(), fetch });
+
+    await expect(client.getCommunicationBalance('263120')).resolves.toEqual({ amount: 2680.45 });
+    const [url, request] = fetch.mock.calls[0]!;
+    expect((url as URL).href).toBe('https://open.byai.com/api/oauth/byai.openapi.company.communication/1.0.0/balance');
+    expect((request!.body as URLSearchParams).get('companyId')).toBe('263120');
+  });
+
+  it('reads every documented company AI balance field', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(JSON.stringify({
+      code: 200,
+      resultMsg: 'successful',
+      data: { amount: 100.11, price: '11.00分/分钟', num: 2 },
+    }), { status: 200 }));
+    const client = new HttpBaiyingVariableClient({ baseUrl: 'https://open.byai.com', tokenProvider: createTokenProvider(), fetch });
+
+    await expect(client.getAiBalance('263120')).resolves.toEqual({ amount: 100.11, price: '11.00分/分钟', num: 2 });
+    expect((fetch.mock.calls[0]![0] as URL).href).toBe('https://open.byai.com/api/oauth/byai.openapi.company.ai/1.0.0/balance');
+  });
+
+  it('reads the documented AI seat overview without discarding detail fields', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(JSON.stringify({
+      code: 200,
+      resultMsg: 'successful',
+      data: {
+        companyUsingCallSeat: 3,
+        companyCallSeatDetail: { valid: 4, expiring: 1 },
+        companyAllCallSeat: 5,
+        callSeatList: [{ batchName: '2026 秋季批次', count: 5 }],
+      },
+    }), { status: 200 }));
+    const client = new HttpBaiyingVariableClient({ baseUrl: 'https://open.byai.com', tokenProvider: createTokenProvider(), fetch });
+
+    await expect(client.getSeatOverview('263120')).resolves.toMatchObject({
+      companyUsingCallSeat: 3,
+      companyAllCallSeat: 5,
+      companyCallSeatDetail: { valid: 4, expiring: 1 },
+    });
+    expect((fetch.mock.calls[0]![0] as URL).href).toBe('https://open.byai.com/api/oauth/byai.openapi.seatinfo/1.0.0/get');
+  });
+
   it('posts the documented 4.10 form and normalizes returned variables', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(JSON.stringify({
       code: 200,

@@ -10,6 +10,9 @@ const configSchema = z.object({
   BAIYING_COMPANY_ID: z.string().regex(/^\d+$/).optional(),
   BAIYING_APP_KEY: z.string().optional(),
   BAIYING_APP_SECRET: z.string().optional(),
+  SX_ERP_CATEGORY_URL: z.url().default('http://testmc.6161520.cn:8083/SAi/Sx_AllCategoryLevel'),
+  SX_ERP_CATEGORY_TOKEN: z.string().optional(),
+  SX_ERP_CATEGORY_SYNC_INTERVAL_MS: z.coerce.number().int().min(60_000).default(21_600_000),
   VARIABLE_SYNC_QUEUE_NAME: z.string().default('variable-sync-queue'),
   WORKER_SHARED_SECRET: z.string().min(24),
 });

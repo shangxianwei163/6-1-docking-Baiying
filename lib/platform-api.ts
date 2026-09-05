@@ -46,9 +46,37 @@ export type PlannedTask = {
 export type SourceDataCategory = {
   sourceSystem: SourceSystem;
   externalId: string;
+  name: string;
   categoryPath: string;
+  level: number | null;
+  parentId: string | null;
   active: boolean;
+  fields: Record<string, string | number | boolean | null>;
   syncedAt: string;
+};
+
+export type DataCategoryScript = {
+  robotDefId: string;
+  robotName: string;
+};
+
+export type DataCategory = {
+  externalId: string;
+  name: string;
+  categoryPath: string;
+  level: number | null;
+  parentId: string | null;
+  active: boolean;
+  fields: Record<string, string | number | boolean | null>;
+  boundScripts: DataCategoryScript[];
+};
+
+export type DataCategoryResult = {
+  sourceSystem: SourceSystem;
+  studioId: string | null;
+  configured: boolean;
+  syncedAt: string | null;
+  categories: DataCategory[];
 };
 
 export type PlannedTaskPage = {
@@ -64,8 +92,7 @@ export type BaiyingScriptStatus = 0 | 1 | 2 | 3 | 4 | 5;
 export type ScriptBinding = {
   robotDefId: string;
   sourceSystem: SourceSystem;
-  sourceCategoryId: string;
-  categoryPath: string;
+  categories: Array<{ sourceCategoryId: string; categoryPath: string }>;
   studioId: string;
   studioName: string;
   lineId: string;
@@ -104,6 +131,21 @@ export type BaiyingLine = {
   lineAmount: number;
   billPeriod: number;
   studios: LineStudioBinding[];
+};
+
+export type BaiyingApiSection<T> =
+  | { status: 'success'; data: T }
+  | { status: 'error'; message: string };
+
+export type BaiyingAccountOverview = {
+  communicationBalance: BaiyingApiSection<{ amount: number }>;
+  aiBalance: BaiyingApiSection<{ amount: number; price: string; num: number }>;
+  seatOverview: BaiyingApiSection<{
+    companyUsingCallSeat: number;
+    companyCallSeatDetail: Record<string, unknown>;
+    companyAllCallSeat: number;
+    callSeatList: unknown[];
+  }>;
 };
 
 export type ScriptPage = {
@@ -179,6 +221,18 @@ export function loadSourceCategories(sourceSystem: SourceSystem) {
   return request<{ categories: SourceDataCategory[] }>(`/api/v1/source-categories?sourceSystem=${sourceSystem}`);
 }
 
+export function loadDataCategories(sourceSystem: SourceSystem) {
+  const search = new URLSearchParams({ sourceSystem });
+  return request<DataCategoryResult>(`/api/v1/data-categories?${search}`);
+}
+
+export function syncDataCategories(sourceSystem: SourceSystem) {
+  return request<{ sourceSystem: 'ERP'; count: number; syncedAt: string }>('/api/v1/data-categories/sync', {
+    method: 'POST',
+    body: JSON.stringify({ sourceSystem }),
+  });
+}
+
 export function savePlannedTaskCategoryBinding(input: {
   workflowId: string;
   sourceSystem: SourceSystem;
@@ -204,8 +258,7 @@ export function loadScripts(input: { query?: string; robotStatus?: 0 | 1 | 2; pa
 export function saveScriptBinding(input: {
   robotDefId: string;
   sourceSystem: SourceSystem;
-  sourceCategoryId: string;
-  categoryPath: string;
+  categories: Array<{ sourceCategoryId: string; categoryPath: string }>;
   studioId: string;
   studioName: string;
   lineId: string;
@@ -226,6 +279,10 @@ export function loadLines(query = '') {
 
 export function loadManagedLines() {
   return request<{ lines: BaiyingLine[] }>('/api/v1/managed-lines');
+}
+
+export function loadBaiyingAccountOverview() {
+  return request<BaiyingAccountOverview>('/api/v1/baiying/account-overview');
 }
 
 export function saveLineStudioBindings(input: {

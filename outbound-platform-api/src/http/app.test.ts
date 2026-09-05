@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { BaiyingLineClient, BaiyingRobotClient, BaiyingWorkflowClient } from '../baiying/client.js';
 import type { LineRepository } from '../line/repository.js';
 import type { MappingRepository } from '../mapping/repository.js';
-import type { PlannedTaskRepository } from '../planned-task/repository.js';
+import type { PlannedTaskRepository, SourceDataCategory } from '../planned-task/repository.js';
 import type { ScriptRepository } from '../script/repository.js';
-import { createApp } from './app.js';
+import { calculateBillingMinutes, createApp } from './app.js';
 
 function createRepository() {
   const saveDraft = vi.fn(async (input, actorId) => ({
@@ -32,7 +32,7 @@ function createRepository() {
 
 const fixedId = '5f9ad46d-d4a7-4cbc-b388-f505b6141724';
 
-function createPlannedTaskDependencies() {
+function createPlannedTaskDependencies(categories: SourceDataCategory[] = []) {
   const binding = {
     workflowId: '115315720',
     sourceSystem: 'ERP' as const,
@@ -57,21 +57,25 @@ function createPlannedTaskDependencies() {
     }));
   const workflowClient: BaiyingWorkflowClient = { listWorkflows };
   const saveBinding = vi.fn<PlannedTaskRepository['saveBinding']>(async (input, actorId) => ({ ...input, updatedBy: actorId, updatedAt: binding.updatedAt }));
+  const syncSourceCategories = vi.fn<PlannedTaskRepository['syncSourceCategories']>(async () => []);
+  const listSourceCategories = vi.fn<PlannedTaskRepository['listSourceCategories']>(async () => categories);
   const plannedTaskRepository: PlannedTaskRepository = {
     listBindings: vi.fn(async () => [binding]),
     saveBinding,
-    listSourceCategories: vi.fn(async () => []),
-    syncSourceCategories: vi.fn(async () => []),
+    listSourceCategories,
+    syncSourceCategories,
   };
-  return { workflowClient, plannedTaskRepository, listWorkflows, saveBinding };
+  return { workflowClient, plannedTaskRepository, listWorkflows, saveBinding, listSourceCategories, syncSourceCategories };
 }
 
 function createScriptDependencies() {
   const binding = {
     robotDefId: '4845020',
     sourceSystem: 'ERP' as const,
-    sourceCategoryId: 'SS1',
-    categoryPath: '邀约-百天-SS1',
+    categories: [
+      { sourceCategoryId: 'SS1', categoryPath: '邀约-百天-SS1' },
+      { sourceCategoryId: 'SS2', categoryPath: '邀约-百天-SS2' },
+    ],
     studioId: 'YL-001',
     studioName: '紫藤影像',
     lineId: 'LINE-01',
@@ -90,6 +94,7 @@ function createScriptDependencies() {
   const robotClient: BaiyingRobotClient = { listRobots };
   const saveBinding = vi.fn<ScriptRepository['saveBinding']>(async (input, actorId) => ({ ...input, updatedBy: actorId, updatedAt: binding.updatedAt }));
   const scriptRepository: ScriptRepository = {
+    listAllBindings: vi.fn(async () => [binding]),
     listBindings: vi.fn(async () => [binding]),
     saveBinding,
   };
@@ -142,6 +147,75 @@ function createLineDependencies() {
 }
 
 describe('mapping API', () => {
+  it.each([
+    [0, 0],
+    [1, 1],
+    [59, 1],
+    [60, 1],
+    [61, 2],
+  ])('rounds a %i-second callback duration to %i billing minute(s)', (durationSeconds, expectedMinutes) => {
+    expect(calculateBillingMinutes(durationSeconds)).toBe(expectedMinutes);
+  });
+
+  it('accepts a Baiying completed-call callback and returns the required acknowledgement', async () => {
+    const onBaiyingCallInstance = vi.fn();
+    const app = createApp({
+      mappingRepository: createRepository().repository,
+      consoleOrigin: 'http://localhost:4173',
+      workerSharedSecret: 'a-worker-secret-longer-than-24-characters',
+      createId: () => fixedId,
+      onBaiyingCallInstance,
+    });
+    const callback = {
+      code: 200,
+      data: {
+        data: {
+          callInstance: {
+            callJobId: 4849944,
+            callInstanceId: 70258002706,
+            callInstanceStatus: 2,
+            finishStatus: 0,
+            customerTelephone: '13646710000',
+            robotDefId: 286485,
+            duration: 24,
+            luyinOssUrl: 'https://example.com/full.mp3',
+          },
+          phoneLogs: [],
+          taskResult: [],
+          callRepeat: [],
+          jobPhoneInfos: [],
+        },
+        callbackType: 'CALL_INSTANCE_RESULT',
+      },
+      resultMsg: '成功',
+    };
+
+    const response = await app.request('/api/v1/callbacks/baiying/call-instance', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json;charset=utf-8' },
+      body: JSON.stringify(callback),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ code: 200 });
+    expect(onBaiyingCallInstance).toHaveBeenCalledWith(callback, fixedId);
+  });
+
+  it('rejects callbacks with the wrong callback type', async () => {
+    const app = createApp({
+      mappingRepository: createRepository().repository,
+      consoleOrigin: 'http://localhost:4173',
+      workerSharedSecret: 'a-worker-secret-longer-than-24-characters',
+      createId: () => fixedId,
+    });
+    const response = await app.request('/api/v1/callbacks/baiying/call-instance', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: 200, data: { data: {}, callbackType: 'JOB_INFO_RESULT' }, resultMsg: '成功' }),
+    });
+    expect(response.status).toBe(400);
+  });
+
   it('saves a direct ERP/CRM draft', async () => {
     const { repository, saveDraft } = createRepository();
     const app = createApp({
@@ -263,7 +337,38 @@ describe('mapping API', () => {
     expect(scripts.listRobots).toHaveBeenCalledWith('263120', 2);
   });
 
-  it('saves data category, studio and line in one script binding', async () => {
+  it('aggregates Baiying account balances and seat overview without coupling section failures', async () => {
+    const accountClient = {
+      getCommunicationBalance: vi.fn(async () => ({ amount: 2680.45 })),
+      getAiBalance: vi.fn(async () => { throw new Error('AI 余额接口超时'); }),
+      getSeatOverview: vi.fn(async () => ({
+        companyUsingCallSeat: 3,
+        companyCallSeatDetail: { valid: 4 },
+        companyAllCallSeat: 5,
+        callSeatList: [],
+      })),
+    };
+    const app = createApp({
+      mappingRepository: createRepository().repository,
+      accountClient,
+      baiyingCompanyId: '263120',
+      consoleOrigin: 'http://localhost:4173',
+      workerSharedSecret: 'a-worker-secret-longer-than-24-characters',
+      createId: () => fixedId,
+    });
+
+    const response = await app.request('/api/v1/baiying/account-overview');
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: {
+        communicationBalance: { status: 'success', data: { amount: 2680.45 } },
+        aiBalance: { status: 'error', message: 'AI 余额接口超时' },
+        seatOverview: { status: 'success', data: { companyAllCallSeat: 5 } },
+      },
+    });
+  });
+
+  it('saves multiple data categories, studio and line in one script binding', async () => {
     const scripts = createScriptDependencies();
     const app = createApp({
       mappingRepository: createRepository().repository,
@@ -279,8 +384,10 @@ describe('mapping API', () => {
       body: JSON.stringify({
         robotDefId: '4845020',
         sourceSystem: 'ERP',
-        sourceCategoryId: 'SS1',
-        categoryPath: '邀约-百天-SS1',
+        categories: [
+          { sourceCategoryId: 'SS1', categoryPath: '邀约-百天-SS1' },
+          { sourceCategoryId: 'SS2', categoryPath: '邀约-百天-SS2' },
+        ],
         studioId: 'YL-001',
         studioName: '紫藤影像',
         lineId: 'LINE-01',
@@ -289,8 +396,82 @@ describe('mapping API', () => {
     });
     expect(response.status).toBe(201);
     expect(scripts.saveBinding).toHaveBeenCalledWith(expect.objectContaining({
-      categoryPath: '邀约-百天-SS1', studioId: 'YL-001', lineId: 'LINE-01',
+      categories: [
+        { sourceCategoryId: 'SS1', categoryPath: '邀约-百天-SS1' },
+        { sourceCategoryId: 'SS2', categoryPath: '邀约-百天-SS2' },
+      ],
+      studioId: 'YL-001', lineId: 'LINE-01',
     }), 'admin-1', fixedId);
+  });
+
+  it('returns cached ERP categories with the scripts bound for the selected studio', async () => {
+    const scripts = createScriptDependencies();
+    const planned = createPlannedTaskDependencies([{
+      sourceSystem: 'ERP',
+      externalId: 'SS1',
+      name: '百天邀约',
+      categoryPath: '邀约-百天-SS1',
+      level: 3,
+      parentId: 'BT',
+      active: true,
+      fields: { CategoryID: 'SS1', CategoryName: '百天邀约' },
+      syncedAt: '2026-09-04T02:00:00.000Z',
+    }]);
+    const sync = vi.fn(async () => ({ sourceSystem: 'ERP' as const, count: 1, syncedAt: '2026-09-04T02:00:00.000Z' }));
+    const app = createApp({
+      mappingRepository: createRepository().repository,
+      ...scripts,
+      plannedTaskRepository: planned.plannedTaskRepository,
+      erpCategorySyncService: { sync },
+      baiyingCompanyId: '263120',
+      consoleOrigin: 'http://localhost:4173',
+      workerSharedSecret: 'a-worker-secret-longer-than-24-characters',
+      createId: () => fixedId,
+      clock: () => new Date('2026-09-04T02:00:00.000Z'),
+    });
+
+    const response = await app.request('/api/v1/data-categories?sourceSystem=ERP&studioId=YL-001');
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.data.categories[0]).toMatchObject({
+      externalId: 'SS1',
+      categoryPath: '邀约-百天-SS1',
+      boundScripts: [{ robotDefId: '4845020', robotName: '开放平台演示话术' }],
+    });
+    expect(planned.listSourceCategories).toHaveBeenCalledWith('ERP');
+    expect(sync).not.toHaveBeenCalled();
+    expect(planned.syncSourceCategories).not.toHaveBeenCalled();
+
+    const allStudiosResponse = await app.request('/api/v1/data-categories?sourceSystem=ERP');
+    expect(allStudiosResponse.status).toBe(200);
+    await expect(allStudiosResponse.json()).resolves.toMatchObject({
+      data: {
+        studioId: null,
+        categories: [{ boundScripts: [{ robotDefId: '4845020' }] }],
+      },
+    });
+  });
+
+  it('runs ERP synchronization only through the dedicated command endpoint', async () => {
+    const planned = createPlannedTaskDependencies();
+    const sync = vi.fn(async () => ({ sourceSystem: 'ERP' as const, count: 469, syncedAt: '2026-09-04T02:00:00.000Z' }));
+    const app = createApp({
+      mappingRepository: createRepository().repository,
+      plannedTaskRepository: planned.plannedTaskRepository,
+      erpCategorySyncService: { sync },
+      consoleOrigin: 'http://localhost:4173',
+      workerSharedSecret: 'a-worker-secret-longer-than-24-characters',
+      createId: () => fixedId,
+    });
+
+    const response = await app.request('/api/v1/data-categories/sync', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-actor-id': 'admin-1' },
+      body: JSON.stringify({ sourceSystem: 'ERP' }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ data: { sourceSystem: 'ERP', count: 469 } });
+    expect(sync).toHaveBeenCalledOnce();
   });
 
   it('returns Baiying phone lines with all platform studio bindings', async () => {

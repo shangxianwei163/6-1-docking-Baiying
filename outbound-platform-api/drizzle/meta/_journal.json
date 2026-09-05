@@ -43,6 +43,20 @@
       "when": 1788506795715,
       "tag": "0005_sparkling_vermin",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788511659088,
+      "tag": "0006_marvelous_silverclaw",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788513822156,
+      "tag": "0007_brief_gamora",
+      "breakpoints": true
     }
   ]
 }

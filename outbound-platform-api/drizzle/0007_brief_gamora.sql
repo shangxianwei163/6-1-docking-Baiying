@@ -1,0 +1,1 @@
+ALTER TABLE "baiying_robot_binding" ADD COLUMN "categories_json" jsonb DEFAULT '[]'::jsonb NOT NULL;
