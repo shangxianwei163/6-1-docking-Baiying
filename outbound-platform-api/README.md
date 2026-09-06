@@ -124,8 +124,26 @@ npm run stage6b:verify:ui
 
 数据库脚本会创建隔离影楼并在结束时清理，覆盖加密、幂等充值、即时/预约定价与审计；浏览器脚本只读取数据、打开表单和调用价格预览，不会新增、充值或发布版本，截图写入 `/tmp`。
 
+## 阶段 6B-2 退款、人工调整与操作审计
+
+“充值记录”页面现已增加资金申请与独立复核工作台，“操作日志”页面改为读取 PostgreSQL 审计记录：
+
+- `GET/POST /api/v1/account-adjustments`：分页筛选申请，或发起客户退款、人工补账、人工冲减；申请保存账户余额快照并支持幂等重放，但不会立即改动余额。
+- `POST /api/v1/account-adjustments/{adjustmentId}/decisions`：由非申请人批准或拒绝。批准时同时锁定审批单和账户、重新校验可用余额、更新余额并生成唯一账本流水；拒绝不写账本。
+- `GET /api/v1/audit-logs`：按关键词和业务分类分页读取真实审计事件；密钥、令牌、认证、Cookie、密文和手机号等敏感键在服务端递归脱敏后才返回浏览器。
+
+迁移和验收命令：
+
+```bash
+npm run db:migrate
+npm run db:verify:stage6b2
+npm run stage6b2:verify:ui
+```
+
+数据库验收创建并清理隔离资金夹具；浏览器验收使用只读待复核夹具验证复核界面，并读取真实审计事件，不会提交资金决策。开发/测试环境需要撤销 0011 时，可使用 `drizzle/rollback/0011_account_adjustment_approval.down.sql`，但只允许在没有真实审批数据时执行。当前 `X-Actor-Id` 是本地内部联调身份；阿里云生产部署必须由可信 SSO/网关覆盖该请求头，浏览器传值不能作为真实授权依据。
+
 ## 当前交付范围
 
-阶段 0 契约、阶段 1 数据底座、阶段 2A 本地任务受理、阶段 3A 本地百应编排、阶段 4A 本地回调计费闭环、阶段 6A 真实任务运营页和阶段 6B-1 影楼/充值/价格运营已完成，包括配置版本、任务模型、账户账本、外部 HMAC/Nonce/限流、原子受理、可恢复的 Callback Inbox、录音发现、投递/死信、规范化话术绑定，以及 PostgreSQL Outbox 的安全领取与重试语义。
+阶段 0 契约、阶段 1 数据底座、阶段 2A 本地任务受理、阶段 3A 本地百应编排、阶段 4A 本地回调计费闭环、阶段 6A 真实任务运营页，以及阶段 6B-1/6B-2 的影楼、充值、价格、资金审批和操作审计已完成，包括配置版本、任务模型、账户账本、双人复核、外部 HMAC/Nonce/限流、原子受理、可恢复的 Callback Inbox、录音发现、投递/死信、规范化话术绑定，以及 PostgreSQL Outbox 的安全领取与重试语义。
 
 百应最新 OAuth v2 鉴权、公司发现、机器人/话术发现和话术变量查询已接入。可执行 `npm run baiying:check` 做只读链路检查，或执行 `npm run baiying:sync` 将真实变量快照幂等写入本地 PostgreSQL。真实 ERP/CRM 凭证、回调地址和阿里云 KMS 适配归入阶段 2B；真实百应写接口、回调联调和完成通话分页补偿归入阶段 3B/4B，当前不会拨号或调用真实 ERP/CRM。生产队列首期使用 PostgreSQL Outbox/Inbox Worker，达到方案阈值后接入阿里云 RocketMQ 5.x，事务 Outbox 与持久 Inbox 始终保留。

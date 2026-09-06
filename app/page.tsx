@@ -18,7 +18,6 @@ import {
 import {
   ApiInterfaceView,
   ApiLogView,
-  AuditLogView,
   DataCategoryView,
   LineManagementView,
   MappingView,
@@ -30,6 +29,7 @@ import { loadOutboundTasks } from '@/lib/platform-api';
 import { PricingOperationsConsole } from '@/components/platform/pricing-operations-console';
 import { RechargeLedgerConsole } from '@/components/platform/recharge-ledger-console';
 import { StudioOperationsConsole } from '@/components/platform/studio-operations-console';
+import { AuditOperationsConsole } from '@/components/platform/audit-operations-console';
 
 export type PlatformSection =
   | '总览'
@@ -60,7 +60,7 @@ const navigation: Array<{
   { label: '话费设置', icon: BadgeDollarSign },
   { label: '充值记录', icon: CircleDollarSign },
   { label: '接口日志', icon: Activity },
-  { label: '操作日志', icon: BellRing, hint: '3' },
+  { label: '操作日志', icon: BellRing },
   { label: 'API接口', icon: Braces },
 ];
 
@@ -74,7 +74,7 @@ const pageMap: Record<PlatformSection, React.ReactNode> = {
   呼叫任务: <TaskView />,
   充值记录: <RechargeLedgerConsole />,
   话费设置: <PricingOperationsConsole />,
-  操作日志: <AuditLogView />,
+  操作日志: <AuditOperationsConsole />,
   接口日志: <ApiLogView />,
   API接口: <ApiInterfaceView />,
 };

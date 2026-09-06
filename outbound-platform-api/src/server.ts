@@ -18,6 +18,8 @@ import { PostgresOutboundTaskService } from './outbound-task/service.js';
 import { PostgresCallbackInboxRepository } from './callback/postgres-repository.js';
 import { BaiyingCallbackIngressService } from './callback/ingress-service.js';
 import { PostgresOperationsConsoleService } from './operations/service.js';
+import { PostgresAccountAdjustmentService } from './operations/adjustment-service.js';
+import { PostgresOperatorAuditService } from './operations/audit-service.js';
 
 for (const name of [
   'HTTP_PROXY',
@@ -83,6 +85,10 @@ const operationsConsoleService = new PostgresOperationsConsoleService(
   database.db,
   localDataProtector,
 );
+const accountAdjustmentService = new PostgresAccountAdjustmentService(
+  database.db,
+);
+const operatorAuditService = new PostgresOperatorAuditService(database.db);
 const baiyingTokenProvider =
   config.BAIYING_TOKEN_URL &&
   config.BAIYING_APP_KEY &&
@@ -115,6 +121,8 @@ const app = createApp({
   externalRequestAuthenticator,
   outboundTaskService,
   operationsConsoleService,
+  accountAdjustmentService,
+  operatorAuditService,
   baiyingCallbackIngress,
   baiyingCompanyId: config.BAIYING_COMPANY_ID,
   consoleOrigin: config.CONSOLE_ORIGIN,

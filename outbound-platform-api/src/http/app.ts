@@ -3,11 +3,15 @@ import { z } from 'zod';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import {
+  accountAdjustmentKindSchema,
+  accountAdjustmentStatusSchema,
   baiyingWorkflowStatusSchema,
+  createAccountAdjustmentInputSchema,
   createOperatorStudioInputSchema,
   createTopUpInputSchema,
   consoleTaskStatusFilterSchema,
   createOutboundTaskRequestSchema,
+  decideAccountAdjustmentInputSchema,
   lineStudioBindingInputSchema,
   mappingDraftInputSchema,
   plannedTaskBindingInputSchema,
@@ -22,6 +26,7 @@ import {
   updateOperatorStudioInputSchema,
   ledgerEntryTypeSchema,
   operatorAccountStatusSchema,
+  operatorAuditCategorySchema,
   operatorStudioStatusSchema,
 } from '@outbound/contracts';
 import {
@@ -55,6 +60,8 @@ import {
   OperationsConsoleFailure,
   type OperationsConsoleService,
 } from '../operations/service.js';
+import type { AccountAdjustmentService } from '../operations/adjustment-service.js';
+import type { OperatorAuditService } from '../operations/audit-service.js';
 export { calculateBillingMinutes } from '../callback/schema.js';
 
 type AppVariables = { requestId: string };
@@ -75,6 +82,8 @@ export type AppDependencies = {
   externalRequestAuthenticator?: ExternalRequestAuthenticator;
   outboundTaskService?: OutboundTaskService;
   operationsConsoleService?: OperationsConsoleService;
+  accountAdjustmentService?: AccountAdjustmentService;
+  operatorAuditService?: OperatorAuditService;
   baiyingCallbackIngress?: BaiyingCallbackIngress;
   clock?: () => Date;
   createId?: () => string;
@@ -350,6 +359,56 @@ export function createApp(dependencies: AppDependencies) {
     return context.json(success(context.get('requestId'), data), 201);
   });
 
+  app.get('/api/v1/account-adjustments', async (context) => {
+    const actorId = requireActor(context.req.header('x-actor-id'));
+    const query = z
+      .object({
+        keyword: z.string().trim().max(200).optional(),
+        studioId: z.uuid().optional(),
+        kind: accountAdjustmentKindSchema.optional(),
+        status: accountAdjustmentStatusSchema.optional(),
+        pageNum: z.coerce.number().int().min(0).default(0),
+        pageSize: z.coerce.number().int().min(1).max(100).default(20),
+      })
+      .parse(context.req.query());
+    const data = await adjustmentDependency(dependencies).listAdjustments(
+      { ...query, keyword: query.keyword || undefined },
+      actorId,
+    );
+    return context.json(success(context.get('requestId'), data));
+  });
+
+  app.post('/api/v1/account-adjustments', async (context) => {
+    const actorId = requireActor(context.req.header('x-actor-id'));
+    const input = createAccountAdjustmentInputSchema.parse(
+      await context.req.json(),
+    );
+    const data = await adjustmentDependency(dependencies).createAdjustment(
+      input,
+      actorId,
+      context.get('requestId'),
+    );
+    return context.json(success(context.get('requestId'), data), 201);
+  });
+
+  app.post(
+    '/api/v1/account-adjustments/:adjustmentId/decisions',
+    async (context) => {
+      const actorId = requireActor(context.req.header('x-actor-id'));
+      const adjustmentId = z.uuid().parse(context.req.param('adjustmentId'));
+      const input = decideAccountAdjustmentInputSchema.parse(
+        await context.req.json(),
+      );
+      const data = await adjustmentDependency(dependencies).decideAdjustment(
+        adjustmentId,
+        input,
+        actorId,
+        context.get('requestId'),
+      );
+      return context.json(success(context.get('requestId'), data));
+    },
+  );
+
   app.get('/api/v1/pricing', async (context) => {
     requireActor(context.req.header('x-actor-id'));
     const data = await operationsDependency(dependencies).getPricingOverview();
@@ -372,6 +431,23 @@ export function createApp(dependencies: AppDependencies) {
       context.get('requestId'),
     );
     return context.json(success(context.get('requestId'), data), 201);
+  });
+
+  app.get('/api/v1/audit-logs', async (context) => {
+    requireActor(context.req.header('x-actor-id'));
+    const query = z
+      .object({
+        keyword: z.string().trim().max(200).optional(),
+        category: operatorAuditCategorySchema.optional(),
+        pageNum: z.coerce.number().int().min(0).default(0),
+        pageSize: z.coerce.number().int().min(1).max(100).default(20),
+      })
+      .parse(context.req.query());
+    const data = await auditDependency(dependencies).listAuditEvents({
+      ...query,
+      keyword: query.keyword || undefined,
+    });
+    return context.json(success(context.get('requestId'), data));
   });
 
   app.get('/api/v1/mappings', async (context) =>
@@ -1080,6 +1156,28 @@ function operationsDependency(dependencies: AppDependencies) {
     );
   }
   return dependencies.operationsConsoleService;
+}
+
+function adjustmentDependency(dependencies: AppDependencies) {
+  if (!dependencies.accountAdjustmentService) {
+    throw new OperationsConsoleFailure(
+      'SERVICE_TEMPORARILY_UNAVAILABLE',
+      '退款与调整审批服务尚未配置',
+      503,
+    );
+  }
+  return dependencies.accountAdjustmentService;
+}
+
+function auditDependency(dependencies: AppDependencies) {
+  if (!dependencies.operatorAuditService) {
+    throw new OperationsConsoleFailure(
+      'SERVICE_TEMPORARILY_UNAVAILABLE',
+      '操作审计查询服务尚未配置',
+      503,
+    );
+  }
+  return dependencies.operatorAuditService;
 }
 
 function externalApiDependencies(dependencies: AppDependencies) {

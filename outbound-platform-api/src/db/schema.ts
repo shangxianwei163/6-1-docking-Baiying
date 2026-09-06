@@ -161,6 +161,16 @@ export const accountLedgerEntryType = pgEnum('account_ledger_entry_type', [
   'REFUND',
   'ADJUSTMENT',
 ]);
+export const accountAdjustmentKind = pgEnum('account_adjustment_kind', [
+  'REFUND',
+  'ADJUSTMENT_CREDIT',
+  'ADJUSTMENT_DEBIT',
+]);
+export const accountAdjustmentStatus = pgEnum('account_adjustment_status', [
+  'PENDING',
+  'APPROVED',
+  'REJECTED',
+]);
 export const callbackParseStatus = pgEnum('callback_parse_status', [
   'PENDING',
   'VALID',
@@ -1154,10 +1164,7 @@ export const callbackInbox = pgTable(
     ),
     index('callback_inbox_lock_idx').on(table.lockedAt, table.lockedBy),
     index('callback_inbox_body_sha_idx').on(table.rawBodySha256),
-    check(
-      'callback_inbox_attempts_ck',
-      sql`${table.processAttempts} >= 0`,
-    ),
+    check('callback_inbox_attempts_ck', sql`${table.processAttempts} >= 0`),
   ],
 );
 
@@ -1310,6 +1317,70 @@ export const accountLedger = pgTable(
       table.occurredAt,
     ),
     index('account_ledger_task_idx').on(table.taskId),
+  ],
+);
+
+export const accountAdjustmentRequests = pgTable(
+  'account_adjustment_request',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    requestNo: varchar('request_no', { length: 64 }).notNull(),
+    idempotencyKey: uuid('idempotency_key').notNull(),
+    studioId: uuid('studio_id')
+      .notNull()
+      .references(() => studios.id, { onDelete: 'restrict' }),
+    kind: accountAdjustmentKind('kind').notNull(),
+    amount: numeric('amount', { precision: 18, scale: 6 }).notNull(),
+    balanceSnapshot: numeric('balance_snapshot', {
+      precision: 18,
+      scale: 6,
+    }).notNull(),
+    availableBalanceSnapshot: numeric('available_balance_snapshot', {
+      precision: 18,
+      scale: 6,
+    }).notNull(),
+    reason: text('reason').notNull(),
+    supportingReference: varchar('supporting_reference', { length: 256 }),
+    status: accountAdjustmentStatus('status').notNull().default('PENDING'),
+    requestedBy: varchar('requested_by', { length: 128 }).notNull(),
+    requestedAt: timestamp('requested_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    reviewedBy: varchar('reviewed_by', { length: 128 }),
+    reviewNote: text('review_note'),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+    ledgerId: uuid('ledger_id').references(() => accountLedger.id, {
+      onDelete: 'restrict',
+    }),
+    lockVersion: integer('lock_version').notNull().default(0),
+  },
+  (table) => [
+    uniqueIndex('account_adjustment_request_no_uq').on(table.requestNo),
+    uniqueIndex('account_adjustment_idempotency_uq').on(table.idempotencyKey),
+    uniqueIndex('account_adjustment_ledger_uq').on(table.ledgerId),
+    index('account_adjustment_status_time_idx').on(
+      table.status,
+      table.requestedAt,
+    ),
+    index('account_adjustment_studio_time_idx').on(
+      table.studioId,
+      table.requestedAt,
+    ),
+    check('account_adjustment_amount_ck', sql`${table.amount} > 0`),
+    check(
+      'account_adjustment_separation_ck',
+      sql`${table.reviewedBy} IS NULL OR ${table.reviewedBy} <> ${table.requestedBy}`,
+    ),
+    check(
+      'account_adjustment_state_ck',
+      sql`(
+        (${table.status} = 'PENDING' AND ${table.reviewedBy} IS NULL AND ${table.reviewNote} IS NULL AND ${table.reviewedAt} IS NULL AND ${table.ledgerId} IS NULL)
+        OR
+        (${table.status} = 'APPROVED' AND ${table.reviewedBy} IS NOT NULL AND ${table.reviewNote} IS NOT NULL AND ${table.reviewedAt} IS NOT NULL AND ${table.ledgerId} IS NOT NULL)
+        OR
+        (${table.status} = 'REJECTED' AND ${table.reviewedBy} IS NOT NULL AND ${table.reviewNote} IS NOT NULL AND ${table.reviewedAt} IS NOT NULL AND ${table.ledgerId} IS NULL)
+      )`,
+    ),
   ],
 );
 

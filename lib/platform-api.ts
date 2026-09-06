@@ -1,15 +1,23 @@
 import type {
+  AccountAdjustmentKind,
+  AccountAdjustmentStatus,
   ConsoleTaskPage,
   ConsoleTaskRecord,
   ConsoleTaskStatusFilter,
+  CreateAccountAdjustmentInput,
   CreateOperatorStudioInput,
   CreateTopUpInput,
+  DecideAccountAdjustmentInput,
   LedgerEntryType,
   MappingDraftInput,
   MappingRule,
   MappingVersion,
   OutboundCallPage,
+  OperatorAccountAdjustment,
+  OperatorAccountAdjustmentPage,
   OperatorAccountStatus,
+  OperatorAuditCategory,
+  OperatorAuditPage,
   OperatorLedgerPage,
   OperatorStudio,
   OperatorStudioPage,
@@ -29,6 +37,9 @@ import type {
 import {
   consoleTaskPageSchema,
   consoleTaskRecordSchema,
+  operatorAccountAdjustmentPageSchema,
+  operatorAccountAdjustmentSchema,
+  operatorAuditPageSchema,
   operatorLedgerPageSchema,
   operatorStudioPageSchema,
   operatorStudioSchema,
@@ -199,7 +210,7 @@ type ApiErrorEnvelope = {
 const apiBaseUrl = (
   import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8788'
 ).replace(/\/$/, '');
-const actorId = 'platform-admin';
+export const platformActorId = 'platform-admin';
 
 export class PlatformApiError extends Error {
   constructor(
@@ -496,6 +507,71 @@ export async function postOperatorTopUp(input: CreateTopUpInput) {
   ) as OperatorTopUpResult;
 }
 
+export async function loadAccountAdjustments(
+  input: {
+    keyword?: string;
+    studioId?: string;
+    kind?: AccountAdjustmentKind;
+    status?: AccountAdjustmentStatus;
+    pageNum?: number;
+    pageSize?: number;
+  } = {},
+) {
+  const search = new URLSearchParams({
+    pageNum: String(input.pageNum ?? 0),
+    pageSize: String(input.pageSize ?? 20),
+  });
+  if (input.keyword?.trim()) search.set('keyword', input.keyword.trim());
+  if (input.studioId) search.set('studioId', input.studioId);
+  if (input.kind) search.set('kind', input.kind);
+  if (input.status) search.set('status', input.status);
+  return operatorAccountAdjustmentPageSchema.parse(
+    await request<unknown>(`/api/v1/account-adjustments?${search}`),
+  ) as OperatorAccountAdjustmentPage;
+}
+
+export async function createAccountAdjustment(
+  input: CreateAccountAdjustmentInput,
+) {
+  return operatorAccountAdjustmentSchema.parse(
+    await request<unknown>('/api/v1/account-adjustments', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  ) as OperatorAccountAdjustment;
+}
+
+export async function decideAccountAdjustment(
+  adjustmentId: string,
+  input: DecideAccountAdjustmentInput,
+) {
+  return operatorAccountAdjustmentSchema.parse(
+    await request<unknown>(
+      `/api/v1/account-adjustments/${encodeURIComponent(adjustmentId)}/decisions`,
+      { method: 'POST', body: JSON.stringify(input) },
+    ),
+  ) as OperatorAccountAdjustment;
+}
+
+export async function loadOperatorAuditLogs(
+  input: {
+    keyword?: string;
+    category?: OperatorAuditCategory;
+    pageNum?: number;
+    pageSize?: number;
+  } = {},
+) {
+  const search = new URLSearchParams({
+    pageNum: String(input.pageNum ?? 0),
+    pageSize: String(input.pageSize ?? 20),
+  });
+  if (input.keyword?.trim()) search.set('keyword', input.keyword.trim());
+  if (input.category) search.set('category', input.category);
+  return operatorAuditPageSchema.parse(
+    await request<unknown>(`/api/v1/audit-logs?${search}`),
+  ) as OperatorAuditPage;
+}
+
 export async function loadPricingOverview() {
   return pricingOverviewSchema.parse(
     await request<unknown>('/api/v1/pricing'),
@@ -525,7 +601,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   try {
     const headers = new Headers(init.headers);
     headers.set('content-type', 'application/json');
-    headers.set('x-actor-id', actorId);
+    headers.set('x-actor-id', platformActorId);
     response = await fetch(`${apiBaseUrl}${path}`, {
       ...init,
       credentials: 'include',

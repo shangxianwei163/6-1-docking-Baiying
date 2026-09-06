@@ -36,6 +36,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { UnifiedSelect } from '@/components/ui/unified-select';
+import { AccountAdjustmentConsole } from './account-adjustment-console';
 import { Panel, Status } from './shared';
 
 const emptyLedger: OperatorLedgerPage = {
@@ -422,6 +423,8 @@ export function RechargeLedgerConsole() {
         </footer>
       </Panel>
 
+      <AccountAdjustmentConsole studios={studios} onLedgerChanged={refresh} />
+
       <div className="ops-note-grid">
         <Panel title="到账原则">
           <div className="ops-policy-note">
@@ -433,14 +436,11 @@ export function RechargeLedgerConsole() {
           </div>
         </Panel>
         <Panel title="退款与调整">
-          <div className="ops-policy-note is-pending">
+          <div className="ops-policy-note">
             <ShieldCheck aria-hidden="true" size={17} />
             <div>
-              <b>审批能力尚未开放</b>
-              <p>
-                退款和人工调整将在 6B-2
-                增加申请、复核与拒绝状态，当前不会提供绕过审批的入口。
-              </p>
+              <b>申请与复核严格分离</b>
+              <p>退款、补账和冲减只有在另一管理员批准后才生成唯一账本流水。</p>
             </div>
           </div>
         </Panel>

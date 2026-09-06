@@ -201,6 +201,95 @@ export const createTopUpInputSchema = z
   })
   .strict();
 
+export const accountAdjustmentKindSchema = z.enum([
+  'REFUND',
+  'ADJUSTMENT_CREDIT',
+  'ADJUSTMENT_DEBIT',
+]);
+export const accountAdjustmentStatusSchema = z.enum([
+  'PENDING',
+  'APPROVED',
+  'REJECTED',
+]);
+export const accountAdjustmentDecisionSchema = z.enum(['APPROVE', 'REJECT']);
+
+export const operatorAdjustmentLedgerSchema = z.object({
+  ledgerId: z.uuid(),
+  amount: decimalAmountSchema,
+  balanceAfter: decimalAmountSchema,
+  availableBalanceAfter: decimalAmountSchema,
+  occurredAt: z.iso.datetime({ offset: true }),
+});
+
+export const operatorAccountAdjustmentSchema = z.object({
+  id: z.uuid(),
+  requestNo: z.string().min(1).max(64),
+  studioId: z.uuid(),
+  studioBusinessCode: z.string().min(1).max(64),
+  studioName: z.string().min(1).max(200),
+  kind: accountAdjustmentKindSchema,
+  amount: positiveAmountSchema,
+  balanceChange: decimalAmountSchema,
+  balanceSnapshot: decimalAmountSchema,
+  availableBalanceSnapshot: decimalAmountSchema,
+  currentBalance: decimalAmountSchema,
+  currentAvailableBalance: decimalAmountSchema,
+  currentAccountStatus: operatorAccountStatusSchema,
+  reason: z.string().min(2).max(500),
+  supportingReference: z.string().max(256).nullable(),
+  status: accountAdjustmentStatusSchema,
+  requestedBy: z.string().min(1).max(128),
+  requestedAt: z.iso.datetime({ offset: true }),
+  reviewedBy: z.string().min(1).max(128).nullable(),
+  reviewNote: z.string().min(2).max(500).nullable(),
+  reviewedAt: z.iso.datetime({ offset: true }).nullable(),
+  ledger: operatorAdjustmentLedgerSchema.nullable(),
+  canReview: z.boolean(),
+  lockVersion: z.number().int().nonnegative(),
+});
+
+export const operatorAccountAdjustmentSummarySchema = z.object({
+  all: z.number().int().nonnegative(),
+  pending: z.number().int().nonnegative(),
+  approved: z.number().int().nonnegative(),
+  rejected: z.number().int().nonnegative(),
+  pendingCreditAmount: nonNegativeAmountSchema,
+  pendingDebitAmount: nonNegativeAmountSchema,
+});
+
+export const operatorAccountAdjustmentPageSchema = z.object({
+  total: z.number().int().nonnegative(),
+  pages: z.number().int().nonnegative(),
+  pageNum: z.number().int().nonnegative(),
+  pageSize: z.number().int().positive().max(100),
+  summary: operatorAccountAdjustmentSummarySchema,
+  items: z.array(operatorAccountAdjustmentSchema),
+});
+
+export const createAccountAdjustmentInputSchema = z
+  .object({
+    studioId: z.uuid(),
+    kind: accountAdjustmentKindSchema,
+    amount: positiveAmountSchema,
+    reason: z.string().trim().min(2).max(500),
+    supportingReference: z
+      .string()
+      .trim()
+      .min(1)
+      .max(256)
+      .nullable()
+      .optional(),
+    idempotencyKey: z.uuid(),
+  })
+  .strict();
+
+export const decideAccountAdjustmentInputSchema = z
+  .object({
+    decision: accountAdjustmentDecisionSchema,
+    note: z.string().trim().min(2).max(500),
+  })
+  .strict();
+
 export const operatorSupplierPricingTierSchema = z.object({
   id: z.uuid(),
   tierCode: z.string().min(1).max(64),
@@ -306,6 +395,55 @@ export const pricingPublishResultSchema = z.object({
   published: z.array(operatorPricingVersionSchema).min(1),
 });
 
+export const operatorAuditCategorySchema = z.enum([
+  'FINANCIAL',
+  'STUDIO',
+  'PRICING',
+  'CONFIGURATION',
+  'SYSTEM',
+]);
+
+const auditDetailValueSchema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.null(),
+]);
+
+export const operatorAuditEventSchema = z.object({
+  id: z.uuid(),
+  requestId: z.string().min(1).max(128),
+  actorId: z.string().min(1).max(128),
+  action: z.string().min(1).max(128),
+  actionLabel: z.string().min(1).max(200),
+  category: operatorAuditCategorySchema,
+  objectType: z.string().min(1).max(128),
+  objectId: z.string().min(1).max(256),
+  objectLabel: z.string().min(1).max(500),
+  detail: z.record(z.string(), auditDetailValueSchema),
+  occurredAt: z.iso.datetime({ offset: true }),
+});
+
+export const operatorAuditSummarySchema = z.object({
+  all: z.number().int().nonnegative(),
+  today: z.number().int().nonnegative(),
+  actors: z.number().int().nonnegative(),
+  financial: z.number().int().nonnegative(),
+  studio: z.number().int().nonnegative(),
+  pricing: z.number().int().nonnegative(),
+  configuration: z.number().int().nonnegative(),
+  system: z.number().int().nonnegative(),
+});
+
+export const operatorAuditPageSchema = z.object({
+  total: z.number().int().nonnegative(),
+  pages: z.number().int().nonnegative(),
+  pageNum: z.number().int().nonnegative(),
+  pageSize: z.number().int().positive().max(100),
+  summary: operatorAuditSummarySchema,
+  items: z.array(operatorAuditEventSchema),
+});
+
 export type OperatorStudio = z.infer<typeof operatorStudioSchema>;
 export type OperatorStudioPage = z.infer<typeof operatorStudioPageSchema>;
 export type CreateOperatorStudioInput = z.infer<
@@ -323,6 +461,25 @@ export type AccountEvidenceChannel = z.infer<
   typeof accountEvidenceChannelSchema
 >;
 export type CreateTopUpInput = z.infer<typeof createTopUpInputSchema>;
+export type AccountAdjustmentKind = z.infer<typeof accountAdjustmentKindSchema>;
+export type AccountAdjustmentStatus = z.infer<
+  typeof accountAdjustmentStatusSchema
+>;
+export type AccountAdjustmentDecision = z.infer<
+  typeof accountAdjustmentDecisionSchema
+>;
+export type OperatorAccountAdjustment = z.infer<
+  typeof operatorAccountAdjustmentSchema
+>;
+export type OperatorAccountAdjustmentPage = z.infer<
+  typeof operatorAccountAdjustmentPageSchema
+>;
+export type CreateAccountAdjustmentInput = z.infer<
+  typeof createAccountAdjustmentInputSchema
+>;
+export type DecideAccountAdjustmentInput = z.infer<
+  typeof decideAccountAdjustmentInputSchema
+>;
 export type OperatorPricingVersion = z.infer<
   typeof operatorPricingVersionSchema
 >;
@@ -330,3 +487,6 @@ export type PricingOverview = z.infer<typeof pricingOverviewSchema>;
 export type PublishPricingInput = z.infer<typeof publishPricingInputSchema>;
 export type PricingPreview = z.infer<typeof pricingPreviewSchema>;
 export type PricingPublishResult = z.infer<typeof pricingPublishResultSchema>;
+export type OperatorAuditCategory = z.infer<typeof operatorAuditCategorySchema>;
+export type OperatorAuditEvent = z.infer<typeof operatorAuditEventSchema>;
+export type OperatorAuditPage = z.infer<typeof operatorAuditPageSchema>;
