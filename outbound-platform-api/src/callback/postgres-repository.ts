@@ -131,26 +131,44 @@ export class PostgresCallbackInboxRepository implements CallbackInboxRepository 
 
   async complete(input: { inboxId: string; workerId: string }): Promise<void> {
     assertWorkerId(input.workerId);
-    const rows = await this.db
-      .update(callbackInbox)
-      .set({
-        parseStatus: 'VALID',
-        processStatus: 'SUCCEEDED',
-        parseError: null,
-        processError: null,
-        lockedAt: null,
-        lockedBy: null,
-        processedAt: this.clock(),
-      })
-      .where(
-        and(
-          eq(callbackInbox.id, input.inboxId),
-          eq(callbackInbox.processStatus, 'PROCESSING'),
-          eq(callbackInbox.lockedBy, input.workerId),
-        ),
-      )
-      .returning({ id: callbackInbox.id });
-    if (!rows.length) throw claimLost(input.inboxId);
+    await this.db.transaction(async (tx) => {
+      const now = this.clock();
+      const rows = await tx
+        .update(callbackInbox)
+        .set({
+          parseStatus: 'VALID',
+          processStatus: 'SUCCEEDED',
+          parseError: null,
+          processError: null,
+          lockedAt: null,
+          lockedBy: null,
+          processedAt: now,
+        })
+        .where(
+          and(
+            eq(callbackInbox.id, input.inboxId),
+            eq(callbackInbox.processStatus, 'PROCESSING'),
+            eq(callbackInbox.lockedBy, input.workerId),
+          ),
+        )
+        .returning({ id: callbackInbox.id });
+      if (!rows.length) throw claimLost(input.inboxId);
+      await tx
+        .update(deadLetterEvents)
+        .set({
+          status: 'RESOLVED',
+          resolvedBy: input.workerId,
+          resolvedAt: now,
+          resolutionNote: '人工重放后由 Callback Worker 处理成功',
+        })
+        .where(
+          and(
+            eq(deadLetterEvents.sourceType, 'CALLBACK'),
+            eq(deadLetterEvents.sourceId, input.inboxId),
+            eq(deadLetterEvents.status, 'REPLAYING'),
+          ),
+        );
+    });
   }
 
   async reject(input: {

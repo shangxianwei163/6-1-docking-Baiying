@@ -157,10 +157,31 @@ npm run db:verify:stage6b3
 npm run stage6b3:verify:ui
 ```
 
-数据库脚本会短暂创建并自动清理 Callback、Outbox 与死信隔离夹具；浏览器脚本只读真实聚合接口并检查详情脱敏及 390px 布局。回调测试、任务控制、失败重试与死信人工重放属于后续 6B-3B。
+数据库脚本会短暂创建并自动清理 Callback、Outbox 与死信隔离夹具；浏览器脚本只读真实聚合接口并检查详情脱敏及 390px 布局。
+
+## 阶段 6B-3B 任务处置与异常恢复
+
+“呼叫任务”详情和新增的“异常中心”已形成可审计的本地异常处置闭环：
+
+- `POST /api/v1/outbound-tasks/{taskNo}/commands`：暂停、恢复或终止任务；先记录 `PENDING` 操作，再调用供应商适配器，只有确认结果才更新任务状态。
+- `POST /api/v1/outbound-tasks/{taskNo}/retry`：只恢复可证明安全的失败阶段并重新入队；部分导入、已产生通话或资金状态不确定时拒绝盲目重试。
+- `GET /api/v1/dead-letters`：按关键词、来源和状态分页查询死信，只返回脱敏摘要。
+- `POST /api/v1/dead-letters/{id}/replay`：原位恢复 Outbox、Callback、录音或回传记录；Worker 成功处理 Outbox/Callback 后自动标记解决。
+- `POST /api/v1/dead-letters/{id}/ignore`：保留原记录并记录忽略原因，不重新投递。
+
+所有写操作要求 `X-Actor-Id`、操作原因和 UUID 幂等键。开发环境使用严格零网络的任务命令模拟器；`NODE_ENV=production` 时不会加载模拟器，取得真实百应写接口前任务控制返回明确的未配置错误。失败任务重新冻结后使用独立的冻结/释放周期账本键，不覆盖历史流水。
+
+本地数据库验收不会连接百应、ERP 或 CRM，也不会拨号：
+
+```bash
+npm run db:verify:stage6b3b
+npm run stage6b3b:verify:ui
+```
+
+数据库脚本使用隔离夹具验证状态、资金、幂等、审计和 Worker 自动闭环并在结束后清理；浏览器脚本使用只读/模拟路由验证确认弹窗、异常处置、脱敏详情与 390px 布局，不会触发真实外部请求。
 
 ## 当前交付范围
 
-阶段 0 契约、阶段 1 数据底座、阶段 2A 本地任务受理、阶段 3A 本地百应编排、阶段 4A 本地回调计费闭环、阶段 6A 真实任务运营页，以及阶段 6B-1/6B-2/6B-3A 的影楼、充值、价格、资金审批、操作审计、实时总览和统一接口日志已完成，包括配置版本、任务模型、账户账本、双人复核、外部 HMAC/Nonce/限流、原子受理、可恢复的 Callback Inbox、录音发现、投递/死信、规范化话术绑定，以及 PostgreSQL Outbox 的安全领取与重试语义。
+阶段 0 契约、阶段 1 数据底座、阶段 2A 本地任务受理、阶段 3A 本地百应编排、阶段 4A 本地回调计费闭环、阶段 6A 真实任务运营页，以及阶段 6B-1/6B-2/6B-3A/6B-3B 的影楼、充值、价格、资金审批、操作审计、实时总览、统一接口日志、任务控制和异常恢复已完成，包括配置版本、任务模型、账户账本、双人复核、外部 HMAC/Nonce/限流、原子受理、可恢复的 Callback Inbox、录音发现、投递/死信、人工重放、规范化话术绑定，以及 PostgreSQL Outbox 的安全领取与重试语义。
 
 百应最新 OAuth v2 鉴权、公司发现、机器人/话术发现和话术变量查询已接入。可执行 `npm run baiying:check` 做只读链路检查，或执行 `npm run baiying:sync` 将真实变量快照幂等写入本地 PostgreSQL。真实 ERP/CRM 凭证、回调地址和阿里云 KMS 适配归入阶段 2B；真实百应写接口、回调联调和完成通话分页补偿归入阶段 3B/4B，当前不会拨号或调用真实 ERP/CRM。生产队列首期使用 PostgreSQL Outbox/Inbox Worker，达到方案阈值后接入阿里云 RocketMQ 5.x，事务 Outbox 与持久 Inbox 始终保留。

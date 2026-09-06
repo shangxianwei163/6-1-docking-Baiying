@@ -2,6 +2,7 @@ import type {
   AccountAdjustmentKind,
   AccountAdjustmentStatus,
   ConsoleTaskPage,
+  ConsoleTaskCommand,
   ConsoleTaskRecord,
   ConsoleTaskStatusFilter,
   CreateAccountAdjustmentInput,
@@ -20,6 +21,11 @@ import type {
   OperatorAuditPage,
   OperatorOperationsOverview,
   OperatorIntegrationLogPage,
+  OperatorDeadLetterActionResult,
+  OperatorDeadLetterPage,
+  OperatorDeadLetterSourceType,
+  OperatorDeadLetterStatus,
+  OperatorTaskActionResult,
   IntegrationLogDirection,
   IntegrationLogStatus,
   IntegrationLogSystem,
@@ -47,6 +53,9 @@ import {
   operatorAuditPageSchema,
   operatorOperationsOverviewSchema,
   operatorIntegrationLogPageSchema,
+  operatorDeadLetterActionResultSchema,
+  operatorDeadLetterPageSchema,
+  operatorTaskActionResultSchema,
   operatorLedgerPageSchema,
   operatorStudioPageSchema,
   operatorStudioSchema,
@@ -433,6 +442,34 @@ export async function loadOutboundTaskCalls(
   ) as OutboundCallPage;
 }
 
+export async function commandOutboundTask(
+  taskNo: string,
+  input: {
+    command: ConsoleTaskCommand;
+    reason: string;
+    idempotencyKey: string;
+  },
+) {
+  return operatorTaskActionResultSchema.parse(
+    await request<unknown>(
+      `/api/v1/outbound-tasks/${encodeURIComponent(taskNo)}/commands`,
+      { method: 'POST', body: JSON.stringify(input) },
+    ),
+  ) as OperatorTaskActionResult;
+}
+
+export async function retryOutboundTask(
+  taskNo: string,
+  input: { reason: string; idempotencyKey: string },
+) {
+  return operatorTaskActionResultSchema.parse(
+    await request<unknown>(
+      `/api/v1/outbound-tasks/${encodeURIComponent(taskNo)}/retry`,
+      { method: 'POST', body: JSON.stringify(input) },
+    ),
+  ) as OperatorTaskActionResult;
+}
+
 export async function loadOperatorStudios(
   input: {
     keyword?: string;
@@ -606,6 +643,51 @@ export async function loadIntegrationLogs(
   return operatorIntegrationLogPageSchema.parse(
     await request<unknown>(`/api/v1/integration-logs?${search}`),
   ) as OperatorIntegrationLogPage;
+}
+
+export async function loadDeadLetters(
+  input: {
+    keyword?: string;
+    sourceType?: OperatorDeadLetterSourceType;
+    status?: OperatorDeadLetterStatus;
+    pageNum?: number;
+    pageSize?: number;
+  } = {},
+) {
+  const search = new URLSearchParams({
+    pageNum: String(input.pageNum ?? 0),
+    pageSize: String(input.pageSize ?? 20),
+  });
+  if (input.keyword?.trim()) search.set('keyword', input.keyword.trim());
+  if (input.sourceType) search.set('sourceType', input.sourceType);
+  if (input.status) search.set('status', input.status);
+  return operatorDeadLetterPageSchema.parse(
+    await request<unknown>(`/api/v1/dead-letters?${search}`),
+  ) as OperatorDeadLetterPage;
+}
+
+export async function replayDeadLetter(
+  deadLetterId: string,
+  input: { reason: string; idempotencyKey: string },
+) {
+  return operatorDeadLetterActionResultSchema.parse(
+    await request<unknown>(
+      `/api/v1/dead-letters/${encodeURIComponent(deadLetterId)}/replay`,
+      { method: 'POST', body: JSON.stringify(input) },
+    ),
+  ) as OperatorDeadLetterActionResult;
+}
+
+export async function ignoreDeadLetter(
+  deadLetterId: string,
+  input: { reason: string; idempotencyKey: string },
+) {
+  return operatorDeadLetterActionResultSchema.parse(
+    await request<unknown>(
+      `/api/v1/dead-letters/${encodeURIComponent(deadLetterId)}/ignore`,
+      { method: 'POST', body: JSON.stringify(input) },
+    ),
+  ) as OperatorDeadLetterActionResult;
 }
 
 export async function loadPricingOverview() {

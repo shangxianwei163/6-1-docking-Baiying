@@ -22,6 +22,11 @@ import { PostgresAccountAdjustmentService } from './operations/adjustment-servic
 import { PostgresOperatorAuditService } from './operations/audit-service.js';
 import { PostgresOperationsOverviewService } from './operations/overview-service.js';
 import { PostgresIntegrationLogService } from './operations/integration-log-service.js';
+import { PostgresRecoveryOperationsService } from './operations/recovery-service.js';
+import {
+  LocalTaskCommandExecutor,
+  PostgresTaskControlService,
+} from './operations/task-control-service.js';
 
 for (const name of [
   'HTTP_PROXY',
@@ -95,6 +100,17 @@ const operationsOverviewService = new PostgresOperationsOverviewService(
   database.db,
 );
 const integrationLogService = new PostgresIntegrationLogService(database.db);
+const recoveryOperationsService = new PostgresRecoveryOperationsService(
+  database.db,
+);
+const taskControlService =
+  config.NODE_ENV === 'production'
+    ? undefined
+    : new PostgresTaskControlService(
+        database.db,
+        new LocalTaskCommandExecutor(),
+        { taskQueueName: config.TASK_ORCHESTRATION_QUEUE_NAME },
+      );
 const baiyingTokenProvider =
   config.BAIYING_TOKEN_URL &&
   config.BAIYING_APP_KEY &&
@@ -131,6 +147,8 @@ const app = createApp({
   operatorAuditService,
   operationsOverviewService,
   integrationLogService,
+  recoveryOperationsService,
+  taskControlService,
   baiyingCallbackIngress,
   baiyingCompanyId: config.BAIYING_COMPANY_ID,
   consoleOrigin: config.CONSOLE_ORIGIN,

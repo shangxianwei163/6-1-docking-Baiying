@@ -73,6 +73,10 @@ const task: ConsoleTaskRecord = {
     resultUrl: 'https://erp.mock.invalid/outbound/result',
     recordingUrl: 'https://erp.mock.invalid/outbound/recording',
   },
+  actions: {
+    commands: ['PAUSE', 'TERMINATE'],
+    retry: { available: false, blockedReason: null },
+  },
 };
 
 const page: ConsoleTaskPage = {

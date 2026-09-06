@@ -79,21 +79,39 @@ export class PostgresOutboxRepository implements OutboxRepository {
 
   async complete(eventId: string, workerId: string): Promise<void> {
     assertWorkerId(workerId);
-    const rows = await this.db
-      .update(queueOutbox)
-      .set({
-        publishedAt: this.clock(),
-        lockedAt: null,
-        lockedBy: null,
-        lastError: null,
-      })
-      .where(
-        and(eq(queueOutbox.id, eventId), eq(queueOutbox.lockedBy, workerId)),
-      )
-      .returning({ id: queueOutbox.id });
-    if (!rows.length) {
-      throw new OutboxClaimLostError(`Outbox 事件 ${eventId} 的处理锁已丢失`);
-    }
+    await this.db.transaction(async (tx) => {
+      const now = this.clock();
+      const rows = await tx
+        .update(queueOutbox)
+        .set({
+          publishedAt: now,
+          lockedAt: null,
+          lockedBy: null,
+          lastError: null,
+        })
+        .where(
+          and(eq(queueOutbox.id, eventId), eq(queueOutbox.lockedBy, workerId)),
+        )
+        .returning({ id: queueOutbox.id });
+      if (!rows.length) {
+        throw new OutboxClaimLostError(`Outbox 事件 ${eventId} 的处理锁已丢失`);
+      }
+      await tx
+        .update(deadLetterEvents)
+        .set({
+          status: 'RESOLVED',
+          resolvedBy: workerId,
+          resolvedAt: now,
+          resolutionNote: '人工重放后由 Outbox Worker 处理成功',
+        })
+        .where(
+          and(
+            eq(deadLetterEvents.sourceType, 'OUTBOX'),
+            eq(deadLetterEvents.sourceId, eventId),
+            eq(deadLetterEvents.status, 'REPLAYING'),
+          ),
+        );
+    });
   }
 
   async fail(input: {

@@ -9,6 +9,7 @@ import {
   normalizeMoney,
   subtractMoney,
 } from '../billing/money.js';
+import { nextTaskHoldReleaseBusinessKey } from '../billing/hold-cycle.js';
 import type { Database } from '../db/client.js';
 import {
   accountLedger,
@@ -620,7 +621,7 @@ async function releaseRemainingHold(
       amount: remaining,
       balanceAfter: account.balance,
       availableBalanceAfter: subtractMoney(account.balance, activeHoldAfter),
-      businessKey: `TASK_HOLD_RELEASE:${taskId}`,
+      businessKey: await nextTaskHoldReleaseBusinessKey(tx, taskId),
       operatorId: 'callback-worker',
       reason: '百应任务终态对账后释放剩余冻结',
       occurredAt: now,

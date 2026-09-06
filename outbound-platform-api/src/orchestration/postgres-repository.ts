@@ -12,6 +12,7 @@ import {
   normalizeMoney,
   subtractMoney,
 } from '../billing/money.js';
+import { nextTaskHoldReleaseBusinessKey } from '../billing/hold-cycle.js';
 import type { Database } from '../db/client.js';
 import {
   accountLedger,
@@ -477,6 +478,7 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
     }
     const availableBalance = subtractMoney(account.balance, activeHoldAmount);
     const now = this.clock();
+    const releaseBusinessKey = await nextTaskHoldReleaseBusinessKey(tx, taskId);
     await tx
       .update(studioAccounts)
       .set({
@@ -509,7 +511,7 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
         amount,
         balanceAfter: normalizeMoney(account.balance),
         availableBalanceAfter: availableBalance,
-        businessKey: `TASK_HOLD_RELEASE:${taskId}`,
+        businessKey: releaseBusinessKey,
         operatorId: 'task-orchestration-worker',
         reason: '百应任务启动前失败，释放冻结金额',
         occurredAt: now,

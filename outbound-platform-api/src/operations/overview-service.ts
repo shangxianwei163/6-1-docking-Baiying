@@ -193,8 +193,8 @@ export class PostgresOperationsOverviewService implements OperationsOverviewServ
               source_type::text || ' · 死信待处理' as title,
               final_error as description,
               id::text as "objectId",
-              'INTEGRATION_LOGS'::text as destination,
-              '查看链路'::text as "actionLabel",
+              'RECOVERY'::text as destination,
+              '前往处置'::text as "actionLabel",
               created_at as "occurredAt"
             from dead_letter_event
             where status in ('OPEN', 'REPLAYING')

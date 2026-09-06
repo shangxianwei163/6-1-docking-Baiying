@@ -457,6 +457,7 @@ export const operatorAttentionDestinationSchema = z.enum([
   'STUDIOS',
   'ADJUSTMENTS',
   'INTEGRATION_LOGS',
+  'RECOVERY',
 ]);
 
 export const operatorOverviewAttentionItemSchema = z.object({
@@ -591,6 +592,80 @@ export const operatorIntegrationLogPageSchema = z.object({
   items: z.array(operatorIntegrationLogSchema),
 });
 
+export const operatorDeadLetterSourceTypeSchema = z.enum([
+  'OUTBOX',
+  'CALLBACK',
+  'RECORDING',
+  'DELIVERY',
+]);
+export const operatorDeadLetterStatusSchema = z.enum([
+  'OPEN',
+  'REPLAYING',
+  'RESOLVED',
+  'IGNORED',
+]);
+
+export const operatorDeadLetterSchema = z.object({
+  id: z.uuid(),
+  sourceType: operatorDeadLetterSourceTypeSchema,
+  sourceId: z.uuid(),
+  sourceLabel: z.string().min(1).max(200),
+  eventType: z.string().max(256).nullable(),
+  taskNo: z
+    .string()
+    .regex(/^PT-\d{8}-\d{5,}$/)
+    .nullable(),
+  status: operatorDeadLetterStatusSchema,
+  replayCount: z.number().int().nonnegative(),
+  finalError: z.string().min(1).max(2000),
+  suggestedAction: z.string().max(2000).nullable(),
+  replayable: z.boolean(),
+  replayBlockedReason: z.string().max(500).nullable(),
+  sourceStatus: z.string().max(128).nullable(),
+  originalSummary: z.record(z.string(), auditDetailValueSchema),
+  createdAt: z.iso.datetime({ offset: true }),
+  resolvedBy: z.string().max(128).nullable(),
+  resolvedAt: z.iso.datetime({ offset: true }).nullable(),
+  resolutionNote: z.string().max(2000).nullable(),
+});
+
+export const operatorDeadLetterSummarySchema = z.object({
+  all: z.number().int().nonnegative(),
+  open: z.number().int().nonnegative(),
+  replaying: z.number().int().nonnegative(),
+  resolved: z.number().int().nonnegative(),
+  ignored: z.number().int().nonnegative(),
+  outbox: z.number().int().nonnegative(),
+  callback: z.number().int().nonnegative(),
+  recording: z.number().int().nonnegative(),
+  delivery: z.number().int().nonnegative(),
+});
+
+export const operatorDeadLetterPageSchema = z.object({
+  total: z.number().int().nonnegative(),
+  pages: z.number().int().nonnegative(),
+  pageNum: z.number().int().nonnegative(),
+  pageSize: z.number().int().positive().max(100),
+  summary: operatorDeadLetterSummarySchema,
+  items: z.array(operatorDeadLetterSchema),
+});
+
+const operatorRecoveryActionBaseSchema = z
+  .object({
+    reason: z.string().trim().min(2).max(500),
+    idempotencyKey: z.uuid(),
+  })
+  .strict();
+
+export const replayDeadLetterInputSchema = operatorRecoveryActionBaseSchema;
+export const ignoreDeadLetterInputSchema = operatorRecoveryActionBaseSchema;
+
+export const operatorDeadLetterActionResultSchema = z.object({
+  deadLetter: operatorDeadLetterSchema,
+  idempotentReplay: z.boolean(),
+  message: z.string().min(1).max(500),
+});
+
 export type OperatorStudio = z.infer<typeof operatorStudioSchema>;
 export type OperatorStudioPage = z.infer<typeof operatorStudioPageSchema>;
 export type CreateOperatorStudioInput = z.infer<
@@ -666,4 +741,19 @@ export type OperatorIntegrationLog = z.infer<
 >;
 export type OperatorIntegrationLogPage = z.infer<
   typeof operatorIntegrationLogPageSchema
+>;
+export type OperatorDeadLetterSourceType = z.infer<
+  typeof operatorDeadLetterSourceTypeSchema
+>;
+export type OperatorDeadLetterStatus = z.infer<
+  typeof operatorDeadLetterStatusSchema
+>;
+export type OperatorDeadLetter = z.infer<typeof operatorDeadLetterSchema>;
+export type OperatorDeadLetterPage = z.infer<
+  typeof operatorDeadLetterPageSchema
+>;
+export type ReplayDeadLetterInput = z.infer<typeof replayDeadLetterInputSchema>;
+export type IgnoreDeadLetterInput = z.infer<typeof ignoreDeadLetterInputSchema>;
+export type OperatorDeadLetterActionResult = z.infer<
+  typeof operatorDeadLetterActionResultSchema
 >;

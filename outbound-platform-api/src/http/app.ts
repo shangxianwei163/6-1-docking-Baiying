@@ -31,6 +31,12 @@ import {
   integrationLogDirectionSchema,
   integrationLogStatusSchema,
   integrationLogSystemSchema,
+  ignoreDeadLetterInputSchema,
+  operatorDeadLetterSourceTypeSchema,
+  operatorDeadLetterStatusSchema,
+  operatorTaskCommandInputSchema,
+  operatorTaskRetryInputSchema,
+  replayDeadLetterInputSchema,
 } from '@outbound/contracts';
 import {
   MappingConflictError,
@@ -67,6 +73,8 @@ import type { AccountAdjustmentService } from '../operations/adjustment-service.
 import type { OperatorAuditService } from '../operations/audit-service.js';
 import type { OperationsOverviewService } from '../operations/overview-service.js';
 import type { IntegrationLogService } from '../operations/integration-log-service.js';
+import type { RecoveryOperationsService } from '../operations/recovery-service.js';
+import type { TaskControlService } from '../operations/task-control-service.js';
 export { calculateBillingMinutes } from '../callback/schema.js';
 
 type AppVariables = { requestId: string };
@@ -91,6 +99,8 @@ export type AppDependencies = {
   operatorAuditService?: OperatorAuditService;
   operationsOverviewService?: OperationsOverviewService;
   integrationLogService?: IntegrationLogService;
+  recoveryOperationsService?: RecoveryOperationsService;
+  taskControlService?: TaskControlService;
   baiyingCallbackIngress?: BaiyingCallbackIngress;
   clock?: () => Date;
   createId?: () => string;
@@ -273,6 +283,40 @@ export function createApp(dependencies: AppDependencies) {
       query,
     );
     return context.json(success(context.get('requestId'), data));
+  });
+
+  app.post('/api/v1/outbound-tasks/:taskNo/commands', async (context) => {
+    const actorId = requireActor(context.req.header('x-actor-id'));
+    const taskNo = z
+      .string()
+      .regex(/^PT-\d{8}-\d{5,}$/)
+      .parse(context.req.param('taskNo'));
+    const input = operatorTaskCommandInputSchema.parse(
+      await context.req.json(),
+    );
+    const data = await taskControlDependency(dependencies).commandTask(
+      taskNo,
+      input,
+      actorId,
+      context.get('requestId'),
+    );
+    return context.json(success(context.get('requestId'), data));
+  });
+
+  app.post('/api/v1/outbound-tasks/:taskNo/retry', async (context) => {
+    const actorId = requireActor(context.req.header('x-actor-id'));
+    const taskNo = z
+      .string()
+      .regex(/^PT-\d{8}-\d{5,}$/)
+      .parse(context.req.param('taskNo'));
+    const input = operatorTaskRetryInputSchema.parse(await context.req.json());
+    const data = await taskControlDependency(dependencies).retryTask(
+      taskNo,
+      input,
+      actorId,
+      context.get('requestId'),
+    );
+    return context.json(success(context.get('requestId'), data), 202);
   });
 
   app.get('/api/v1/studios', async (context) => {
@@ -479,6 +523,50 @@ export function createApp(dependencies: AppDependencies) {
       ...query,
       keyword: query.keyword || undefined,
     });
+    return context.json(success(context.get('requestId'), data));
+  });
+
+  app.get('/api/v1/dead-letters', async (context) => {
+    requireActor(context.req.header('x-actor-id'));
+    const query = z
+      .object({
+        keyword: z.string().trim().max(200).optional(),
+        sourceType: operatorDeadLetterSourceTypeSchema.optional(),
+        status: operatorDeadLetterStatusSchema.optional(),
+        pageNum: z.coerce.number().int().min(0).default(0),
+        pageSize: z.coerce.number().int().min(1).max(100).default(20),
+      })
+      .parse(context.req.query());
+    const data = await recoveryDependency(dependencies).listDeadLetters({
+      ...query,
+      keyword: query.keyword || undefined,
+    });
+    return context.json(success(context.get('requestId'), data));
+  });
+
+  app.post('/api/v1/dead-letters/:deadLetterId/replay', async (context) => {
+    const actorId = requireActor(context.req.header('x-actor-id'));
+    const deadLetterId = z.uuid().parse(context.req.param('deadLetterId'));
+    const input = replayDeadLetterInputSchema.parse(await context.req.json());
+    const data = await recoveryDependency(dependencies).replayDeadLetter(
+      deadLetterId,
+      input,
+      actorId,
+      context.get('requestId'),
+    );
+    return context.json(success(context.get('requestId'), data), 202);
+  });
+
+  app.post('/api/v1/dead-letters/:deadLetterId/ignore', async (context) => {
+    const actorId = requireActor(context.req.header('x-actor-id'));
+    const deadLetterId = z.uuid().parse(context.req.param('deadLetterId'));
+    const input = ignoreDeadLetterInputSchema.parse(await context.req.json());
+    const data = await recoveryDependency(dependencies).ignoreDeadLetter(
+      deadLetterId,
+      input,
+      actorId,
+      context.get('requestId'),
+    );
     return context.json(success(context.get('requestId'), data));
   });
 
@@ -1232,6 +1320,28 @@ function integrationLogDependency(dependencies: AppDependencies) {
     );
   }
   return dependencies.integrationLogService;
+}
+
+function recoveryDependency(dependencies: AppDependencies) {
+  if (!dependencies.recoveryOperationsService) {
+    throw new OperationsConsoleFailure(
+      'SERVICE_TEMPORARILY_UNAVAILABLE',
+      '异常恢复服务尚未配置',
+      503,
+    );
+  }
+  return dependencies.recoveryOperationsService;
+}
+
+function taskControlDependency(dependencies: AppDependencies) {
+  if (!dependencies.taskControlService) {
+    throw new OperationsConsoleFailure(
+      'TASK_CONTROL_NOT_CONFIGURED',
+      '任务控制尚未接入百应写接口；生产环境禁止使用本地模拟器',
+      503,
+    );
+  }
+  return dependencies.taskControlService;
 }
 
 function externalApiDependencies(dependencies: AppDependencies) {

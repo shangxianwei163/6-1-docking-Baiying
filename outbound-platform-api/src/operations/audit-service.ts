@@ -63,6 +63,13 @@ const actionLabels: Record<string, string> = {
   BAIYING_SCRIPT_BINDING_SAVED: '保存话术绑定',
   PLANNED_TASK_CATEGORY_BOUND: '更新计划任务分类',
   PHASE1_STATIC_CONFIG_IMPORTED: '导入阶段一静态配置',
+  TASK_COMMAND_REQUESTED: '提交任务控制命令',
+  TASK_COMMAND_SUCCEEDED: '任务控制命令成功',
+  TASK_COMMAND_FAILED: '任务控制命令失败',
+  TASK_COMMAND_UNKNOWN: '任务控制命令结果未知',
+  TASK_RETRY_REQUESTED: '提交任务安全重试',
+  DEAD_LETTER_REPLAY_REQUESTED: '重放异常事件',
+  DEAD_LETTER_IGNORED: '忽略异常事件',
 };
 
 export type AuditListInput = {

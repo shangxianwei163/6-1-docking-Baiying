@@ -7,6 +7,10 @@ import {
   studioAccounts,
 } from '../db/schema.js';
 import {
+  findLatestTaskHoldReleaseLedger,
+  nextTaskHoldReleaseBusinessKey,
+} from './hold-cycle.js';
+import {
   AccountNotFoundError,
   AccountUnavailableError,
   FundHoldConflictError,
@@ -299,12 +303,10 @@ export class PostgresAccountRepository implements AccountRepository {
       }
 
       const account = await this.lockAccount(tx, hold.studioId);
-      const businessKey = `TASK_HOLD_RELEASE:${input.taskId}`;
-      const [existingLedger] = await tx
-        .select()
-        .from(accountLedger)
-        .where(eq(accountLedger.businessKey, businessKey))
-        .limit(1);
+      const existingLedger = await findLatestTaskHoldReleaseLedger(
+        tx,
+        input.taskId,
+      );
       if (hold.status === 'RELEASED') {
         if (!existingLedger) {
           throw new FundHoldConflictError('已释放记录缺少对应账本流水');
@@ -325,6 +327,10 @@ export class PostgresAccountRepository implements AccountRepository {
         throw new FundHoldConflictError('账户冻结汇总小于待释放金额');
       }
       const now = this.clock();
+      const businessKey = await nextTaskHoldReleaseBusinessKey(
+        tx,
+        input.taskId,
+      );
       const [updatedAccount] = await tx
         .update(studioAccounts)
         .set({

@@ -67,7 +67,7 @@ export class OperationsConsoleFailure extends Error {
   constructor(
     public readonly code: string,
     message: string,
-    public readonly status: 400 | 404 | 409 | 503,
+    public readonly status: 400 | 404 | 409 | 502 | 503,
     public readonly details?: Record<string, unknown>,
   ) {
     super(message);

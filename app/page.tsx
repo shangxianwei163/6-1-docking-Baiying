@@ -13,6 +13,7 @@ import {
   Gauge,
   PhoneCall,
   Settings2,
+  ShieldAlert,
   Tags,
 } from 'lucide-react';
 import {
@@ -30,6 +31,7 @@ import { StudioOperationsConsole } from '@/components/platform/studio-operations
 import { AuditOperationsConsole } from '@/components/platform/audit-operations-console';
 import { OperationsOverviewConsole } from '@/components/platform/operations-overview-console';
 import { IntegrationLogConsole } from '@/components/platform/integration-log-console';
+import { RecoveryOperationsConsole } from '@/components/platform/recovery-operations-console';
 
 export type PlatformSection =
   | '总览'
@@ -43,6 +45,7 @@ export type PlatformSection =
   | '话费设置'
   | '操作日志'
   | '接口日志'
+  | '异常中心'
   | 'API接口';
 
 const navigation: Array<{
@@ -60,6 +63,7 @@ const navigation: Array<{
   { label: '话费设置', icon: BadgeDollarSign },
   { label: '充值记录', icon: CircleDollarSign },
   { label: '接口日志', icon: Activity },
+  { label: '异常中心', icon: ShieldAlert },
   { label: '操作日志', icon: BellRing },
   { label: 'API接口', icon: Braces },
 ];
@@ -168,6 +172,8 @@ function renderSection(
       return <AuditOperationsConsole />;
     case '接口日志':
       return <IntegrationLogConsole />;
+    case '异常中心':
+      return <RecoveryOperationsConsole />;
     case 'API接口':
       return <ApiInterfaceView />;
   }

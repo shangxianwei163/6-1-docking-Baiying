@@ -8,28 +8,36 @@ import {
   ExternalLink,
   FileAudio,
   LoaderCircle,
+  OctagonX,
+  Pause,
   PhoneCall,
+  Play,
   RefreshCw,
+  RotateCcw,
   Search,
   ShieldCheck,
   WalletCards,
 } from 'lucide-react';
 import type {
+  ConsoleTaskCommand,
   ConsoleTaskPage,
   ConsoleTaskRecord,
   ConsoleTaskStatusFilter,
   OutboundCallDetail,
 } from '@outbound/contracts';
 import {
+  commandOutboundTask,
   loadOutboundTask,
   loadOutboundTaskCalls,
   loadOutboundTasks,
   PlatformApiError,
+  retryOutboundTask,
 } from '@/lib/platform-api';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -401,6 +409,7 @@ export function OutboundTaskConsole() {
       </Panel>
 
       <TaskDetailDialog
+        key={selectedTaskNo ?? 'closed'}
         initialTask={selectedTask}
         taskNo={selectedTaskNo}
         onOpenChange={(open) => {
@@ -522,6 +531,7 @@ function TaskDetailDialog({
   const [error, setError] = useState('');
   const [callsError, setCallsError] = useState('');
   const [refreshToken, setRefreshToken] = useState(0);
+  const [actionMessage, setActionMessage] = useState('');
 
   useEffect(() => {
     if (!taskNo) return;
@@ -600,7 +610,7 @@ function TaskDetailDialog({
           </div>
           {task ? (
             <Status tone={taskDisplayTone(task.statuses.display)}>
-              {task.statuses.display}
+              {executionLabels[task.statuses.execution]}
             </Status>
           ) : null}
         </DialogHeader>
@@ -659,7 +669,14 @@ function TaskDetailDialog({
             正在读取任务、计费与通话数据…
           </div>
         ) : task && tab === 'summary' ? (
-          <TaskSummary task={task} />
+          <TaskSummary
+            task={task}
+            actionMessage={actionMessage}
+            onActionCompleted={(message) => {
+              setActionMessage(message);
+              setRefreshToken((current) => current + 1);
+            }}
+          />
         ) : task && tab === 'calls' ? (
           <CallList
             calls={calls}
@@ -674,7 +691,18 @@ function TaskDetailDialog({
   );
 }
 
-function TaskSummary({ task }: { task: ConsoleTaskRecord }) {
+function TaskSummary({
+  task,
+  actionMessage,
+  onActionCompleted,
+}: {
+  task: ConsoleTaskRecord;
+  actionMessage: string;
+  onActionCompleted: (message: string) => void;
+}) {
+  const [action, setAction] = useState<ConsoleTaskCommand | 'RETRY' | null>(
+    null,
+  );
   return (
     <div className="real-task-summary">
       <div className="real-task-summary-metrics">
@@ -703,6 +731,56 @@ function TaskSummary({ task }: { task: ConsoleTaskRecord }) {
           note={`账户余额 ${formatMoney(task.billing.studioBalance)}`}
         />
       </div>
+
+      {actionMessage ? (
+        <output className="real-task-action-success">
+          <CheckCircle2 aria-hidden="true" size={15} />
+          {actionMessage}
+        </output>
+      ) : null}
+
+      {task.actions.commands.length || task.actions.retry.available ? (
+        <section className="real-task-control-strip">
+          <div>
+            <span>OPERATOR CONTROL</span>
+            <b>任务处置</b>
+            <small>
+              每次操作都会记录原因、幂等键和操作人；本地环境不会连接百应或发起电话。
+            </small>
+          </div>
+          <div>
+            {task.actions.commands.includes('PAUSE') ? (
+              <button type="button" onClick={() => setAction('PAUSE')}>
+                <Pause aria-hidden="true" size={13} /> 暂停
+              </button>
+            ) : null}
+            {task.actions.commands.includes('RESUME') ? (
+              <button type="button" onClick={() => setAction('RESUME')}>
+                <Play aria-hidden="true" size={13} /> 恢复
+              </button>
+            ) : null}
+            {task.actions.retry.available ? (
+              <button type="button" onClick={() => setAction('RETRY')}>
+                <RotateCcw aria-hidden="true" size={13} /> 安全重试
+              </button>
+            ) : null}
+            {task.actions.commands.includes('TERMINATE') ? (
+              <button
+                type="button"
+                className="is-danger"
+                onClick={() => setAction('TERMINATE')}
+              >
+                <OctagonX aria-hidden="true" size={13} /> 终止
+              </button>
+            ) : null}
+          </div>
+        </section>
+      ) : task.actions.retry.blockedReason ? (
+        <div className="real-task-retry-blocked">
+          <ShieldCheck aria-hidden="true" size={14} />
+          <span>{task.actions.retry.blockedReason}</span>
+        </div>
+      ) : null}
 
       {task.failure ? (
         <div className="real-task-failure">
@@ -847,8 +925,159 @@ function TaskSummary({ task }: { task: ConsoleTaskRecord }) {
           />
         </DetailSection>
       </div>
+
+      <TaskActionDialog
+        key={action ?? 'closed'}
+        action={action}
+        task={task}
+        onClose={() => setAction(null)}
+        onCompleted={onActionCompleted}
+      />
     </div>
   );
+}
+
+function TaskActionDialog({
+  task,
+  action,
+  onClose,
+  onCompleted,
+}: {
+  task: ConsoleTaskRecord;
+  action: ConsoleTaskCommand | 'RETRY' | null;
+  onClose: () => void;
+  onCompleted: (message: string) => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = async () => {
+    if (!action || reason.trim().length < 2) {
+      setError('请填写至少 2 个字的操作原因');
+      return;
+    }
+    setSubmitting(true);
+    setError('');
+    try {
+      const idempotencyKey = window.crypto.randomUUID();
+      const result =
+        action === 'RETRY'
+          ? await retryOutboundTask(task.taskNo, {
+              reason: reason.trim(),
+              idempotencyKey,
+            })
+          : await commandOutboundTask(task.taskNo, {
+              command: action,
+              reason: reason.trim(),
+              idempotencyKey,
+            });
+      onCompleted(result.message);
+      onClose();
+    } catch (caught) {
+      setError(apiErrorMessage(caught));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const metadata = action ? taskActionMeta(action) : null;
+  return (
+    <Dialog open={Boolean(action)} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="ops-dialog task-action-dialog">
+        <DialogHeader>
+          <DialogTitle>{metadata?.title ?? '任务操作'}</DialogTitle>
+          <DialogDescription>{metadata?.description}</DialogDescription>
+        </DialogHeader>
+        <div className="task-action-body">
+          <dl>
+            <div>
+              <dt>任务编号</dt>
+              <dd>{task.taskNo}</dd>
+            </div>
+            <div>
+              <dt>当前状态</dt>
+              <dd>{executionLabels[task.statuses.execution]}</dd>
+            </div>
+          </dl>
+          {action === 'TERMINATE' ? (
+            <div className="task-action-warning">
+              <AlertTriangle aria-hidden="true" size={14} />
+              终止不可恢复；确认终态后会释放剩余冻结，迟到通话仍按真实结果补扣。
+            </div>
+          ) : null}
+          <label className="ops-field">
+            <span>操作原因</span>
+            <textarea
+              value={reason}
+              maxLength={500}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder={metadata?.placeholder}
+            />
+          </label>
+          {error ? (
+            <div className="ops-error-banner" role="alert">
+              <AlertTriangle aria-hidden="true" size={13} />
+              {error}
+            </div>
+          ) : null}
+        </div>
+        <DialogFooter>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={submitting}
+            onClick={onClose}
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            className={
+              action === 'TERMINATE' ? 'danger-button' : 'primary-button'
+            }
+            disabled={submitting}
+            onClick={() => void submit()}
+          >
+            {submitting ? '正在提交…' : metadata?.confirmLabel}
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function taskActionMeta(action: ConsoleTaskCommand | 'RETRY') {
+  if (action === 'PAUSE') {
+    return {
+      title: '暂停呼叫任务',
+      description: '百应确认暂停后，平台状态才会变更为“已暂停”。',
+      placeholder: '例如：影楼临时暂停本次营销活动',
+      confirmLabel: '确认暂停',
+    };
+  }
+  if (action === 'RESUME') {
+    return {
+      title: '恢复呼叫任务',
+      description: '仅已暂停任务可以恢复，操作将使用独立幂等键。',
+      placeholder: '例如：影楼确认活动恢复，继续剩余号码',
+      confirmLabel: '确认恢复',
+    };
+  }
+  if (action === 'RETRY') {
+    return {
+      title: '安全重试失败阶段',
+      description: '系统会先恢复资金与状态，再把同一任务重新加入编排队列。',
+      placeholder: '例如：已确认供应商短时故障恢复，批准重新编排',
+      confirmLabel: '提交重试',
+    };
+  }
+  return {
+    title: '终止呼叫任务',
+    description: '该操作不可恢复，请确认影楼已经同意终止。',
+    placeholder: '例如：影楼撤销活动，批准立即终止剩余呼叫',
+    confirmLabel: '确认终止',
+  };
 }
 
 function SummaryMetric({

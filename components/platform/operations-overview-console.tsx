@@ -19,7 +19,12 @@ import type {
 import { loadOperationsOverview, PlatformApiError } from '@/lib/platform-api';
 import { Panel, Status } from './shared';
 
-type OverviewDestination = '呼叫任务' | '影楼管理' | '充值记录' | '接口日志';
+type OverviewDestination =
+  | '呼叫任务'
+  | '影楼管理'
+  | '充值记录'
+  | '接口日志'
+  | '异常中心';
 
 const destinationMap: Record<
   OperatorOverviewAttentionItem['destination'],
@@ -29,6 +34,7 @@ const destinationMap: Record<
   STUDIOS: '影楼管理',
   ADJUSTMENTS: '充值记录',
   INTEGRATION_LOGS: '接口日志',
+  RECOVERY: '异常中心',
 };
 
 const executionMeta: Record<

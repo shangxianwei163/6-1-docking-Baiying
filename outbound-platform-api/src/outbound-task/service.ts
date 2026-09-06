@@ -1150,6 +1150,44 @@ function toConsoleTask(row: TaskReadRow): ConsoleTaskRecord {
       resultUrl: row.task.endpointSnapshot.resultUrl,
       recordingUrl: row.task.endpointSnapshot.recordingUrl,
     },
+    actions: consoleTaskActions(row.task),
+  };
+}
+
+function consoleTaskActions(
+  task: typeof platformTasks.$inferSelect,
+): ConsoleTaskRecord['actions'] {
+  const commands: ConsoleTaskRecord['actions']['commands'] = [];
+  if (task.baiyingCallJobId && task.executionStatus === 'CALLING') {
+    commands.push('PAUSE', 'TERMINATE');
+  }
+  if (task.baiyingCallJobId && task.executionStatus === 'PAUSED') {
+    commands.push('RESUME', 'TERMINATE');
+  }
+
+  const safeCreateRetry =
+    task.executionStatus === 'CREATE_FAILED' &&
+    task.failureRetryable === true &&
+    task.callInstanceCount === 0;
+  const safeUnknownStartRetry =
+    task.executionStatus === 'START_FAILED' &&
+    task.failureRetryable === true &&
+    task.callInstanceCount === 0 &&
+    task.billingStatus === 'RESERVED' &&
+    Boolean(task.baiyingCallJobId);
+  const retryAvailable = safeCreateRetry || safeUnknownStartRetry;
+  let blockedReason: string | null = null;
+  if (task.executionStatus.endsWith('_FAILED') && !retryAvailable) {
+    blockedReason =
+      task.executionStatus === 'IMPORT_FAILED'
+        ? '导入失败任务可能已在百应侧终止，需确认后新建任务，禁止原任务盲目重放'
+        : task.failureRetryable
+          ? '当前资金或供应商状态不足以安全自动重试，请先人工核查'
+          : '该失败被判定为不可重试，请修复配置后新建任务';
+  }
+  return {
+    commands,
+    retry: { available: retryAvailable, blockedReason },
   };
 }
 
