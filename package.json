@@ -30,9 +30,11 @@
     "db:bootstrap:stage2-local": "npm run db:bootstrap:stage2-local --workspace @outbound/platform-api",
     "db:verify:stage2": "npm run db:verify:stage2 --workspace @outbound/platform-api",
     "db:verify:stage3": "npm run db:verify:stage3 --workspace @outbound/platform-api",
+    "db:verify:stage4": "npm run db:verify:stage4 --workspace @outbound/platform-api",
     "stage2:send:erp": "npm run stage2:send:erp --workspace @outbound/platform-api",
     "stage2:send:crm": "npm run stage2:send:crm --workspace @outbound/platform-api",
     "stage3:worker:local": "npm run stage3:worker:local --workspace @outbound/platform-api",
+    "stage4:worker:local": "npm run stage4:worker:local --workspace @outbound/platform-api",
     "lint": "oxlint",
     "format": "oxfmt"
   },

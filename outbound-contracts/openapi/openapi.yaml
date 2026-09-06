@@ -609,6 +609,7 @@ paths:
               schema: { $ref: '#/components/schemas/BaiyingCallbackAck' }
         '400': { $ref: '#/components/responses/Error' }
         '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
         '503': { $ref: '#/components/responses/Error' }
 webhooks:
   outboundTaskStarted:
@@ -1107,6 +1108,7 @@ components:
         - line
         - mapping
         - baiyingCallJobId
+        - providerStatus
         - statuses
         - importSummary
         - counts
@@ -1156,6 +1158,13 @@ components:
             version: { type: integer, minimum: 1 }
             variableCount: { type: integer, minimum: 0 }
         baiyingCallJobId: { type: [string, 'null'] }
+        providerStatus:
+          type: object
+          additionalProperties: false
+          required: [code, description]
+          properties:
+            code: { type: [integer, 'null'] }
+            description: { type: [string, 'null'], maxLength: 128 }
         statuses: { $ref: '#/components/schemas/TaskStatusSummary' }
         importSummary: { $ref: '#/components/schemas/ImportSummary' }
         counts:

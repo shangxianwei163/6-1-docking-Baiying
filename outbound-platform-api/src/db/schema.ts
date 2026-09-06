@@ -1130,6 +1130,13 @@ export const callbackInbox = pgTable(
     processStatus: callbackProcessStatus('process_status')
       .notNull()
       .default('PENDING'),
+    processAttempts: integer('process_attempts').notNull().default(0),
+    availableAt: timestamp('available_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lockedAt: timestamp('locked_at', { withTimezone: true }),
+    lockedBy: varchar('locked_by', { length: 128 }),
+    deadLetteredAt: timestamp('dead_lettered_at', { withTimezone: true }),
     parseError: text('parse_error'),
     processError: text('process_error'),
     receivedAt: timestamp('received_at', { withTimezone: true })
@@ -1141,9 +1148,16 @@ export const callbackInbox = pgTable(
     uniqueIndex('callback_inbox_event_key_uq').on(table.eventKey),
     index('callback_inbox_pending_idx').on(
       table.processStatus,
+      table.deadLetteredAt,
+      table.availableAt,
       table.receivedAt,
     ),
+    index('callback_inbox_lock_idx').on(table.lockedAt, table.lockedBy),
     index('callback_inbox_body_sha_idx').on(table.rawBodySha256),
+    check(
+      'callback_inbox_attempts_ck',
+      sql`${table.processAttempts} >= 0`,
+    ),
   ],
 );
 

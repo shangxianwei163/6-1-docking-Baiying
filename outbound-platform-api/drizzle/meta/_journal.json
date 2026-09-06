@@ -71,6 +71,13 @@
       "when": 1788672820764,
       "tag": "0009_stage2_local_intake",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788678987528,
+      "tag": "0010_callback_inbox_worker",
+      "breakpoints": true
     }
   ]
 }

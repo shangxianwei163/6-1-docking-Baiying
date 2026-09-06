@@ -29,39 +29,14 @@ import type { ExternalRequestAuthenticator } from '../openapi/authenticator.js';
 import { ExternalApiFailure } from '../openapi/errors.js';
 import { stableJsonSha256 } from '../openapi/request-hash.js';
 import type { OutboundTaskService } from '../outbound-task/service.js';
+import {
+  CallbackBodyTooLargeError,
+  DEFAULT_CALLBACK_BODY_LIMIT_BYTES,
+  type BaiyingCallbackIngress,
+} from '../callback/ingress-service.js';
+export { calculateBillingMinutes } from '../callback/schema.js';
 
 type AppVariables = { requestId: string };
-
-const baiyingCallInstanceCallbackSchema = z.object({
-  code: z.number(),
-  data: z.object({
-    data: z.object({
-      callInstance: z.object({
-        callJobId: z.number().optional(),
-        callInstanceId: z.number().optional(),
-        callInstanceStatus: z.number().optional(),
-        finishStatus: z.number().optional(),
-        customerTelephone: z.string().optional(),
-        robotDefId: z.number().optional(),
-        duration: z.number().nonnegative().optional(),
-        luyinOssUrl: z.string().optional(),
-        userLuyinOssUrl: z.string().optional(),
-      }).loose().optional(),
-      phoneLogs: z.array(z.record(z.string(), z.unknown())).optional(),
-      taskResult: z.array(z.record(z.string(), z.unknown())).optional(),
-      callRepeat: z.array(z.record(z.string(), z.unknown())).optional(),
-      jobPhoneInfos: z.array(z.record(z.string(), z.unknown())).optional(),
-    }).loose(),
-    callbackType: z.literal('CALL_INSTANCE_RESULT'),
-  }).loose(),
-  resultMsg: z.string(),
-}).loose();
-
-export type BaiyingCallInstanceCallback = z.infer<typeof baiyingCallInstanceCallbackSchema>;
-
-export function calculateBillingMinutes(durationSeconds: number) {
-  return durationSeconds > 0 ? Math.ceil(durationSeconds / 60) : 0;
-}
 
 export type AppDependencies = {
   mappingRepository: MappingRepository;
@@ -78,9 +53,9 @@ export type AppDependencies = {
   erpCategorySyncService?: CategorySyncService;
   externalRequestAuthenticator?: ExternalRequestAuthenticator;
   outboundTaskService?: OutboundTaskService;
+  baiyingCallbackIngress?: BaiyingCallbackIngress;
   clock?: () => Date;
   createId?: () => string;
-  onBaiyingCallInstance?: (payload: BaiyingCallInstanceCallback, requestId: string) => Promise<void> | void;
 };
 
 export function createApp(dependencies: AppDependencies) {
@@ -128,22 +103,48 @@ export function createApp(dependencies: AppDependencies) {
     return context.json(success(context.get('requestId'), { communicationBalance, aiBalance, seatOverview }));
   });
 
-  app.post('/api/v1/callbacks/baiying/call-instance', async (context) => {
-    const payload = baiyingCallInstanceCallbackSchema.parse(await context.req.json());
-    await dependencies.onBaiyingCallInstance?.(payload, context.get('requestId'));
-    const callInstance = payload.data.data.callInstance;
-    console.info(JSON.stringify({
-      level: 'info',
-      message: 'Baiying call instance callback accepted',
-      requestId: context.get('requestId'),
-      callJobId: callInstance?.callJobId,
-      callInstanceId: callInstance?.callInstanceId,
-      finishStatus: callInstance?.finishStatus,
-      durationSeconds: callInstance?.duration,
-      billingMinutes: callInstance?.duration === undefined ? undefined : calculateBillingMinutes(callInstance.duration),
-    }));
-    return context.json({ code: 200 });
-  });
+  for (const path of [
+    '/api/v1/callbacks/baiying',
+    '/api/v1/callbacks/baiying/call-instance',
+  ]) {
+    app.post(path, async (context) => {
+      if (!dependencies.baiyingCallbackIngress) {
+        throw new Error('百应回调 Inbox 尚未配置');
+      }
+      const contentType = context.req.header('content-type')?.toLowerCase();
+      if (!contentType?.includes('application/json')) {
+        return context.json(
+          {
+            error: {
+              code: 'UNSUPPORTED_MEDIA_TYPE',
+              message: '百应回调必须使用 application/json',
+              requestId: context.get('requestId'),
+            },
+          },
+          415,
+        );
+      }
+      const accepted = await dependencies.baiyingCallbackIngress.ingest({
+        rawBody: await readUtf8BodyWithLimit(
+          context.req.raw,
+          DEFAULT_CALLBACK_BODY_LIMIT_BYTES,
+        ),
+        headers: context.req.raw.headers,
+      });
+      if (accepted.replayed) context.header('Idempotent-Replayed', 'true');
+      console.info(
+        JSON.stringify({
+          level: 'info',
+          message: 'Baiying callback persisted',
+          requestId: context.get('requestId'),
+          inboxId: accepted.id,
+          callbackType: accepted.callbackType,
+          replayed: accepted.replayed,
+        }),
+      );
+      return context.json({ code: 200 });
+    });
+  }
 
   app.get('/api/v1/mappings', async (context) => context.json(success(
     context.get('requestId'),
@@ -514,6 +515,9 @@ export function createApp(dependencies: AppDependencies) {
     if (error instanceof UnauthorizedError) {
       return context.json({ error: { code: 'UNAUTHORIZED', message: error.message, requestId } }, 401);
     }
+    if (error instanceof CallbackBodyTooLargeError) {
+      return context.json({ error: { code: 'PAYLOAD_TOO_LARGE', message: error.message, requestId } }, 413);
+    }
     console.error(JSON.stringify({ level: 'error', requestId, message: error.message }));
     if (context.req.path.startsWith('/openapi/')) {
       return context.json({
@@ -556,6 +560,40 @@ function authenticateExternal(
     nonce: request.headers.get('x-nonce') ?? undefined,
     signature: request.headers.get('x-signature') ?? undefined,
   });
+}
+
+async function readUtf8BodyWithLimit(
+  request: Request,
+  maxBytes: number,
+): Promise<string> {
+  const contentLength = request.headers.get('content-length');
+  if (contentLength) {
+    const declared = Number(contentLength);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      throw new CallbackBodyTooLargeError(
+        `百应回调正文超过 ${maxBytes} 字节限制`,
+      );
+    }
+  }
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    byteLength += value.byteLength;
+    if (byteLength > maxBytes) {
+      await reader.cancel();
+      throw new CallbackBodyTooLargeError(
+        `百应回调正文超过 ${maxBytes} 字节限制`,
+      );
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString(
+    'utf8',
+  );
 }
 
 function plannedTaskDependencies(dependencies: AppDependencies) {

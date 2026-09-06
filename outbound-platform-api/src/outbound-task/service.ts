@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
+import { asc, and, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import {
   taskAcceptedEnvelopeSchema,
   type CreateOutboundTaskRequest,
@@ -25,6 +25,7 @@ import {
   baiyingPhoneLines,
   baiyingSceneCompanies,
   baiyingScenes,
+  callInstances,
   fundHolds,
   idempotencyRecords,
   integrationClientStudios,
@@ -33,6 +34,7 @@ import {
   mappingVersions,
   platformTasks,
   queueOutbox,
+  recordingAssets,
   sceneMappingReadiness,
   scriptBindings,
   scriptCategoryBindings,
@@ -445,6 +447,10 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
         variableCount: snapshot?.variables.length ?? 0,
       },
       baiyingCallJobId: task.baiyingCallJobId,
+      providerStatus: {
+        code: task.providerStatus,
+        description: describeBaiyingJobStatus(task.providerStatus),
+      },
       statuses: {
         execution: task.executionStatus,
         display: displayStatusFor(task.executionStatus),
@@ -511,12 +517,83 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
   async listCalls(
     principal: ExternalPrincipal,
     taskNo: string,
-    _input: { cursor?: string; limit: number },
+    input: { cursor?: string; limit: number },
   ): Promise<OutboundCallPage> {
-    await this.getTask(principal, taskNo);
-    // Stage 2A has no provider call instances yet. Stage 4 replaces this empty
-    // page with the call/recording/delivery joins while preserving the contract.
-    return { items: [], nextCursor: null };
+    const task = await this.getTask(principal, taskNo);
+    const cursor = input.cursor ? decodeCallCursor(input.cursor) : null;
+    const rows = await this.db
+      .select({
+        id: callInstances.id,
+        externalCustomerId: taskCallItems.externalCustomerId,
+        callInstanceId: callInstances.callInstanceId,
+        phoneTail4: taskCallItems.phoneTail4,
+        callStatus: callInstances.callStatus,
+        finishStatus: callInstances.finishStatus,
+        durationSeconds: callInstances.durationSeconds,
+        billingMinutes: callInstances.billingMinutes,
+        customerCharge: callInstances.customerCharge,
+        collectProperties: callInstances.collectProperties,
+        providerOccurredAt: callInstances.providerOccurredAt,
+        createdAt: callInstances.createdAt,
+        recordingId: recordingAssets.id,
+        recordingStatus: recordingAssets.archiveStatus,
+        recordingExpiresAt: recordingAssets.expiresAt,
+      })
+      .from(callInstances)
+      .innerJoin(
+        taskCallItems,
+        eq(taskCallItems.id, callInstances.taskCallItemId),
+      )
+      .leftJoin(
+        recordingAssets,
+        and(
+          eq(recordingAssets.callInstanceId, callInstances.id),
+          eq(recordingAssets.kind, 'FULL'),
+        ),
+      )
+      .where(
+        and(
+          eq(callInstances.taskId, task.taskId),
+          cursor
+            ? or(
+                gt(callInstances.createdAt, cursor.createdAt),
+                and(
+                  eq(callInstances.createdAt, cursor.createdAt),
+                  gt(callInstances.id, cursor.id),
+                ),
+              )
+            : undefined,
+        ),
+      )
+      .orderBy(asc(callInstances.createdAt), asc(callInstances.id))
+      .limit(input.limit + 1);
+    const hasNextPage = rows.length > input.limit;
+    const page = hasNextPage ? rows.slice(0, input.limit) : rows;
+    const last = page.at(-1);
+    return {
+      items: page.map((call) => ({
+        platformCallId: call.id,
+        externalCustomerId: call.externalCustomerId,
+        baiyingCallInstanceId: call.callInstanceId,
+        phoneMasked: `*******${call.phoneTail4}`,
+        callStatus: call.callStatus === 'PENDING' ? 'UNKNOWN' : call.callStatus,
+        finishStatus: call.finishStatus,
+        durationSeconds: call.durationSeconds,
+        billingMinutes: call.billingMinutes,
+        customerCharge: normalizeMoney(call.customerCharge),
+        collectProperties: call.collectProperties,
+        recording: {
+          status: call.recordingStatus ?? 'NOT_AVAILABLE',
+          recordingId: call.recordingId,
+          expiresAt: call.recordingExpiresAt?.toISOString() ?? null,
+        },
+        resultDeliveryStatus: task.statuses.resultDelivery,
+        calledAt: null,
+        completedAt: call.providerOccurredAt?.toISOString() ?? null,
+      })),
+      nextCursor:
+        hasNextPage && last ? encodeCallCursor(last.createdAt, last.id) : null,
+    };
   }
 
   private async precheck(tx: Transaction, input: AcceptTaskInput, now: Date) {
@@ -852,11 +929,73 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
 export function displayStatusFor(
   status: TaskExecutionStatus,
 ): TaskDisplayStatus {
-  if (status === 'COMPLETED') return '执行完成';
-  if (status === 'CALLING') return '呼叫中';
+  if (
+    status === 'CALL_COMPLETED' ||
+    status === 'RECONCILING' ||
+    status === 'COMPLETED'
+  ) {
+    return '执行完成';
+  }
+  if (status === 'CALLING' || status === 'PAUSED') return '呼叫中';
   if (status.endsWith('_FAILED')) return '执行失败';
   if (status === 'CANCELLED' || status === 'TERMINATED') return '已终止';
   return '执行中';
+}
+
+export function describeBaiyingJobStatus(status: number | null): string | null {
+  if (status === null) return null;
+  const descriptions: Record<number, string> = {
+    0: '未开始',
+    1: '进行中',
+    2: '已完成',
+    3: '调度中',
+    4: '用户暂停',
+    5: '系统暂停',
+    6: '已终止',
+    7: '排队中',
+    8: 'AI到期',
+    9: '线路欠费',
+    10: '短信欠费',
+    11: 'AI欠费',
+  };
+  return descriptions[status] ?? `未知状态（${status}）`;
+}
+
+function encodeCallCursor(createdAt: Date, id: string): string {
+  return Buffer.from(
+    JSON.stringify({ createdAt: createdAt.toISOString(), id }),
+    'utf8',
+  ).toString('base64url');
+}
+
+function decodeCallCursor(value: string): { createdAt: Date; id: string } {
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(value, 'base64url').toString('utf8'),
+    ) as {
+      createdAt?: unknown;
+      id?: unknown;
+    };
+    if (
+      typeof parsed.createdAt !== 'string' ||
+      typeof parsed.id !== 'string' ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        parsed.id,
+      )
+    ) {
+      throw new Error('cursor fields are invalid');
+    }
+    const createdAt = new Date(parsed.createdAt);
+    if (Number.isNaN(createdAt.getTime()))
+      throw new Error('cursor date is invalid');
+    return { createdAt, id: parsed.id };
+  } catch {
+    throw new ExternalApiFailure(
+      'INVALID_REQUEST',
+      '通话分页 cursor 无效',
+      400,
+    );
+  }
 }
 
 function failureStage(value: string | null) {

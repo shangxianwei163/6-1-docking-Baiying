@@ -23,6 +23,7 @@
 9. 执行 `npm run backend:dev`，默认监听 `http://localhost:8788`。
 10. 另开终端执行 `npm run stage2:send:erp` 或 `npm run stage2:send:crm`，发送一条签名后的本地模拟任务。
 11. 另开终端执行 `npm run baiying:worker --workspace @outbound/platform-api`，消费页面“同步百应变量”写入的本地 outbox 任务。
+12. 执行 `npm run db:verify:stage4` 验证本地回调、幂等计费和结算闭环；需要持续消费 Inbox 时运行 `npm run stage4:worker:local`。
 
 本机实际密码保存在忽略提交的 `.env.postgres.local` 和 `outbound-platform-api/.env`，示例文件不包含真实密钥。
 
@@ -67,8 +68,29 @@ npm run db:verify:stage2
 
 开发/测试环境需要撤销 0009 时，可使用 `drizzle/rollback/0009_stage2_local_intake.down.sql`。它只删除 Nonce 防重放表；生产环境不执行该破坏性回滚。
 
+## 阶段 4A 本地回调与计费闭环
+
+阶段 4A 已实现：
+
+- `POST /api/v1/callbacks/baiying` 统一接收 `CALL_INSTANCE_RESULT` 和 `JOB_INFO_RESULT`；旧的 `/api/v1/callbacks/baiying/call-instance` 保留为兼容别名。
+- HTTP 链路按 5 MiB 上限读取原始正文，完成 SHA-256、加密 Inbox 和唯一事件键持久化后才返回 `{"code":200}`。
+- Callback Worker 使用 PostgreSQL `FOR UPDATE SKIP LOCKED`、超时锁恢复、有界退避和死信；未知 JSON 与未知类型也保留加密原文供审计。
+- 通话用 `companyId + callInstanceId` 做业务幂等，通过 `sx_platform_item_id` 或手机号 HMAC 关联客户；精确重复和不同原文的业务重复均不会重复扣费。
+- 每条通话按 `ceil(duration / 60)` 结算，捕获冻结金额、释放差额并记录超额扣款；任务完成后先对账再进入 `COMPLETED`。
+- 任务详情返回百应原始任务状态码及中文解释，通话分页查询已返回真实数据库数据；完整录音 URL 仅加密登记，阶段 5 才会下载到阿里云 OSS。
+
+本地验收不会联网、不会拨号、不会下载录音，也不会请求 ERP/CRM：
+
+```bash
+npm run db:migrate
+npm run db:verify:stage4
+npm run stage4:worker:local
+```
+
+开发/测试环境需要撤销 0010 时，可使用 `drizzle/rollback/0010_callback_inbox_worker.down.sql`。生产环境继续采用 expand → backfill → switch → contract，不执行破坏性 down 脚本。
+
 ## 当前交付范围
 
-阶段 0 契约、阶段 1 数据底座和阶段 2A 本地任务闭环已完成，包括配置版本、任务模型、账户账本、外部 HMAC/Nonce/限流、原子受理、回调 Inbox、录音/投递/死信、规范化话术绑定，以及 PostgreSQL Outbox 的安全领取与重试语义。
+阶段 0 契约、阶段 1 数据底座、阶段 2A 本地任务受理、阶段 3A 本地百应编排和阶段 4A 本地回调计费闭环已完成，包括配置版本、任务模型、账户账本、外部 HMAC/Nonce/限流、原子受理、可恢复的 Callback Inbox、录音发现、投递/死信、规范化话术绑定，以及 PostgreSQL Outbox 的安全领取与重试语义。
 
-百应最新 OAuth v2 鉴权、公司发现、机器人/话术发现和话术变量查询已接入。可执行 `npm run baiying:check` 做只读链路检查，或执行 `npm run baiying:sync` 将真实变量快照幂等写入本地 PostgreSQL。真实 ERP/CRM 凭证、回调地址和阿里云 KMS 适配归入阶段 2B，当前不会调用真实 ERP/CRM。生产队列首期使用 PostgreSQL Outbox Worker，达到方案阈值后接入阿里云 RocketMQ 5.x，事务 Outbox 始终保留。
+百应最新 OAuth v2 鉴权、公司发现、机器人/话术发现和话术变量查询已接入。可执行 `npm run baiying:check` 做只读链路检查，或执行 `npm run baiying:sync` 将真实变量快照幂等写入本地 PostgreSQL。真实 ERP/CRM 凭证、回调地址和阿里云 KMS 适配归入阶段 2B；真实百应写接口、回调联调和完成通话分页补偿归入阶段 3B/4B，当前不会拨号或调用真实 ERP/CRM。生产队列首期使用 PostgreSQL Outbox/Inbox Worker，达到方案阈值后接入阿里云 RocketMQ 5.x，事务 Outbox 与持久 Inbox 始终保留。

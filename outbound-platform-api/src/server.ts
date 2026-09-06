@@ -15,6 +15,8 @@ import { LocalDevelopmentSecretProvider } from './security/secret-provider.js';
 import { LocalDataProtector } from './security/data-protector.js';
 import { PostgresExternalRequestAuthenticator } from './openapi/authenticator.js';
 import { PostgresOutboundTaskService } from './outbound-task/service.js';
+import { PostgresCallbackInboxRepository } from './callback/postgres-repository.js';
+import { BaiyingCallbackIngressService } from './callback/ingress-service.js';
 
 for (const name of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) {
   Reflect.deleteProperty(process.env, name);
@@ -40,14 +42,23 @@ const localSecretProvider = config.NODE_ENV === 'production'
 const externalRequestAuthenticator = localSecretProvider
   ? new PostgresExternalRequestAuthenticator(database.db, localSecretProvider)
   : undefined;
+const localDataProtector = config.NODE_ENV === 'production'
+  ? undefined
+  : new LocalDataProtector(config.WORKER_SHARED_SECRET, config.NODE_ENV);
 const outboundTaskService = localSecretProvider
   ? new PostgresOutboundTaskService(
       database.db,
-      new LocalDataProtector(config.WORKER_SHARED_SECRET, config.NODE_ENV),
+      localDataProtector!,
       {
         baiyingCompanyId: config.BAIYING_COMPANY_ID ?? 'LOCAL-MOCK',
         queueName: config.TASK_ORCHESTRATION_QUEUE_NAME,
       },
+    )
+  : undefined;
+const baiyingCallbackIngress = localDataProtector
+  ? new BaiyingCallbackIngressService(
+      new PostgresCallbackInboxRepository(database.db),
+      localDataProtector,
     )
   : undefined;
 const baiyingTokenProvider = config.BAIYING_TOKEN_URL && config.BAIYING_APP_KEY && config.BAIYING_APP_SECRET && config.BAIYING_COMPANY_ID
@@ -73,6 +84,7 @@ const app = createApp({
   erpCategorySyncService,
   externalRequestAuthenticator,
   outboundTaskService,
+  baiyingCallbackIngress,
   baiyingCompanyId: config.BAIYING_COMPANY_ID,
   consoleOrigin: config.CONSOLE_ORIGIN,
   workerSharedSecret: config.WORKER_SHARED_SECRET,

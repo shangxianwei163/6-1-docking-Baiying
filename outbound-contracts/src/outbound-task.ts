@@ -180,6 +180,10 @@ export const taskDetailSchema = z.object({
     variableCount: z.number().int().nonnegative(),
   }),
   baiyingCallJobId: z.string().nullable(),
+  providerStatus: z.object({
+    code: z.number().int().nullable(),
+    description: z.string().min(1).max(128).nullable(),
+  }),
   statuses: taskStatusSummarySchema,
   importSummary: z.object({
     requested: z.number().int().nonnegative(),

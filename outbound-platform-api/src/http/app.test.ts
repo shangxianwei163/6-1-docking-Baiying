@@ -157,14 +157,19 @@ describe('mapping API', () => {
     expect(calculateBillingMinutes(durationSeconds)).toBe(expectedMinutes);
   });
 
-  it('accepts a Baiying completed-call callback and returns the required acknowledgement', async () => {
-    const onBaiyingCallInstance = vi.fn();
+  it('persists a Baiying callback before returning the required acknowledgement', async () => {
+    const ingest = vi.fn(async () => ({
+      id: fixedId,
+      eventKey: 'event-key',
+      replayed: false,
+      callbackType: 'CALL_INSTANCE_RESULT',
+    }));
     const app = createApp({
       mappingRepository: createRepository().repository,
       consoleOrigin: 'http://localhost:4173',
       workerSharedSecret: 'a-worker-secret-longer-than-24-characters',
       createId: () => fixedId,
-      onBaiyingCallInstance,
+      baiyingCallbackIngress: { ingest },
     });
     const callback = {
       code: 200,
@@ -198,22 +203,46 @@ describe('mapping API', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ code: 200 });
-    expect(onBaiyingCallInstance).toHaveBeenCalledWith(callback, fixedId);
+    expect(ingest).toHaveBeenCalledWith({
+      rawBody: JSON.stringify(callback),
+      headers: expect.any(Headers),
+    });
   });
 
-  it('rejects callbacks with the wrong callback type', async () => {
+  it('uses the unified route for job callbacks and ACKs a persisted duplicate', async () => {
+    const ingest = vi.fn(async () => ({
+      id: fixedId,
+      eventKey: 'event-key',
+      replayed: true,
+      callbackType: 'JOB_INFO_RESULT',
+    }));
     const app = createApp({
       mappingRepository: createRepository().repository,
       consoleOrigin: 'http://localhost:4173',
       workerSharedSecret: 'a-worker-secret-longer-than-24-characters',
       createId: () => fixedId,
+      baiyingCallbackIngress: { ingest },
     });
-    const response = await app.request('/api/v1/callbacks/baiying/call-instance', {
+    const rawBody = JSON.stringify({
+      code: 200,
+      data: {
+        data: { companyId: 1, callJobId: 2, callJobStatus: 2 },
+        callbackType: 'JOB_INFO_RESULT',
+      },
+      resultMsg: '成功',
+    });
+    const response = await app.request('/api/v1/callbacks/baiying', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ code: 200, data: { data: {}, callbackType: 'JOB_INFO_RESULT' }, resultMsg: '成功' }),
+      body: rawBody,
     });
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Idempotent-Replayed')).toBe('true');
+    await expect(response.json()).resolves.toEqual({ code: 200 });
+    expect(ingest).toHaveBeenCalledWith({
+      rawBody,
+      headers: expect.any(Headers),
+    });
   });
 
   it('saves a direct ERP/CRM draft', async () => {
