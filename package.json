@@ -44,6 +44,10 @@
     "stage6b2:verify:ui": "python3 scripts/verify-stage6b2-ui.py",
     "stage6b3:verify:ui": "python3 scripts/verify-stage6b3-ui.py",
     "stage6b3b:verify:ui": "python3 scripts/verify-stage6b3b-ui.py",
+    "stage6b3c:verify:api": "npm run test --workspace @outbound/platform-api -- --run src/operations/callback-preview-service.test.ts src/http/callback-preview.test.ts",
+    "stage6b3c:verify:source": "node scripts/verify-stage6b3c-source.mjs",
+    "stage6b3c:verify:ui": "python3 scripts/verify-stage6b3c-ui.py",
+    "stage6b3c:verify": "npm run stage6b3c:verify:source && npm run stage6b3c:verify:api && npm run stage6b3c:verify:ui",
     "lint": "oxlint",
     "format": "oxfmt"
   },

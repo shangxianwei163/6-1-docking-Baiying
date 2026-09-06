@@ -1,6 +1,8 @@
 import type {
   AccountAdjustmentKind,
   AccountAdjustmentStatus,
+  CallbackPreview,
+  CallbackPreviewEventType,
   ConsoleTaskPage,
   ConsoleTaskCommand,
   ConsoleTaskRecord,
@@ -48,6 +50,7 @@ import type {
 import {
   consoleTaskPageSchema,
   consoleTaskRecordSchema,
+  callbackPreviewSchema,
   operatorAccountAdjustmentPageSchema,
   operatorAccountAdjustmentSchema,
   operatorAuditPageSchema,
@@ -643,6 +646,22 @@ export async function loadIntegrationLogs(
   return operatorIntegrationLogPageSchema.parse(
     await request<unknown>(`/api/v1/integration-logs?${search}`),
   ) as OperatorIntegrationLogPage;
+}
+
+export async function generateCallbackPreview(input: {
+  sourceSystem: SourceSystem;
+  eventType: CallbackPreviewEventType;
+  itemCount: number;
+}) {
+  return callbackPreviewSchema.parse(
+    await request<unknown>('/api/v1/callback-previews', {
+      method: 'POST',
+      body: JSON.stringify({
+        environment: 'SAFE_PREVIEW',
+        ...input,
+      }),
+    }),
+  ) as CallbackPreview;
 }
 
 export async function loadDeadLetters(

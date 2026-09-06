@@ -6,6 +6,7 @@ import {
   accountAdjustmentKindSchema,
   accountAdjustmentStatusSchema,
   baiyingWorkflowStatusSchema,
+  callbackPreviewInputSchema,
   createAccountAdjustmentInputSchema,
   createOperatorStudioInputSchema,
   createTopUpInputSchema,
@@ -75,6 +76,7 @@ import type { OperationsOverviewService } from '../operations/overview-service.j
 import type { IntegrationLogService } from '../operations/integration-log-service.js';
 import type { RecoveryOperationsService } from '../operations/recovery-service.js';
 import type { TaskControlService } from '../operations/task-control-service.js';
+import type { CallbackPreviewService } from '../operations/callback-preview-service.js';
 export { calculateBillingMinutes } from '../callback/schema.js';
 
 type AppVariables = { requestId: string };
@@ -101,6 +103,7 @@ export type AppDependencies = {
   integrationLogService?: IntegrationLogService;
   recoveryOperationsService?: RecoveryOperationsService;
   taskControlService?: TaskControlService;
+  callbackPreviewService?: CallbackPreviewService;
   baiyingCallbackIngress?: BaiyingCallbackIngress;
   clock?: () => Date;
   createId?: () => string;
@@ -523,6 +526,13 @@ export function createApp(dependencies: AppDependencies) {
       ...query,
       keyword: query.keyword || undefined,
     });
+    return context.json(success(context.get('requestId'), data));
+  });
+
+  app.post('/api/v1/callback-previews', async (context) => {
+    requireActor(context.req.header('x-actor-id'));
+    const input = callbackPreviewInputSchema.parse(await context.req.json());
+    const data = callbackPreviewDependency(dependencies).generate(input);
     return context.json(success(context.get('requestId'), data));
   });
 
@@ -1320,6 +1330,17 @@ function integrationLogDependency(dependencies: AppDependencies) {
     );
   }
   return dependencies.integrationLogService;
+}
+
+function callbackPreviewDependency(dependencies: AppDependencies) {
+  if (!dependencies.callbackPreviewService) {
+    throw new OperationsConsoleFailure(
+      'CALLBACK_PREVIEW_NOT_CONFIGURED',
+      '安全回调预览服务尚未配置',
+      503,
+    );
+  }
+  return dependencies.callbackPreviewService;
 }
 
 function recoveryDependency(dependencies: AppDependencies) {

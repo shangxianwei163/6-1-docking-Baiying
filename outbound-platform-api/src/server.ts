@@ -27,6 +27,7 @@ import {
   LocalTaskCommandExecutor,
   PostgresTaskControlService,
 } from './operations/task-control-service.js';
+import { SafeCallbackPreviewService } from './operations/callback-preview-service.js';
 
 for (const name of [
   'HTTP_PROXY',
@@ -111,6 +112,7 @@ const taskControlService =
         new LocalTaskCommandExecutor(),
         { taskQueueName: config.TASK_ORCHESTRATION_QUEUE_NAME },
       );
+const callbackPreviewService = new SafeCallbackPreviewService();
 const baiyingTokenProvider =
   config.BAIYING_TOKEN_URL &&
   config.BAIYING_APP_KEY &&
@@ -149,6 +151,7 @@ const app = createApp({
   integrationLogService,
   recoveryOperationsService,
   taskControlService,
+  callbackPreviewService,
   baiyingCallbackIngress,
   baiyingCompanyId: config.BAIYING_COMPANY_ID,
   consoleOrigin: config.CONSOLE_ORIGIN,
