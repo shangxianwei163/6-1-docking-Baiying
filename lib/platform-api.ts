@@ -11,6 +11,7 @@ import type {
   CreateOperatorStudioInput,
   CreateTopUpInput,
   DecideAccountAdjustmentInput,
+  FinalizeSupplierSettlementInput,
   LedgerEntryType,
   MappingDraftInput,
   MappingRule,
@@ -44,6 +45,7 @@ import type {
   RemoveMappingDraftInput,
   SceneReadiness,
   SourceSystem,
+  SupplierSettlementSummary,
   VariableSyncRequested,
   UpdateOperatorStudioInput,
 } from '@outbound/contracts';
@@ -67,6 +69,7 @@ import {
   pricingOverviewSchema,
   pricingPreviewSchema,
   pricingPublishResultSchema,
+  supplierSettlementSummarySchema,
 } from '@outbound/contracts';
 
 export type MappingDraftRecord = {
@@ -731,6 +734,26 @@ export async function publishPricing(input: PublishPricingInput) {
       body: JSON.stringify(input),
     }),
   ) as PricingPublishResult;
+}
+
+export async function loadSupplierSettlementPreview(month: string) {
+  return supplierSettlementSummarySchema.parse(
+    await request<unknown>(
+      `/api/v1/supplier-settlements/${encodeURIComponent(month)}/preview`,
+    ),
+  ) as SupplierSettlementSummary;
+}
+
+export async function finalizeSupplierSettlement(
+  month: string,
+  input: FinalizeSupplierSettlementInput,
+) {
+  return supplierSettlementSummarySchema.parse(
+    await request<unknown>(
+      `/api/v1/supplier-settlements/${encodeURIComponent(month)}/finalize`,
+      { method: 'POST', body: JSON.stringify(input) },
+    ),
+  ) as SupplierSettlementSummary;
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {

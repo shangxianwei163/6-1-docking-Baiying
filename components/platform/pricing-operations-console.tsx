@@ -3,12 +3,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  BookCheck,
   CalendarClock,
   CheckCircle2,
   CircleDollarSign,
+  FileCheck2,
+  Fingerprint,
   Layers3,
+  LockKeyhole,
   LoaderCircle,
   RefreshCw,
+  Scale,
   ShieldCheck,
   Sparkles,
   Store,
@@ -17,9 +22,13 @@ import type {
   PricingOverview,
   PricingPreview,
   PublishPricingInput,
+  SupplierSettlementIssue,
+  SupplierSettlementSummary,
 } from '@outbound/contracts';
 import {
+  finalizeSupplierSettlement,
   loadPricingOverview,
+  loadSupplierSettlementPreview,
   PlatformApiError,
   previewPricing,
   publishPricing,
@@ -540,6 +549,8 @@ export function PricingOperationsConsole() {
         </div>
       </Panel>
 
+      <SupplierSettlementConsole />
+
       <Panel
         title="海南人像供应成本阶梯"
         meta="数据库只读 · 月结成本口径"
@@ -550,8 +561,7 @@ export function PricingOperationsConsole() {
           <div>
             <b>供应价格与客户售价独立</b>
             <p>
-              以下阶梯用于平台成本暂估与月末结算，本轮只移除浏览器
-              localStorage，编辑审批将在后续账务子阶段开放。
+              以下不可变阶梯同时用于任务成本暂估与月度封账；结算时按完整自然月分钟量选档，封账后任务成本与利润转为最终值。
             </p>
           </div>
         </div>
@@ -605,6 +615,483 @@ export function PricingOperationsConsole() {
       />
     </>
   );
+}
+
+function SupplierSettlementConsole() {
+  const [month, setMonth] = useState(previousShanghaiMonth);
+  const [summary, setSummary] = useState<SupplierSettlementSummary | null>(
+    null,
+  );
+  const [loading, setLoading] = useState(true);
+  const [finalizing, setFinalizing] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [error, setError] = useState('');
+  const [feedback, setFeedback] = useState('');
+  const [reason, setReason] = useState('月度账务核对无误，执行供应商成本封账');
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [observedAt, setObservedAt] = useState(() => Date.now());
+
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        setLoading(true);
+        setError('');
+      }
+    });
+    void loadSupplierSettlementPreview(month)
+      .then((result) => {
+        if (!cancelled) {
+          setSummary(result);
+          setObservedAt(Date.now());
+        }
+      })
+      .catch((caught) => {
+        if (!cancelled) {
+          setSummary(null);
+          setError(apiErrorMessage(caught));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [month, refreshToken]);
+
+  const monthClosed = summary
+    ? new Date(summary.periodEnd).getTime() <= observedAt
+    : false;
+  const canFinalize = Boolean(
+    summary &&
+    summary.status === 'OPEN' &&
+    summary.reconciliation.status === 'BALANCED' &&
+    summary.tier &&
+    monthClosed,
+  );
+
+  const confirmFinalize = async () => {
+    if (!summary || !canFinalize || finalizing || reason.trim().length < 2)
+      return;
+    setFinalizing(true);
+    setError('');
+    try {
+      const result = await finalizeSupplierSettlement(month, {
+        expectedSourceHash: summary.sourceHash,
+        reason: reason.trim(),
+        idempotencyKey: crypto.randomUUID(),
+      });
+      setSummary(result);
+      setFeedback(
+        result.idempotentReplay
+          ? `${month} 已完成封账，本次返回原结算结果。`
+          : `${month} 供应商成本已封账，${result.taskCount} 个任务已锁定最终成本与利润。`,
+      );
+      setConfirmOpen(false);
+    } catch (caught) {
+      setError(apiErrorMessage(caught));
+      if (
+        caught instanceof PlatformApiError &&
+        caught.code === 'SETTLEMENT_PREVIEW_STALE'
+      ) {
+        setConfirmOpen(false);
+      }
+    } finally {
+      setFinalizing(false);
+    }
+  };
+
+  return (
+    <>
+      <Panel
+        title="供应商月度结算"
+        meta="Asia/Shanghai · 先核对后封账"
+        className="ops-panel ops-settlement-panel"
+      >
+        <div className="ops-settlement-command">
+          <div>
+            <span>MONTH-END CONTROL</span>
+            <b>把客户账、通话明细与供应成本锁在同一月度凭证中</b>
+            <p>
+              封账前实时重算；任一任务账务不平、供应阶梯缺失或月份尚未结束，系统都会阻断。
+            </p>
+          </div>
+          <div className="ops-settlement-controls">
+            <label className="ops-field">
+              <span>结算月份</span>
+              <input
+                aria-label="供应商结算月份"
+                type="month"
+                max={currentShanghaiMonth()}
+                value={month}
+                onChange={(event) => {
+                  setMonth(event.target.value);
+                  setSummary(null);
+                  setFeedback('');
+                  setError('');
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              className="ops-icon-button"
+              disabled={loading || !month}
+              onClick={() => setRefreshToken((current) => current + 1)}
+            >
+              {loading ? (
+                <LoaderCircle
+                  aria-hidden="true"
+                  className="is-spinning"
+                  size={14}
+                />
+              ) : (
+                <RefreshCw aria-hidden="true" size={14} />
+              )}
+              {loading ? '正在核对…' : '重新核对'}
+            </button>
+          </div>
+        </div>
+
+        {feedback ? (
+          <output className="ops-settlement-feedback">
+            <CheckCircle2 aria-hidden="true" size={15} />
+            <span>{feedback}</span>
+            <button type="button" onClick={() => setFeedback('')}>
+              关闭
+            </button>
+          </output>
+        ) : null}
+
+        {error ? (
+          <div className="ops-inline-error ops-settlement-error" role="alert">
+            <AlertTriangle aria-hidden="true" size={14} />
+            <span>{error}</span>
+            <button
+              type="button"
+              onClick={() => setRefreshToken((current) => current + 1)}
+            >
+              重新预览
+            </button>
+          </div>
+        ) : null}
+
+        {loading && !summary ? (
+          <div className="ops-settlement-empty" aria-live="polite">
+            <LoaderCircle
+              aria-hidden="true"
+              className="is-spinning"
+              size={20}
+            />
+            <b>正在生成 {month} 对账快照</b>
+            <p>汇总任务、通话、资金流水和供应商阶梯。</p>
+          </div>
+        ) : summary ? (
+          <div className="ops-settlement-body">
+            <div className="ops-settlement-status-row">
+              <div>
+                <Status
+                  tone={summary.status === 'FINALIZED' ? 'green' : 'blue'}
+                >
+                  {summary.status === 'FINALIZED' ? '已封账' : '待封账'}
+                </Status>
+                <Status
+                  tone={
+                    summary.reconciliation.status === 'BALANCED'
+                      ? 'green'
+                      : 'red'
+                  }
+                >
+                  {summary.reconciliation.status === 'BALANCED'
+                    ? '账务平衡'
+                    : `${summary.reconciliation.discrepancyCount} 项差异`}
+                </Status>
+                {!monthClosed && summary.status === 'OPEN' ? (
+                  <Status tone="amber">月份进行中</Status>
+                ) : null}
+              </div>
+              <span>
+                数据指纹
+                <code title={summary.sourceHash}>
+                  {summary.sourceHash.slice(0, 12)}…
+                </code>
+              </span>
+            </div>
+
+            <div className="ops-settlement-ledger">
+              <SettlementFact
+                icon={BookCheck}
+                label="纳入任务"
+                value={`${summary.taskCount.toLocaleString('zh-CN')} 个`}
+                note={`${formatInteger(summary.totalBillingMinutes)} 计费分钟`}
+              />
+              <SettlementFact
+                icon={CircleDollarSign}
+                label="客户话费收入"
+                value={formatMoney(summary.totalCustomerCharge)}
+                note="已结算任务收入"
+              />
+              <SettlementFact
+                icon={Scale}
+                label="供应商成本"
+                value={
+                  summary.tier ? formatMoney(summary.totalPlatformCost) : '—'
+                }
+                note={
+                  summary.tier
+                    ? `${summary.tier.name} · ${formatRate(summary.tier.voiceRate)}/分`
+                    : '未匹配完整月阶梯'
+                }
+                tone={summary.tier ? 'default' : 'warning'}
+              />
+              <SettlementFact
+                icon={FileCheck2}
+                label="平台毛利"
+                value={summary.tier ? formatMoney(summary.totalProfit) : '—'}
+                note={
+                  summary.tier ? '客户收入 − 供应成本' : '供应成本确定后计算'
+                }
+                tone={
+                  summary.tier && Number(summary.totalProfit) >= 0
+                    ? 'profit'
+                    : 'warning'
+                }
+              />
+            </div>
+
+            <div
+              className={`ops-settlement-reconciliation ${summary.reconciliation.status === 'BALANCED' ? 'is-balanced' : 'is-blocked'}`}
+            >
+              {summary.reconciliation.status === 'BALANCED' ? (
+                <CheckCircle2 aria-hidden="true" size={17} />
+              ) : (
+                <AlertTriangle aria-hidden="true" size={17} />
+              )}
+              <div>
+                <b>
+                  {summary.reconciliation.status === 'BALANCED'
+                    ? '四方账务核对一致'
+                    : '存在封账阻断项'}
+                </b>
+                <p>
+                  {summary.reconciliation.status === 'BALANCED'
+                    ? '任务汇总、通话明细、账户流水和冻结资金守恒，可进入人工确认。'
+                    : `${summary.reconciliation.blockingTaskCount} 个任务受影响；修复差异并重新预览后才能封账。`}
+                </p>
+                {summary.reconciliation.issues.length ? (
+                  <ul>
+                    {summary.reconciliation.issues
+                      .slice(0, 5)
+                      .map((issue, index) => (
+                        <li
+                          key={`${issue.code}-${issue.taskNo ?? 'month'}-${index}`}
+                        >
+                          <span>{settlementIssueLabel(issue)}</span>
+                          <p>{issue.message}</p>
+                        </li>
+                      ))}
+                  </ul>
+                ) : null}
+                {summary.reconciliation.issuesTruncated ||
+                summary.reconciliation.issues.length > 5 ? (
+                  <small>
+                    仅展示前 5 项，请通过接口或日志查看完整差异清单。
+                  </small>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="ops-settlement-submit">
+              <div>
+                <LockKeyhole aria-hidden="true" size={14} />
+                <span>
+                  {summary.status === 'FINALIZED'
+                    ? `${summary.finalizedBy ?? '未知操作员'} 于 ${summary.finalizedAt ? formatDateTime(summary.finalizedAt) : '未知时间'} 完成封账`
+                    : settlementReadinessCopy(summary, monthClosed)}
+                </span>
+              </div>
+              {summary.status === 'FINALIZED' ? (
+                <span className="ops-settlement-id">
+                  结算凭证 {summary.settlementId}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={!canFinalize}
+                  onClick={() => setConfirmOpen(true)}
+                >
+                  <Fingerprint aria-hidden="true" size={13} />
+                  核对并封账
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="ops-settlement-empty">
+            <AlertTriangle aria-hidden="true" size={20} />
+            <b>暂无可展示的月度快照</b>
+            <p>选择月份后重新预览。</p>
+          </div>
+        )}
+      </Panel>
+
+      <Dialog
+        open={confirmOpen}
+        onOpenChange={(open) => {
+          if (!finalizing) setConfirmOpen(open);
+        }}
+      >
+        <DialogContent className="ops-dialog ops-settlement-dialog">
+          <DialogHeader>
+            <span className="ops-dialog-kicker">IRREVERSIBLE CLOSE</span>
+            <DialogTitle>确认封账 {month}</DialogTitle>
+            <DialogDescription>
+              将当前数据指纹对应的任务成本与利润固化为月度凭证。
+            </DialogDescription>
+          </DialogHeader>
+          {summary ? (
+            <div className="ops-settlement-confirm">
+              <div className="ops-settlement-warning">
+                <LockKeyhole aria-hidden="true" size={17} />
+                <div>
+                  <b>封账结果不可编辑或覆盖</b>
+                  <p>
+                    如果预览后源数据发生变化，服务端会拒绝本次请求并要求重新核对。
+                  </p>
+                </div>
+              </div>
+              <dl>
+                <div>
+                  <dt>客户收入</dt>
+                  <dd>{formatMoney(summary.totalCustomerCharge)}</dd>
+                </div>
+                <div>
+                  <dt>供应商成本</dt>
+                  <dd>{formatMoney(summary.totalPlatformCost)}</dd>
+                </div>
+                <div>
+                  <dt>平台毛利</dt>
+                  <dd>{formatMoney(summary.totalProfit)}</dd>
+                </div>
+                <div>
+                  <dt>供应阶梯</dt>
+                  <dd>{summary.tier?.name ?? '未匹配'}</dd>
+                </div>
+                <div className="is-wide">
+                  <dt>数据指纹</dt>
+                  <dd className="is-code">{summary.sourceHash}</dd>
+                </div>
+              </dl>
+              <label className="ops-field">
+                <span>
+                  封账原因 <i>*</i>
+                </span>
+                <textarea
+                  rows={3}
+                  maxLength={500}
+                  value={reason}
+                  onChange={(event) => setReason(event.target.value)}
+                />
+              </label>
+              {error ? (
+                <div className="ops-inline-error" role="alert">
+                  <AlertTriangle aria-hidden="true" size={14} />
+                  {error}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <button
+              type="button"
+              className="filter-button"
+              disabled={finalizing}
+              onClick={() => setConfirmOpen(false)}
+            >
+              返回核对
+            </button>
+            <button
+              type="button"
+              className="ops-danger-button"
+              disabled={finalizing || reason.trim().length < 2}
+              onClick={() => void confirmFinalize()}
+            >
+              {finalizing ? (
+                <>
+                  <LoaderCircle
+                    aria-hidden="true"
+                    className="is-spinning"
+                    size={13}
+                  />
+                  正在封账…
+                </>
+              ) : (
+                <>
+                  <LockKeyhole aria-hidden="true" size={13} />
+                  确认不可逆封账
+                </>
+              )}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function SettlementFact({
+  icon: Icon,
+  label,
+  value,
+  note,
+  tone = 'default',
+}: {
+  icon: typeof Store;
+  label: string;
+  value: string;
+  note: string;
+  tone?: 'default' | 'profit' | 'warning';
+}) {
+  return (
+    <article className={`ops-settlement-fact is-${tone}`}>
+      <span>
+        <Icon aria-hidden="true" size={15} />
+      </span>
+      <div>
+        <small>{label}</small>
+        <b>{value}</b>
+        <em>{note}</em>
+      </div>
+    </article>
+  );
+}
+
+function settlementIssueLabel(issue: SupplierSettlementIssue) {
+  return (
+    {
+      TASK_NOT_SETTLED: '任务未结算',
+      TASK_CALL_MINUTES_MISMATCH: '分钟数不一致',
+      TASK_CUSTOMER_CHARGE_MISMATCH: '客户话费不一致',
+      TASK_LEDGER_CHARGE_MISMATCH: '账户流水不一致',
+      TASK_HOLD_CONSERVATION_MISMATCH: '冻结资金不守恒',
+      TASK_HOLD_NOT_CLOSED: '冻结资金未关闭',
+      SUPPLIER_TIER_NOT_FOUND: '供应阶梯缺失',
+      SUPPLIER_TIER_OVERLAP: '供应阶梯重叠',
+      FINALIZED_SOURCE_DRIFT: '封账后数据漂移',
+    } satisfies Record<SupplierSettlementIssue['code'], string>
+  )[issue.code];
+}
+
+function settlementReadinessCopy(
+  summary: SupplierSettlementSummary,
+  monthClosed: boolean,
+) {
+  if (!monthClosed) return '当前月份尚未结束，只能查看动态预估，不能封账';
+  if (!summary.tier) return '该月份没有可覆盖完整自然月的供应商阶梯';
+  if (summary.reconciliation.status === 'BLOCKED')
+    return '账务差异尚未清零，封账操作已被阻断';
+  return '预览结果已平衡；最终提交时服务端会再次加锁核对';
 }
 
 function PricingPreviewDialog({
@@ -824,6 +1311,22 @@ function formatRate(value: string) {
   const rate = Number(value);
   return Number.isFinite(rate) ? `¥${rate.toFixed(2)}` : '—';
 }
+function formatMoney(value: string) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return '—';
+  const absolute = Math.abs(amount).toLocaleString('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return `${amount < 0 ? '-' : ''}¥${absolute}`;
+}
+function formatInteger(value: string) {
+  try {
+    return BigInt(value).toLocaleString('zh-CN');
+  } catch {
+    return value;
+  }
+}
 function trimMoney(value: string) {
   return String(Number(value));
 }
@@ -846,6 +1349,21 @@ function formatTierRange(minimum: string, maximum: string | null) {
   return maximum
     ? `${min}（含）— ${Number(maximum).toLocaleString('zh-CN')}（不含）分钟`
     : `≥ ${min} 分钟`;
+}
+function currentShanghaiMonth() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+  }).formatToParts(new Date());
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)!.value;
+  return `${value('year')}-${value('month')}`;
+}
+function previousShanghaiMonth() {
+  const [year, month] = currentShanghaiMonth().split('-').map(Number);
+  const previous = new Date(Date.UTC(year!, month! - 2, 1));
+  return `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 function apiErrorMessage(error: unknown) {
   if (error instanceof PlatformApiError)

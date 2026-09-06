@@ -38,6 +38,8 @@ import {
   normalizeMoney,
   subtractMoney,
 } from '../billing/money.js';
+import type { SupplierMonthlySettlementService } from '../billing/monthly-settlement-service.js';
+import { shanghaiSettlementMonth } from '../billing/supplier-settlement.js';
 import type { Database } from '../db/client.js';
 import {
   accountLedger,
@@ -159,6 +161,10 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
       baiyingCompanyId: string;
       queueName?: string;
       lowBalanceThreshold?: string;
+      supplierMonthlySettlementService?: Pick<
+        SupplierMonthlySettlementService,
+        'preview'
+      >;
       clock?: () => Date;
       createId?: () => string;
     },
@@ -458,7 +464,7 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
     if (!row) {
       throw new ExternalApiFailure('TASK_NOT_FOUND', '任务不存在', 404);
     }
-    return toTaskDetail(row);
+    return toTaskDetail(await this.applySupplierCostProjection(row));
   }
 
   async listCalls(
@@ -571,7 +577,9 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
       pageNum: input.pageNum,
       pageSize: input.pageSize,
       statusCounts,
-      tasks: rows.map((row) => toConsoleTask(row)),
+      tasks: (await this.applySupplierCostProjections(rows)).map((row) =>
+        toConsoleTask(row),
+      ),
     });
   }
 
@@ -580,7 +588,9 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
     if (!row) {
       throw new ExternalApiFailure('TASK_NOT_FOUND', '任务不存在', 404);
     }
-    return consoleTaskRecordSchema.parse(toConsoleTask(row));
+    return consoleTaskRecordSchema.parse(
+      toConsoleTask(await this.applySupplierCostProjection(row)),
+    );
   }
 
   async listConsoleCalls(
@@ -713,6 +723,68 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
       )
       .limit(1);
     return row;
+  }
+
+  private async applySupplierCostProjection(
+    row: TaskReadRow,
+  ): Promise<TaskReadRow> {
+    return (await this.applySupplierCostProjections([row]))[0]!;
+  }
+
+  private async applySupplierCostProjections(
+    rows: TaskReadRow[],
+  ): Promise<TaskReadRow[]> {
+    const settlementService = this.options.supplierMonthlySettlementService;
+    if (!settlementService) return rows;
+    const openTasks = rows.filter(
+      (row) =>
+        row.task.billingStatus === 'SETTLED' &&
+        !row.task.supplierSettlementId &&
+        !row.task.platformRate &&
+        Boolean(row.task.providerCompletedAt ?? row.task.closedAt),
+    );
+    const monthByTask = new Map(
+      openTasks.map((row) => [
+        row.task.id,
+        shanghaiSettlementMonth(
+          row.task.providerCompletedAt ?? row.task.closedAt!,
+        ),
+      ]),
+    );
+    const months = [...new Set(monthByTask.values())];
+    const summaryByMonth = new Map(
+      await Promise.all(
+        months.map(async (month) => [
+          month,
+          await settlementService.preview(month),
+        ] as const),
+      ),
+    );
+    return rows.map((row) => {
+      const month = monthByTask.get(row.task.id);
+      if (!month) return row;
+      const summary = summaryByMonth.get(month);
+      const taskHasIssue = summary?.reconciliation.issues.some(
+        (issue) => issue.taskNo === null || issue.taskNo === row.task.taskNo,
+      );
+      if (!summary?.tier || summary.status !== 'OPEN' || taskHasIssue) {
+        return row;
+      }
+      const platformRate = normalizeMoney(summary.tier.voiceRate);
+      const platformCost = multiplyMoneyByInteger(
+        platformRate,
+        row.task.billingMinutes,
+      );
+      return {
+        ...row,
+        task: {
+          ...row.task,
+          platformRate,
+          platformCost,
+          profit: subtractMoney(row.task.customerCharge, platformCost),
+        },
+      };
+    });
   }
 
   private async precheck(tx: Transaction, input: AcceptTaskInput, now: Date) {
@@ -1052,7 +1124,7 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
 function toTaskDetail(row: TaskReadRow): TaskDetail {
   const task = row.task;
   const platformRateStatus = task.platformRate
-    ? task.billingStatus === 'SETTLED'
+    ? task.supplierSettlementId
       ? 'FINAL'
       : 'PROVISIONAL'
     : 'NOT_AVAILABLE';

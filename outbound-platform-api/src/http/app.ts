@@ -24,6 +24,8 @@ import {
   setOperatorStudioStatusInputSchema,
   sourceCategoryObservationSchema,
   sourceSystemSchema,
+  supplierSettlementMonthSchema,
+  finalizeSupplierSettlementInputSchema,
   syncSceneObservationSchema,
   updateOperatorStudioInputSchema,
   ledgerEntryTypeSchema,
@@ -72,6 +74,7 @@ import {
   type OperationsConsoleService,
 } from '../operations/service.js';
 import type { AccountAdjustmentService } from '../operations/adjustment-service.js';
+import type { SupplierMonthlySettlementService } from '../billing/monthly-settlement-service.js';
 import type { OperatorAuditService } from '../operations/audit-service.js';
 import type { OperationsOverviewService } from '../operations/overview-service.js';
 import type { IntegrationLogService } from '../operations/integration-log-service.js';
@@ -104,6 +107,7 @@ export type AppDependencies = {
   outboundTaskService?: OutboundTaskService;
   operationsConsoleService?: OperationsConsoleService;
   accountAdjustmentService?: AccountAdjustmentService;
+  supplierMonthlySettlementService?: SupplierMonthlySettlementService;
   operatorAuditService?: OperatorAuditService;
   operationsOverviewService?: OperationsOverviewService;
   integrationLogService?: IntegrationLogService;
@@ -538,6 +542,37 @@ export function createApp(dependencies: AppDependencies) {
       context.get('requestId'),
     );
     return context.json(success(context.get('requestId'), data), 201);
+  });
+
+  app.get('/api/v1/supplier-settlements/:month/preview', async (context) => {
+    requireActor(context.req.header('x-actor-id'));
+    const month = supplierSettlementMonthSchema.parse(
+      context.req.param('month'),
+    );
+    const data = await supplierSettlementDependency(dependencies).preview(
+      month,
+    );
+    return context.json(success(context.get('requestId'), data));
+  });
+
+  app.post('/api/v1/supplier-settlements/:month/finalize', async (context) => {
+    const actorId = requireActor(context.req.header('x-actor-id'));
+    const month = supplierSettlementMonthSchema.parse(
+      context.req.param('month'),
+    );
+    const input = finalizeSupplierSettlementInputSchema.parse(
+      await context.req.json(),
+    );
+    const data = await supplierSettlementDependency(dependencies).finalize(
+      month,
+      input,
+      actorId,
+      context.get('requestId'),
+    );
+    return context.json(
+      success(context.get('requestId'), data),
+      data.idempotentReplay ? 200 : 201,
+    );
   });
 
   app.get('/api/v1/audit-logs', async (context) => {
@@ -1426,6 +1461,17 @@ function adjustmentDependency(dependencies: AppDependencies) {
     );
   }
   return dependencies.accountAdjustmentService;
+}
+
+function supplierSettlementDependency(dependencies: AppDependencies) {
+  if (!dependencies.supplierMonthlySettlementService) {
+    throw new OperationsConsoleFailure(
+      'SERVICE_TEMPORARILY_UNAVAILABLE',
+      '供应商月度结算服务尚未配置',
+      503,
+    );
+  }
+  return dependencies.supplierMonthlySettlementService;
 }
 
 function auditDependency(dependencies: AppDependencies) {

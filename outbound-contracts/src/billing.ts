@@ -18,6 +18,74 @@ export const billingStatusSchema = z.enum([
   'FAILED',
 ]);
 
+export const supplierSettlementMonthSchema = z
+  .string()
+  .regex(/^20\d{2}-(?:0[1-9]|1[0-2])$/, '结算月份必须为 YYYY-MM');
+
+export const supplierSettlementStatusSchema = z.enum(['OPEN', 'FINALIZED']);
+
+export const supplierSettlementIssueSchema = z.object({
+  code: z.enum([
+    'TASK_NOT_SETTLED',
+    'TASK_CALL_MINUTES_MISMATCH',
+    'TASK_CUSTOMER_CHARGE_MISMATCH',
+    'TASK_LEDGER_CHARGE_MISMATCH',
+    'TASK_HOLD_CONSERVATION_MISMATCH',
+    'TASK_HOLD_NOT_CLOSED',
+    'SUPPLIER_TIER_NOT_FOUND',
+    'SUPPLIER_TIER_OVERLAP',
+    'FINALIZED_SOURCE_DRIFT',
+  ]),
+  taskNo: z.string().regex(/^PT-\d{8}-\d{5,}$/).nullable(),
+  message: z.string().min(1).max(500),
+});
+
+export const supplierSettlementTierSnapshotSchema = z.object({
+  id: z.uuid(),
+  tierCode: z.string().min(1).max(64),
+  name: z.string().min(1).max(200),
+  minMonthlyMinutes: z.string().regex(/^\d+$/),
+  maxMonthlyMinutes: z.string().regex(/^\d+$/).nullable(),
+  voiceRate: nonNegativeAmountSchema,
+});
+
+export const supplierSettlementReconciliationSchema = z.object({
+  status: z.enum(['BALANCED', 'BLOCKED']),
+  discrepancyCount: z.number().int().nonnegative(),
+  blockingTaskCount: z.number().int().nonnegative(),
+  lateTaskCount: z.number().int().nonnegative(),
+  issues: z.array(supplierSettlementIssueSchema).max(100),
+  issuesTruncated: z.boolean(),
+});
+
+export const supplierSettlementSummarySchema = z.object({
+  settlementId: z.uuid().nullable(),
+  settlementMonth: supplierSettlementMonthSchema,
+  timezone: z.literal('Asia/Shanghai'),
+  periodStart: z.iso.datetime({ offset: true }),
+  periodEnd: z.iso.datetime({ offset: true }),
+  status: supplierSettlementStatusSchema,
+  taskCount: z.number().int().nonnegative(),
+  totalBillingMinutes: z.string().regex(/^\d+$/),
+  tier: supplierSettlementTierSnapshotSchema.nullable(),
+  totalCustomerCharge: nonNegativeAmountSchema,
+  totalPlatformCost: nonNegativeAmountSchema,
+  totalProfit: decimalAmountSchema,
+  sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+  reconciliation: supplierSettlementReconciliationSchema,
+  finalizedBy: z.string().min(1).max(128).nullable(),
+  finalizedAt: z.iso.datetime({ offset: true }).nullable(),
+  idempotentReplay: z.boolean(),
+});
+
+export const finalizeSupplierSettlementInputSchema = z
+  .object({
+    expectedSourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+    reason: z.string().trim().min(2).max(500),
+    idempotencyKey: z.uuid(),
+  })
+  .strict();
+
 export const taskBillingSummarySchema = z.object({
   currency: z.literal('CNY'),
   customerRate: nonNegativeAmountSchema,
@@ -75,6 +143,21 @@ export const ledgerPageSchema = z.object({
 
 export type DecimalAmount = z.infer<typeof decimalAmountSchema>;
 export type BillingStatus = z.infer<typeof billingStatusSchema>;
+export type SupplierSettlementMonth = z.infer<
+  typeof supplierSettlementMonthSchema
+>;
+export type SupplierSettlementStatus = z.infer<
+  typeof supplierSettlementStatusSchema
+>;
+export type SupplierSettlementIssue = z.infer<
+  typeof supplierSettlementIssueSchema
+>;
+export type SupplierSettlementSummary = z.infer<
+  typeof supplierSettlementSummarySchema
+>;
+export type FinalizeSupplierSettlementInput = z.infer<
+  typeof finalizeSupplierSettlementInputSchema
+>;
 export type TaskBillingSummary = z.infer<typeof taskBillingSummarySchema>;
 export type StudioBalance = z.infer<typeof studioBalanceSchema>;
 export type LedgerEntryType = z.infer<typeof ledgerEntryTypeSchema>;

@@ -4,6 +4,7 @@ import {
   boolean,
   char,
   check,
+  date,
   doublePrecision,
   foreignKey,
   index,
@@ -791,6 +792,77 @@ export const supplierPricingTiers = pgTable(
   ],
 );
 
+export const supplierMonthlySettlements = pgTable(
+  'supplier_monthly_settlement',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    settlementMonth: date('settlement_month', { mode: 'string' }).notNull(),
+    timezone: varchar('timezone', { length: 64 })
+      .notNull()
+      .default('Asia/Shanghai'),
+    supplierPricingTierId: uuid('supplier_pricing_tier_id')
+      .notNull()
+      .references(() => supplierPricingTiers.id, { onDelete: 'restrict' }),
+    tierCodeSnapshot: varchar('tier_code_snapshot', { length: 64 }).notNull(),
+    tierNameSnapshot: varchar('tier_name_snapshot', { length: 200 }).notNull(),
+    minMonthlyMinutesSnapshot: bigint('min_monthly_minutes_snapshot', {
+      mode: 'bigint',
+    }).notNull(),
+    maxMonthlyMinutesSnapshot: bigint('max_monthly_minutes_snapshot', {
+      mode: 'bigint',
+    }),
+    voiceRate: numeric('voice_rate', { precision: 18, scale: 6 }).notNull(),
+    taskCount: integer('task_count').notNull(),
+    totalBillingMinutes: bigint('total_billing_minutes', {
+      mode: 'bigint',
+    }).notNull(),
+    totalCustomerCharge: numeric('total_customer_charge', {
+      precision: 18,
+      scale: 6,
+    }).notNull(),
+    totalPlatformCost: numeric('total_platform_cost', {
+      precision: 18,
+      scale: 6,
+    }).notNull(),
+    totalProfit: numeric('total_profit', {
+      precision: 18,
+      scale: 6,
+    }).notNull(),
+    sourceHash: char('source_hash', { length: 64 }).notNull(),
+    finalizationIdempotencyKey: uuid('finalization_idempotency_key').notNull(),
+    finalizationReason: text('finalization_reason').notNull(),
+    finalizedBy: varchar('finalized_by', { length: 128 }).notNull(),
+    finalizedAt: timestamp('finalized_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('supplier_monthly_settlement_month_uq').on(
+      table.settlementMonth,
+    ),
+    uniqueIndex('supplier_monthly_settlement_idempotency_uq').on(
+      table.finalizationIdempotencyKey,
+    ),
+    check(
+      'supplier_monthly_settlement_month_ck',
+      sql`extract(day from ${table.settlementMonth}) = 1`,
+    ),
+    check(
+      'supplier_monthly_settlement_timezone_ck',
+      sql`${table.timezone} = 'Asia/Shanghai'`,
+    ),
+    check(
+      'supplier_monthly_settlement_counts_ck',
+      sql`${table.taskCount} >= 0 AND ${table.totalBillingMinutes} >= 0`,
+    ),
+    check(
+      'supplier_monthly_settlement_money_ck',
+      sql`${table.voiceRate} >= 0 AND ${table.totalCustomerCharge} >= 0 AND ${table.totalPlatformCost} >= 0`,
+    ),
+  ],
+);
+
 export const scriptBindings = pgTable(
   'script_binding',
   {
@@ -939,6 +1011,10 @@ export const platformTasks = pgTable(
     platformRate: numeric('platform_rate', { precision: 18, scale: 6 }),
     platformCost: numeric('platform_cost', { precision: 18, scale: 6 }),
     profit: numeric('profit', { precision: 18, scale: 6 }),
+    supplierSettlementId: uuid('supplier_settlement_id').references(
+      () => supplierMonthlySettlements.id,
+      { onDelete: 'restrict' },
+    ),
     baiyingCompanyId: varchar('baiying_company_id', { length: 64 }).notNull(),
     baiyingCallJobId: varchar('baiying_call_job_id', { length: 64 }),
     executionStatus: taskExecutionStatus('execution_status')
@@ -1029,7 +1105,50 @@ export const platformTasks = pgTable(
       'platform_task_money_ck',
       sql`${table.customerRate} >= 0 AND ${table.reservedAmount} >= 0 AND ${table.customerCharge} >= 0`,
     ),
+    check(
+      'platform_task_supplier_cost_ck',
+      sql`(${table.platformRate} IS NULL AND ${table.platformCost} IS NULL AND ${table.profit} IS NULL AND ${table.supplierSettlementId} IS NULL) OR (${table.platformRate} IS NOT NULL AND ${table.platformCost} IS NOT NULL AND ${table.profit} IS NOT NULL AND ${table.platformRate} >= 0 AND ${table.platformCost} >= 0)`,
+    ),
     check('platform_task_frozen_minutes_ck', sql`${table.frozenMinutes} > 0`),
+  ],
+);
+
+export const supplierSettlementTaskItems = pgTable(
+  'supplier_settlement_task_item',
+  {
+    settlementId: uuid('settlement_id')
+      .notNull()
+      .references(() => supplierMonthlySettlements.id, { onDelete: 'restrict' }),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => platformTasks.id, { onDelete: 'restrict' }),
+    taskNo: varchar('task_no', { length: 64 }).notNull(),
+    billingMinutes: integer('billing_minutes').notNull(),
+    customerCharge: numeric('customer_charge', {
+      precision: 18,
+      scale: 6,
+    }).notNull(),
+    platformRate: numeric('platform_rate', {
+      precision: 18,
+      scale: 6,
+    }).notNull(),
+    platformCost: numeric('platform_cost', {
+      precision: 18,
+      scale: 6,
+    }).notNull(),
+    profit: numeric('profit', { precision: 18, scale: 6 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.settlementId, table.taskId] }),
+    uniqueIndex('supplier_settlement_task_item_task_uq').on(table.taskId),
+    index('supplier_settlement_task_item_task_no_idx').on(table.taskNo),
+    check(
+      'supplier_settlement_task_item_values_ck',
+      sql`${table.billingMinutes} >= 0 AND ${table.customerCharge} >= 0 AND ${table.platformRate} >= 0 AND ${table.platformCost} >= 0`,
+    ),
   ],
 );
 

@@ -20,6 +20,7 @@ import { PostgresCallbackInboxRepository } from './callback/postgres-repository.
 import { BaiyingCallbackIngressService } from './callback/ingress-service.js';
 import { PostgresOperationsConsoleService } from './operations/service.js';
 import { PostgresAccountAdjustmentService } from './operations/adjustment-service.js';
+import { PostgresSupplierMonthlySettlementService } from './billing/monthly-settlement-service.js';
 import { PostgresOperatorAuditService } from './operations/audit-service.js';
 import { PostgresOperationsOverviewService } from './operations/overview-service.js';
 import { PostgresIntegrationLogService } from './operations/integration-log-service.js';
@@ -83,10 +84,13 @@ const localDataProtector =
   config.NODE_ENV === 'production'
     ? undefined
     : new LocalDataProtector(config.WORKER_SHARED_SECRET, config.NODE_ENV);
+const supplierMonthlySettlementService =
+  new PostgresSupplierMonthlySettlementService(database.db);
 const outboundTaskService = localSecretProvider
   ? new PostgresOutboundTaskService(database.db, localDataProtector!, {
       baiyingCompanyId: config.BAIYING_COMPANY_ID ?? 'LOCAL-MOCK',
       queueName: config.TASK_ORCHESTRATION_QUEUE_NAME,
+      supplierMonthlySettlementService,
     })
   : undefined;
 const baiyingCallbackIngress = localDataProtector
@@ -174,6 +178,7 @@ const app = createApp({
   outboundTaskService,
   operationsConsoleService,
   accountAdjustmentService,
+  supplierMonthlySettlementService,
   operatorAuditService,
   operationsOverviewService,
   integrationLogService,

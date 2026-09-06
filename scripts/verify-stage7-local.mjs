@@ -52,6 +52,7 @@ const steps = [
   ['阶段 6B-3B 任务控制与死信恢复', 'db:verify:stage6b3b'],
   ['阶段 6B-3C 零网络边界', 'stage6b3c:verify:source'],
   ['阶段 7A 容量、并发与回调突发', 'db:verify:stage7a'],
+  ['阶段 7B 供应商月结与账务核对', 'db:verify:stage7b'],
 ];
 
 try {

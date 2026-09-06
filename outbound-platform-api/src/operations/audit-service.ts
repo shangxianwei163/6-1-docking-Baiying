@@ -23,6 +23,7 @@ const financialActions = [
   'ACCOUNT_ADJUSTMENT_REQUESTED',
   'ACCOUNT_ADJUSTMENT_APPROVED',
   'ACCOUNT_ADJUSTMENT_REJECTED',
+  'SUPPLIER_MONTHLY_SETTLEMENT_FINALIZED',
 ] as const;
 const pricingActions = ['STUDIO_PRICING_PUBLISHED'] as const;
 const studioActions = [
@@ -51,6 +52,7 @@ const actionLabels: Record<string, string> = {
   ACCOUNT_ADJUSTMENT_REQUESTED: '发起退款或调整',
   ACCOUNT_ADJUSTMENT_APPROVED: '批准退款或调整',
   ACCOUNT_ADJUSTMENT_REJECTED: '拒绝退款或调整',
+  SUPPLIER_MONTHLY_SETTLEMENT_FINALIZED: '完成供应商月度封账',
   STUDIO_CREATED: '新增影楼',
   STUDIO_UPDATED: '修改影楼资料',
   STUDIO_ENABLED: '启用影楼',

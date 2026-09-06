@@ -38,6 +38,7 @@
     "db:verify:stage6b3": "npm run db:verify:stage6b3 --workspace @outbound/platform-api",
     "db:verify:stage6b3b": "npm run db:verify:stage6b3b --workspace @outbound/platform-api",
     "db:verify:stage7a": "npm run db:verify:stage7a --workspace @outbound/platform-api",
+    "db:verify:stage7b": "npm run db:verify:stage7b --workspace @outbound/platform-api",
     "stage2:send:erp": "npm run stage2:send:erp --workspace @outbound/platform-api",
     "stage2:send:crm": "npm run stage2:send:crm --workspace @outbound/platform-api",
     "stage3:worker:local": "npm run stage3:worker:local --workspace @outbound/platform-api",
@@ -53,6 +54,7 @@
     "stage6b3c:verify:source": "node scripts/verify-stage6b3c-source.mjs",
     "stage6b3c:verify:ui": "python3 scripts/verify-stage6b3c-ui.py",
     "stage6b3c:verify": "npm run stage6b3c:verify:source && npm run stage6b3c:verify:api && npm run stage6b3c:verify:ui",
+    "stage7b:verify:ui": "python3 scripts/verify-stage7b-ui.py",
     "stage7:verify:local": "node scripts/verify-stage7-local.mjs",
     "lint": "oxlint",
     "format": "oxfmt"
