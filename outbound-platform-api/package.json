@@ -29,6 +29,7 @@
     "db:verify:stage6b2": "tsx src/db/verify-stage6b2.ts",
     "db:verify:stage6b3": "tsx src/db/verify-stage6b3.ts",
     "db:verify:stage6b3b": "tsx src/db/verify-stage6b3b.ts",
+    "db:verify:stage7a": "tsx src/db/verify-stage7a.ts",
     "stage2:send:erp": "tsx src/openapi/send-local-example.ts ERP",
     "stage2:send:crm": "tsx src/openapi/send-local-example.ts CRM",
     "stage3:worker:local": "tsx src/orchestration/local-worker.ts",
