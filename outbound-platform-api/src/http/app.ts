@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import {
   baiyingWorkflowStatusSchema,
+  createOutboundTaskRequestSchema,
   lineStudioBindingInputSchema,
   mappingDraftInputSchema,
   plannedTaskBindingInputSchema,
@@ -24,6 +25,10 @@ import type { LineRepository } from '../line/repository.js';
 import type { PlannedTaskRepository } from '../planned-task/repository.js';
 import { ScriptBindingConflictError, type ScriptRepository } from '../script/repository.js';
 import type { CategorySyncService } from '../source-category/sync-service.js';
+import type { ExternalRequestAuthenticator } from '../openapi/authenticator.js';
+import { ExternalApiFailure } from '../openapi/errors.js';
+import { stableJsonSha256 } from '../openapi/request-hash.js';
+import type { OutboundTaskService } from '../outbound-task/service.js';
 
 type AppVariables = { requestId: string };
 
@@ -71,6 +76,8 @@ export type AppDependencies = {
   lineRepository?: LineRepository;
   baiyingCompanyId?: string;
   erpCategorySyncService?: CategorySyncService;
+  externalRequestAuthenticator?: ExternalRequestAuthenticator;
+  outboundTaskService?: OutboundTaskService;
   clock?: () => Date;
   createId?: () => string;
   onBaiyingCallInstance?: (payload: BaiyingCallInstanceCallback, requestId: string) => Promise<void> | void;
@@ -83,12 +90,22 @@ export function createApp(dependencies: AppDependencies) {
 
   app.use('*', cors({
     origin: dependencies.consoleOrigin,
-    allowHeaders: ['Content-Type', 'X-Request-Id', 'X-Actor-Id'],
-    exposeHeaders: ['X-Request-Id'],
+    allowHeaders: [
+      'Content-Type',
+      'X-Request-Id',
+      'X-Actor-Id',
+      'X-Client-Id',
+      'X-Timestamp',
+      'X-Nonce',
+      'X-Signature',
+      'Idempotency-Key',
+    ],
+    exposeHeaders: ['X-Request-Id', 'Idempotent-Replayed'],
     credentials: true,
   }));
   app.use('*', async (context, next) => {
-    const requestId = context.req.header('x-request-id')?.trim() || createId();
+    const candidate = context.req.header('x-request-id')?.trim();
+    const requestId = candidate && candidate.length <= 128 ? candidate : createId();
     context.set('requestId', requestId);
     context.header('X-Request-Id', requestId);
     await next();
@@ -369,13 +386,120 @@ export function createApp(dependencies: AppDependencies) {
     return context.json(success(context.get('requestId'), { categories }), 201);
   });
 
-  app.notFound((context) => context.json({
-    error: { code: 'NOT_FOUND', message: '接口不存在', requestId: context.get('requestId') },
-  }, 404));
+  app.post('/openapi/v1/outbound/tasks', async (context) => {
+    const { authenticator, taskService } = externalApiDependencies(dependencies);
+    const declaredLength = Number(context.req.header('content-length') ?? '0');
+    if (Number.isFinite(declaredLength) && declaredLength > 25 * 1024 * 1024) {
+      throw new ExternalApiFailure('INVALID_REQUEST', '请求体超过 25 MiB 上限', 413);
+    }
+    const rawBody = new Uint8Array(await context.req.arrayBuffer());
+    if (rawBody.byteLength > 25 * 1024 * 1024) {
+      throw new ExternalApiFailure('INVALID_REQUEST', '请求体超过 25 MiB 上限', 413);
+    }
+    const principal = await authenticateExternal(authenticator, context.req.raw, rawBody);
+    const idempotencyKey = context.req.header('idempotency-key')?.trim();
+    if (!idempotencyKey || idempotencyKey.length < 8 || idempotencyKey.length > 128) {
+      throw new ExternalApiFailure(
+        'INVALID_REQUEST',
+        'Idempotency-Key 长度必须为 8～128 个字符',
+        400,
+      );
+    }
+    let json: unknown;
+    try {
+      json = JSON.parse(Buffer.from(rawBody).toString('utf8'));
+    } catch {
+      throw new ExternalApiFailure('INVALID_REQUEST', '请求体不是有效 JSON', 400);
+    }
+    const parsedRequest = createOutboundTaskRequestSchema.safeParse(json);
+    if (!parsedRequest.success) {
+      const phoneIssue = parsedRequest.error.issues.find(
+        (issue) => issue.path.at(-1) === 'phone',
+      );
+      if (phoneIssue) {
+        const duplicated = phoneIssue.message.includes('不可重复');
+        throw new ExternalApiFailure(
+          duplicated ? 'PHONE_DUPLICATED' : 'PHONE_INVALID',
+          phoneIssue.message,
+          422,
+          { issues: parsedRequest.error.issues },
+        );
+      }
+      throw parsedRequest.error;
+    }
+    const request = parsedRequest.data;
+    const result = await taskService.accept({
+      principal,
+      idempotencyKey,
+      requestId: context.get('requestId'),
+      requestHash: stableJsonSha256(request),
+      request,
+    });
+    if (result.replayed) context.header('Idempotent-Replayed', 'true');
+    return context.json(result.body, result.status);
+  });
+
+  app.get('/openapi/v1/outbound/tasks/:taskNo', async (context) => {
+    const { authenticator, taskService } = externalApiDependencies(dependencies);
+    const principal = await authenticateExternal(
+      authenticator,
+      context.req.raw,
+      new Uint8Array(),
+    );
+    const taskNo = z.string().regex(/^PT-\d{8}-\d{5,}$/).parse(context.req.param('taskNo'));
+    return context.json({
+      code: 'OK',
+      message: 'success',
+      requestId: context.get('requestId'),
+      data: await taskService.getTask(principal, taskNo),
+    });
+  });
+
+  app.get('/openapi/v1/outbound/tasks/:taskNo/calls', async (context) => {
+    const { authenticator, taskService } = externalApiDependencies(dependencies);
+    const principal = await authenticateExternal(
+      authenticator,
+      context.req.raw,
+      new Uint8Array(),
+    );
+    const taskNo = z.string().regex(/^PT-\d{8}-\d{5,}$/).parse(context.req.param('taskNo'));
+    const query = z.object({
+      cursor: z.string().trim().min(1).max(512).optional(),
+      limit: z.coerce.number().int().min(1).max(500).default(200),
+    }).parse(context.req.query());
+    return context.json({
+      code: 'OK',
+      message: 'success',
+      requestId: context.get('requestId'),
+      data: await taskService.listCalls(principal, taskNo, query),
+    });
+  });
+
+  app.notFound((context) => context.req.path.startsWith('/openapi/')
+    ? context.json({ code: 'INVALID_REQUEST', message: '接口不存在', requestId: context.get('requestId') }, 404)
+    : context.json({
+        error: { code: 'NOT_FOUND', message: '接口不存在', requestId: context.get('requestId') },
+      }, 404));
 
   app.onError((error, context) => {
     const requestId = context.get('requestId');
+    if (error instanceof ExternalApiFailure) {
+      return context.json({
+        code: error.code,
+        message: error.message,
+        requestId,
+        ...(error.details ? { details: error.details } : {}),
+      }, error.status);
+    }
     if (error instanceof z.ZodError) {
+      if (context.req.path.startsWith('/openapi/')) {
+        return context.json({
+          code: 'INVALID_REQUEST',
+          message: '请求参数不合法',
+          requestId,
+          details: { issues: error.issues },
+        }, 400);
+      }
       return context.json({ error: { code: 'VALIDATION_ERROR', message: '请求参数不合法', requestId, details: { issues: error.issues } } }, 400);
     }
     if (error instanceof MappingNotFoundError) {
@@ -391,10 +515,47 @@ export function createApp(dependencies: AppDependencies) {
       return context.json({ error: { code: 'UNAUTHORIZED', message: error.message, requestId } }, 401);
     }
     console.error(JSON.stringify({ level: 'error', requestId, message: error.message }));
+    if (context.req.path.startsWith('/openapi/')) {
+      return context.json({
+        code: 'SERVICE_TEMPORARILY_UNAVAILABLE',
+        message: '平台暂不可受理请求，请稍后重试',
+        requestId,
+      }, 503);
+    }
     return context.json({ error: { code: 'INTERNAL_ERROR', message: '服务暂时不可用', requestId } }, 500);
   });
 
   return app;
+}
+
+function externalApiDependencies(dependencies: AppDependencies) {
+  if (!dependencies.externalRequestAuthenticator || !dependencies.outboundTaskService) {
+    throw new ExternalApiFailure(
+      'SERVICE_TEMPORARILY_UNAVAILABLE',
+      '外部任务受理服务尚未配置',
+      503,
+    );
+  }
+  return {
+    authenticator: dependencies.externalRequestAuthenticator,
+    taskService: dependencies.outboundTaskService,
+  };
+}
+
+function authenticateExternal(
+  authenticator: ExternalRequestAuthenticator,
+  request: Request,
+  rawBody: Uint8Array,
+) {
+  return authenticator.authenticate({
+    method: request.method,
+    url: request.url,
+    rawBody,
+    clientId: request.headers.get('x-client-id') ?? undefined,
+    timestamp: request.headers.get('x-timestamp') ?? undefined,
+    nonce: request.headers.get('x-nonce') ?? undefined,
+    signature: request.headers.get('x-signature') ?? undefined,
+  });
 }
 
 function plannedTaskDependencies(dependencies: AppDependencies) {

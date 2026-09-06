@@ -620,6 +620,28 @@ export const integrationClients = pgTable(
   ],
 );
 
+export const apiRequestNonces = pgTable(
+  'api_request_nonce',
+  {
+    integrationClientId: uuid('integration_client_id')
+      .notNull()
+      .references(() => integrationClients.id, { onDelete: 'cascade' }),
+    nonce: varchar('nonce', { length: 128 }).notNull(),
+    receivedAt: timestamp('received_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.integrationClientId, table.nonce] }),
+    index('api_request_nonce_expiry_idx').on(table.expiresAt),
+    index('api_request_nonce_rate_limit_idx').on(
+      table.integrationClientId,
+      table.receivedAt,
+    ),
+  ],
+);
+
 export const integrationClientStudios = pgTable(
   'integration_client_studio',
   {

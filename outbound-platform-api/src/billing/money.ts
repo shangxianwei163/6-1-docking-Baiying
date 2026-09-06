@@ -41,3 +41,10 @@ export function subtractMoney(left: string, right: string): string {
 export function negateMoney(value: string): string {
   return microsToMoney(-moneyToMicros(value));
 }
+
+export function multiplyMoneyByInteger(value: string, multiplier: number): string {
+  if (!Number.isSafeInteger(multiplier) || multiplier < 0) {
+    throw new TypeError('金额倍数必须是非负安全整数');
+  }
+  return microsToMoney(moneyToMicros(value) * BigInt(multiplier));
+}

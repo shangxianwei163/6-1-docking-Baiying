@@ -11,6 +11,10 @@ import { PostgresScriptRepository } from './script/postgres-repository.js';
 import { PostgresLineRepository } from './line/postgres-repository.js';
 import { HttpSxErpCategoryClient } from './source-category/client.js';
 import { ErpCategorySyncService } from './source-category/sync-service.js';
+import { LocalDevelopmentSecretProvider } from './security/secret-provider.js';
+import { LocalDataProtector } from './security/data-protector.js';
+import { PostgresExternalRequestAuthenticator } from './openapi/authenticator.js';
+import { PostgresOutboundTaskService } from './outbound-task/service.js';
 
 for (const name of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) {
   Reflect.deleteProperty(process.env, name);
@@ -19,12 +23,32 @@ for (const name of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'htt
 const config = readConfig();
 const database = createDatabase(config.DATABASE_URL);
 const repository = new PostgresMappingRepository(database.db, config.VARIABLE_SYNC_QUEUE_NAME);
-const plannedTaskRepository = new PostgresPlannedTaskRepository(database.db);
+const plannedTaskRepository = new PostgresPlannedTaskRepository(
+  database.db,
+  () => new Date(),
+  config.NODE_ENV !== 'production',
+);
 const scriptRepository = new PostgresScriptRepository(database.db);
 const lineRepository = new PostgresLineRepository(database.db);
 const erpCategoryClient = new HttpSxErpCategoryClient(config.SX_ERP_CATEGORY_URL);
 const erpCategorySyncService = config.SX_ERP_CATEGORY_TOKEN
   ? new ErpCategorySyncService(erpCategoryClient, config.SX_ERP_CATEGORY_TOKEN, plannedTaskRepository)
+  : undefined;
+const localSecretProvider = config.NODE_ENV === 'production'
+  ? undefined
+  : new LocalDevelopmentSecretProvider(config.WORKER_SHARED_SECRET, config.NODE_ENV);
+const externalRequestAuthenticator = localSecretProvider
+  ? new PostgresExternalRequestAuthenticator(database.db, localSecretProvider)
+  : undefined;
+const outboundTaskService = localSecretProvider
+  ? new PostgresOutboundTaskService(
+      database.db,
+      new LocalDataProtector(config.WORKER_SHARED_SECRET, config.NODE_ENV),
+      {
+        baiyingCompanyId: config.BAIYING_COMPANY_ID ?? 'LOCAL-MOCK',
+        queueName: config.TASK_ORCHESTRATION_QUEUE_NAME,
+      },
+    )
   : undefined;
 const baiyingTokenProvider = config.BAIYING_TOKEN_URL && config.BAIYING_APP_KEY && config.BAIYING_APP_SECRET && config.BAIYING_COMPANY_ID
   ? new OAuthBaiyingTokenProvider({
@@ -47,6 +71,8 @@ const app = createApp({
   accountClient: workflowClient,
   lineRepository,
   erpCategorySyncService,
+  externalRequestAuthenticator,
+  outboundTaskService,
   baiyingCompanyId: config.BAIYING_COMPANY_ID,
   consoleOrigin: config.CONSOLE_ORIGIN,
   workerSharedSecret: config.WORKER_SHARED_SECRET,

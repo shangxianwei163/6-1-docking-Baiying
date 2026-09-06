@@ -3,6 +3,7 @@ import {
   addMoney,
   microsToMoney,
   moneyToMicros,
+  multiplyMoneyByInteger,
   negateMoney,
   normalizeMoney,
   requirePositiveMoney,
@@ -15,6 +16,13 @@ describe('money helpers', () => {
     expect(addMoney('0.100000', '0.200000')).toBe('0.300000');
     expect(subtractMoney('100.000001', '0.000002')).toBe('99.999999');
     expect(negateMoney('-12.34')).toBe('12.340000');
+  });
+
+  it('multiplies money by an integer without floating point arithmetic', () => {
+    expect(multiplyMoneyByInteger('0.240000', 6)).toBe('1.440000');
+    expect(() => multiplyMoneyByInteger('1.000000', -1)).toThrow(
+      '非负安全整数',
+    );
   });
 
   it('round-trips the numeric(18,6) boundaries represented as micro-units', () => {

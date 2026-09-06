@@ -210,6 +210,13 @@ export const taskDetailSchema = z.object({
   }),
 });
 
+export const taskDetailEnvelopeSchema = z.object({
+  code: z.literal('OK'),
+  message: z.literal('success'),
+  requestId: z.string().min(1).max(128),
+  data: taskDetailSchema,
+});
+
 export const taskCommandRequestSchema = z
   .object({
     command: taskCommandSchema,
@@ -258,6 +265,13 @@ export const outboundCallPageSchema = z.object({
   nextCursor: z.string().nullable(),
 });
 
+export const outboundCallPageEnvelopeSchema = z.object({
+  code: z.literal('OK'),
+  message: z.literal('success'),
+  requestId: z.string().min(1).max(128),
+  data: outboundCallPageSchema,
+});
+
 export type OutboundCustomer = z.infer<typeof outboundCustomerSchema>;
 export type CreateOutboundTaskRequest = z.infer<
   typeof createOutboundTaskRequestSchema
@@ -271,7 +285,11 @@ export type TaskStatusSummary = z.infer<typeof taskStatusSummarySchema>;
 export type TaskAccepted = z.infer<typeof taskAcceptedSchema>;
 export type TaskAcceptedEnvelope = z.infer<typeof taskAcceptedEnvelopeSchema>;
 export type TaskDetail = z.infer<typeof taskDetailSchema>;
+export type TaskDetailEnvelope = z.infer<typeof taskDetailEnvelopeSchema>;
 export type TaskCommandRequest = z.infer<typeof taskCommandRequestSchema>;
 export type TaskCommandAccepted = z.infer<typeof taskCommandAcceptedSchema>;
 export type OutboundCallDetail = z.infer<typeof outboundCallDetailSchema>;
 export type OutboundCallPage = z.infer<typeof outboundCallPageSchema>;
+export type OutboundCallPageEnvelope = z.infer<
+  typeof outboundCallPageEnvelopeSchema
+>;

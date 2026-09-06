@@ -8,6 +8,7 @@ export class PostgresPlannedTaskRepository implements PlannedTaskRepository {
   constructor(
     private readonly db: Database,
     private readonly clock: () => Date = () => new Date(),
+    private readonly preserveLocalFixtures = false,
   ) {}
 
   async listBindings(workflowIds: string[]): Promise<PlannedTaskCategoryBinding[]> {
@@ -63,7 +64,16 @@ export class PostgresPlannedTaskRepository implements PlannedTaskRepository {
       const sourceSystems = [...new Set(observations.map((observation) => observation.sourceSystem))];
       for (const sourceSystem of sourceSystems) {
         const sourceObservations = observations.filter((observation) => observation.sourceSystem === sourceSystem);
-        await tx.update(sourceDataCategories).set({ active: false }).where(eq(sourceDataCategories.sourceSystem, sourceSystem));
+        const staleCategoryCondition = this.preserveLocalFixtures
+          ? and(
+              eq(sourceDataCategories.sourceSystem, sourceSystem),
+              sql`${sourceDataCategories.fields}->>'fixture' IS DISTINCT FROM 'STAGE2_LOCAL_MOCK'`,
+            )
+          : eq(sourceDataCategories.sourceSystem, sourceSystem);
+        await tx
+          .update(sourceDataCategories)
+          .set({ active: false })
+          .where(staleCategoryCondition);
         const sourceRows = await tx.insert(sourceDataCategories).values(sourceObservations.map((observation) => ({
           ...observation,
           name: observation.name ?? observation.categoryPath,

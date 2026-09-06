@@ -27,6 +27,10 @@
     "db:import:phase1": "npm run db:import:phase1 --workspace @outbound/platform-api",
     "db:reconcile:phase1": "npm run db:reconcile:phase1 --workspace @outbound/platform-api",
     "db:verify:phase1": "npm run db:verify:phase1 --workspace @outbound/platform-api",
+    "db:bootstrap:stage2-local": "npm run db:bootstrap:stage2-local --workspace @outbound/platform-api",
+    "db:verify:stage2": "npm run db:verify:stage2 --workspace @outbound/platform-api",
+    "stage2:send:erp": "npm run stage2:send:erp --workspace @outbound/platform-api",
+    "stage2:send:crm": "npm run stage2:send:crm --workspace @outbound/platform-api",
     "lint": "oxlint",
     "format": "oxfmt"
   },

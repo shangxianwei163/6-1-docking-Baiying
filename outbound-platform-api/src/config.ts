@@ -14,6 +14,7 @@ const configSchema = z.object({
   SX_ERP_CATEGORY_TOKEN: z.string().optional(),
   SX_ERP_CATEGORY_SYNC_INTERVAL_MS: z.coerce.number().int().min(60_000).default(21_600_000),
   VARIABLE_SYNC_QUEUE_NAME: z.string().default('variable-sync-queue'),
+  TASK_ORCHESTRATION_QUEUE_NAME: z.string().default('task-orchestration-queue'),
   WORKER_SHARED_SECRET: z.string().min(24),
 });
 
