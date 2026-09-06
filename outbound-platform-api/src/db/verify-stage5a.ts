@@ -141,6 +141,7 @@ async function main() {
     const callbackProcessor = new PostgresBaiyingCallbackProcessor(
       database.db,
       protector,
+      { deliveryQueueName: deliveryQueue },
     );
     const processCallback = async (rawBody: string) => {
       const stored = await ingress.ingest({
@@ -190,6 +191,8 @@ async function main() {
 
     const archiveRepository = new PostgresRecordingArchiveRepository(
       database.db,
+      () => new Date(),
+      deliveryQueue,
     );
     const staleClaim = await archiveRepository.claimNext({
       workerId: 'stage5a-stale-worker',

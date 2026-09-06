@@ -6,6 +6,7 @@ export type ExternalHttpStatus =
   | 403
   | 404
   | 409
+  | 410
   | 413
   | 422
   | 429

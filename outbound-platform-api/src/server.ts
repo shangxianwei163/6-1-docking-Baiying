@@ -30,6 +30,7 @@ import {
 } from './operations/task-control-service.js';
 import { SafeCallbackPreviewService } from './operations/callback-preview-service.js';
 import { RecordingAccessService } from './recording/access-service.js';
+import { PostgresRecordingUrlReissueService } from './recording/reissue-service.js';
 import { LocalRecordingObjectStore } from './recording/local-object-store.js';
 import { PostgresRecordingAccessRepository } from './recording/postgres-access-repository.js';
 import { LocalRecordingUrlSigner } from './recording/url-signer.js';
@@ -118,17 +119,27 @@ const taskControlService =
         { taskQueueName: config.TASK_ORCHESTRATION_QUEUE_NAME },
       );
 const callbackPreviewService = new SafeCallbackPreviewService();
-const recordingAccessService = localDataProtector
+const recordingUrlSigner = localDataProtector
+  ? new LocalRecordingUrlSigner(config.WORKER_SHARED_SECRET, config.NODE_ENV)
+  : undefined;
+const recordingAccessService = recordingUrlSigner
   ? new RecordingAccessService(
       new PostgresRecordingAccessRepository(database.db),
       new LocalRecordingObjectStore(resolve(config.RECORDING_LOCAL_ROOT)),
-      new LocalRecordingUrlSigner(config.WORKER_SHARED_SECRET, config.NODE_ENV),
+      recordingUrlSigner,
       {
         publicBaseUrl: config.RECORDING_PUBLIC_BASE_URL,
         ttlSeconds: config.RECORDING_DOWNLOAD_TTL_SECONDS,
         environment: config.NODE_ENV,
       },
     )
+  : undefined;
+const recordingUrlReissueService = recordingUrlSigner
+  ? new PostgresRecordingUrlReissueService(database.db, recordingUrlSigner, {
+      publicBaseUrl: config.RECORDING_CALLBACK_BASE_URL,
+      ttlSeconds: config.RECORDING_DOWNLOAD_TTL_SECONDS,
+      environment: config.NODE_ENV,
+    })
   : undefined;
 const baiyingTokenProvider =
   config.BAIYING_TOKEN_URL &&
@@ -170,6 +181,7 @@ const app = createApp({
   taskControlService,
   callbackPreviewService,
   recordingAccessService,
+  recordingUrlReissueService,
   baiyingCallbackIngress,
   baiyingCompanyId: config.BAIYING_COMPANY_ID,
   consoleOrigin: config.CONSOLE_ORIGIN,

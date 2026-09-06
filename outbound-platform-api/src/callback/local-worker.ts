@@ -20,7 +20,9 @@ const protector = new LocalDataProtector(
   config.NODE_ENV,
 );
 const repository = new PostgresCallbackInboxRepository(database.db);
-const processor = new PostgresBaiyingCallbackProcessor(database.db, protector);
+const processor = new PostgresBaiyingCallbackProcessor(database.db, protector, {
+  deliveryQueueName: config.CALLBACK_DELIVERY_QUEUE_NAME,
+});
 const worker = new BaiyingCallbackWorker(repository, processor, protector, {
   workerId: `callback-local-${hostname()}-${process.pid}`.slice(0, 128),
 });

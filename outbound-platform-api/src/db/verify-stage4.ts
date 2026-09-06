@@ -112,6 +112,7 @@ async function main() {
     const processor = new PostgresBaiyingCallbackProcessor(
       database.db,
       protector,
+      { deliveryQueueName },
     );
 
     const acceptAndStart = async (

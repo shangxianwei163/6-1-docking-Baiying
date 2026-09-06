@@ -517,7 +517,7 @@ async function resetDeadLetterSource(
       .update(deliveryEvents)
       .set({
         status: 'PENDING',
-        attemptCount: 0,
+        retryCycleAttemptCount: 0,
         availableAt: now,
         lockedAt: null,
         lockedBy: null,
@@ -526,6 +526,25 @@ async function resetDeadLetterSource(
       })
       .where(eq(deliveryEvents.id, sourceId))
       .returning({ id: deliveryEvents.id });
+    if (changed.length) {
+      await tx.execute(sql`
+        UPDATE platform_task AS task
+        SET
+          result_delivery_status = CASE
+            WHEN event.target = 'RESULT' THEN 'PENDING'::result_delivery_status
+            ELSE task.result_delivery_status
+          END,
+          recording_delivery_status = CASE
+            WHEN event.target = 'RECORDING' THEN 'PENDING'::recording_delivery_status
+            ELSE task.recording_delivery_status
+          END,
+          updated_at = ${now.toISOString()}::timestamptz,
+          lock_version = task.lock_version + 1
+        FROM delivery_event AS event
+        WHERE event.id = ${sourceId}
+          AND task.id = event.task_id
+      `);
+    }
   }
   if (!changed.length) {
     throw new OperationsConsoleFailure(

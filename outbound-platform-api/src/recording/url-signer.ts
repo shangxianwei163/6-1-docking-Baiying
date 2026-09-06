@@ -7,7 +7,10 @@ export type RecordingUrlSignatureInput = {
 };
 
 export interface RecordingUrlSigner {
-  audienceToken(audienceType: 'OPERATOR', audienceId: string): string;
+  audienceToken(
+    audienceType: 'OPERATOR' | 'INTEGRATION_CLIENT',
+    audienceId: string,
+  ): string;
   sign(input: RecordingUrlSignatureInput): string;
   verify(input: RecordingUrlSignatureInput, signature: string): boolean;
 }
@@ -30,7 +33,10 @@ export class LocalRecordingUrlSigner implements RecordingUrlSigner {
     this.signatureKey = derive(rootSecret, 'recording-url-signature');
   }
 
-  audienceToken(audienceType: 'OPERATOR', audienceId: string): string {
+  audienceToken(
+    audienceType: 'OPERATOR' | 'INTEGRATION_CLIENT',
+    audienceId: string,
+  ): string {
     const normalizedId = audienceId.trim();
     if (!normalizedId || normalizedId.length > 128) {
       throw new TypeError('录音下载调用方标识长度必须为 1～128 字符');

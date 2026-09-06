@@ -18,7 +18,11 @@ if (config.NODE_ENV === 'production') {
   );
 }
 const database = createDatabase(config.DATABASE_URL);
-const repository = new PostgresRecordingArchiveRepository(database.db);
+const repository = new PostgresRecordingArchiveRepository(
+  database.db,
+  () => new Date(),
+  config.CALLBACK_DELIVERY_QUEUE_NAME,
+);
 const archiveService = new RecordingArchiveService(
   new LocalDataProtector(config.WORKER_SHARED_SECRET, config.NODE_ENV),
   new LocalFixtureRecordingSource(),

@@ -11,6 +11,8 @@ const bytes = Buffer.from('ID3archived-recording', 'binary');
 const archivedAsset = {
   id: recordingId,
   taskId: 'e922c7ea-f655-4340-bd59-1c25c05840ed',
+  integrationClientId: 'cc71e15a-69a0-4e20-a1e8-81d66b98f990',
+  sourceSystem: 'ERP' as const,
   archiveStatus: 'ARCHIVED' as const,
   bucket: 'local-recordings',
   objectKey: 'recordings/studio/2026/09/task/call/full.mp3',
@@ -123,6 +125,29 @@ describe('RecordingAccessService', () => {
         requestId: 'request-open',
       }),
     ).rejects.toMatchObject({ code: 'RECORDING_OBJECT_UNAVAILABLE' });
+  });
+
+  it('issues an integration-bound URL only to the task owner', async () => {
+    const service = serviceWith(repositoryWith());
+    const issued = await service.issueIntegrationUrl(
+      recordingId,
+      {
+        integrationClientId: archivedAsset.integrationClientId,
+        sourceSystem: 'ERP',
+      },
+      'request-integration',
+    );
+    expect(issued.downloadUrl).not.toContain(archivedAsset.integrationClientId);
+    await expect(
+      service.issueIntegrationUrl(
+        recordingId,
+        {
+          integrationClientId: '71084573-edf8-439f-89bc-14d9e565b6ad',
+          sourceSystem: 'ERP',
+        },
+        'request-denied',
+      ),
+    ).rejects.toMatchObject({ code: 'RECORDING_NOT_FOUND', status: 404 });
   });
 
   it('allows loopback HTTP only outside production', () => {

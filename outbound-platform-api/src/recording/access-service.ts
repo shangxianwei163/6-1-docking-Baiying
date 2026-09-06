@@ -3,6 +3,7 @@ import type {
   RecordingAccessRepository,
 } from './access-repository.js';
 import type { RecordingObjectReader } from './object-store.js';
+import { RecordingDownloadUrlIssuer } from './url-issuer.js';
 import type { RecordingUrlSigner } from './url-signer.js';
 
 export type IssuedRecordingDownload = {
@@ -23,6 +24,14 @@ export interface RecordingAccess {
   issueOperatorUrl(
     recordingId: string,
     actorId: string,
+    requestId: string,
+  ): Promise<IssuedRecordingDownload>;
+  issueIntegrationUrl(
+    recordingId: string,
+    principal: {
+      integrationClientId: string;
+      sourceSystem: 'ERP' | 'CRM';
+    },
     requestId: string,
   ): Promise<IssuedRecordingDownload>;
   openSignedUrl(
@@ -53,7 +62,7 @@ export class RecordingAccessFailure extends Error {
 }
 
 export class RecordingAccessService implements RecordingAccess {
-  private readonly publicBaseUrl: URL;
+  private readonly urlIssuer: RecordingDownloadUrlIssuer;
 
   constructor(
     private readonly repository: RecordingAccessRepository,
@@ -66,14 +75,7 @@ export class RecordingAccessService implements RecordingAccess {
       clock?: () => Date;
     },
   ) {
-    this.publicBaseUrl = validateBaseUrl(
-      options.publicBaseUrl,
-      options.environment,
-    );
-    const ttl = this.ttlSeconds;
-    if (!Number.isInteger(ttl) || ttl < 60 || ttl > 3_600) {
-      throw new TypeError('录音下载 URL 有效期必须为 60～3600 秒');
-    }
+    this.urlIssuer = new RecordingDownloadUrlIssuer(signer, options);
   }
 
   async issueOperatorUrl(
@@ -84,40 +86,78 @@ export class RecordingAccessService implements RecordingAccess {
     const now = this.clock();
     const asset = await this.requireAvailableAsset(recordingId, now);
     const audience = this.signer.audienceToken('OPERATOR', actorId);
-    const expiresAtEpochSeconds =
-      Math.floor(now.getTime() / 1_000) + this.ttlSeconds;
-    const signature = this.signer.sign({
+    return this.issueBoundUrl({
       recordingId,
       audience,
-      expiresAtEpochSeconds,
-    });
-    const downloadUrl = new URL(
-      `/api/v1/recordings/${encodeURIComponent(recordingId)}/content`,
-      this.publicBaseUrl,
-    );
-    downloadUrl.searchParams.set('exp', expiresAtEpochSeconds.toString());
-    downloadUrl.searchParams.set('aud', audience);
-    downloadUrl.searchParams.set('sig', signature);
-    const expiresAt = new Date(expiresAtEpochSeconds * 1_000).toISOString();
-    await this.repository.recordAudit({
-      requestId,
       actorId,
-      action: 'RECORDING_DOWNLOAD_URL_ISSUED',
-      recordingId,
-      detail: {
-        recordingId,
-        taskId: asset.taskId,
-        expiresAt,
-        sha256: asset.sha256,
-      },
-      occurredAt: now,
+      requestId,
+      asset,
+      now,
     });
-    return {
+  }
+
+  async issueIntegrationUrl(
+    recordingId: string,
+    principal: {
+      integrationClientId: string;
+      sourceSystem: 'ERP' | 'CRM';
+    },
+    requestId: string,
+  ): Promise<IssuedRecordingDownload> {
+    const now = this.clock();
+    const asset = await this.requireAvailableAsset(recordingId, now);
+    if (
+      asset.integrationClientId !== principal.integrationClientId ||
+      asset.sourceSystem !== principal.sourceSystem
+    ) {
+      throw new RecordingAccessFailure(
+        'RECORDING_NOT_FOUND',
+        '录音不存在',
+        404,
+      );
+    }
+    const audience = this.signer.audienceToken(
+      'INTEGRATION_CLIENT',
+      principal.integrationClientId,
+    );
+    return this.issueBoundUrl({
       recordingId,
-      downloadUrl: downloadUrl.toString(),
-      expiresAt,
-      sha256: asset.sha256!,
-    };
+      audience,
+      actorId: `integration:${principal.sourceSystem}:${principal.integrationClientId}`,
+      requestId,
+      asset,
+      now,
+    });
+  }
+
+  private async issueBoundUrl(input: {
+    recordingId: string;
+    audience: string;
+    actorId: string;
+    requestId: string;
+    asset: RecordingAccessAsset;
+    now: Date;
+  }): Promise<IssuedRecordingDownload> {
+    const issued = this.urlIssuer.issue({
+      recordingId: input.recordingId,
+      audience: input.audience,
+      sha256: input.asset.sha256!,
+      now: input.now,
+    });
+    await this.repository.recordAudit({
+      requestId: input.requestId,
+      actorId: input.actorId,
+      action: 'RECORDING_DOWNLOAD_URL_ISSUED',
+      recordingId: input.recordingId,
+      detail: {
+        recordingId: input.recordingId,
+        taskId: input.asset.taskId,
+        expiresAt: issued.expiresAt,
+        sha256: input.asset.sha256,
+      },
+      occurredAt: input.now,
+    });
+    return issued;
   }
 
   async openSignedUrl(
@@ -135,7 +175,7 @@ export class RecordingAccessService implements RecordingAccess {
       !/^[a-f0-9]{64}$/.test(input.audience) ||
       !Number.isSafeInteger(input.expiresAtEpochSeconds) ||
       input.expiresAtEpochSeconds <= nowEpochSeconds ||
-      input.expiresAtEpochSeconds > nowEpochSeconds + this.ttlSeconds
+      input.expiresAtEpochSeconds > nowEpochSeconds + this.urlIssuer.ttlSeconds
     ) {
       throw invalidUrl();
     }
@@ -198,52 +238,10 @@ export class RecordingAccessService implements RecordingAccess {
     recordingId: string,
     now: Date,
   ): Promise<RecordingAccessAsset> {
-    const asset = await this.repository.find(recordingId);
-    if (!asset) {
-      throw new RecordingAccessFailure(
-        'RECORDING_NOT_FOUND',
-        '录音不存在',
-        404,
-      );
-    }
-    if (asset.archiveStatus !== 'ARCHIVED') {
-      throw new RecordingAccessFailure(
-        'RECORDING_NOT_ARCHIVED',
-        '录音尚未完成归档',
-        409,
-      );
-    }
-    if (
-      asset.deletedAt ||
-      (asset.retentionUntil && asset.retentionUntil.getTime() <= now.getTime())
-    ) {
-      throw new RecordingAccessFailure(
-        'RECORDING_EXPIRED',
-        '录音已超过保存期限或已删除',
-        410,
-      );
-    }
-    if (
-      !asset.bucket ||
-      !asset.objectKey ||
-      !asset.contentType?.startsWith('audio/') ||
-      asset.sizeBytes === null ||
-      asset.sizeBytes < 0n ||
-      !asset.sha256 ||
-      !/^[a-f0-9]{64}$/.test(asset.sha256) ||
-      !asset.retentionUntil
-    ) {
-      throw new RecordingAccessFailure(
-        'RECORDING_OBJECT_UNAVAILABLE',
-        '录音归档元数据不完整',
-        503,
-      );
-    }
-    return asset;
-  }
-
-  private get ttlSeconds(): number {
-    return this.options.ttlSeconds ?? 900;
+    return requireAvailableRecordingAsset(
+      await this.repository.find(recordingId),
+      now,
+    );
   }
 
   private clock(): Date {
@@ -251,25 +249,47 @@ export class RecordingAccessService implements RecordingAccess {
   }
 }
 
-function validateBaseUrl(
-  value: string,
-  environment: 'development' | 'test' | 'production',
-): URL {
-  const url = new URL(value);
-  if (url.username || url.password || url.search || url.hash) {
-    throw new TypeError('录音公开基础地址不能包含凭证、查询串或片段');
+export function requireAvailableRecordingAsset(
+  asset: RecordingAccessAsset | null,
+  now: Date,
+): RecordingAccessAsset {
+  if (!asset) {
+    throw new RecordingAccessFailure('RECORDING_NOT_FOUND', '录音不存在', 404);
   }
-  if (url.protocol === 'https:') return url;
-  const loopback =
-    url.hostname === 'localhost' ||
-    url.hostname === '127.0.0.1' ||
-    url.hostname === '[::1]';
-  if (environment !== 'production' && url.protocol === 'http:' && loopback) {
-    return url;
+  if (asset.archiveStatus !== 'ARCHIVED') {
+    throw new RecordingAccessFailure(
+      'RECORDING_NOT_ARCHIVED',
+      '录音尚未完成归档',
+      409,
+    );
   }
-  throw new TypeError(
-    '录音公开基础地址必须使用 HTTPS；本地环境仅允许环回 HTTP',
-  );
+  if (
+    asset.deletedAt ||
+    (asset.retentionUntil && asset.retentionUntil.getTime() <= now.getTime())
+  ) {
+    throw new RecordingAccessFailure(
+      'RECORDING_EXPIRED',
+      '录音已超过保存期限或已删除',
+      410,
+    );
+  }
+  if (
+    !asset.bucket ||
+    !asset.objectKey ||
+    !asset.contentType?.startsWith('audio/') ||
+    asset.sizeBytes === null ||
+    asset.sizeBytes < 0n ||
+    !asset.sha256 ||
+    !/^[a-f0-9]{64}$/.test(asset.sha256) ||
+    !asset.retentionUntil
+  ) {
+    throw new RecordingAccessFailure(
+      'RECORDING_OBJECT_UNAVAILABLE',
+      '录音归档元数据不完整',
+      503,
+    );
+  }
+  return asset;
 }
 
 function invalidUrl(): RecordingAccessFailure {

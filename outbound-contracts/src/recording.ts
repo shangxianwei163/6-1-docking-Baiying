@@ -36,6 +36,13 @@ export const recordingDownloadUrlSchema = recordingDeliveryItemSchema.pick({
   sha256: true,
 });
 
+export const recordingDownloadUrlEnvelopeSchema = z.object({
+  code: z.literal('OK'),
+  message: z.literal('success'),
+  requestId: z.string().min(1).max(128),
+  data: recordingDownloadUrlSchema,
+});
+
 export type RecordingKind = z.infer<typeof recordingKindSchema>;
 export type RecordingArchiveStatus = z.infer<
   typeof recordingArchiveStatusSchema
@@ -45,3 +52,6 @@ export type RecordingDeliveryStatus = z.infer<
 >;
 export type RecordingDeliveryItem = z.infer<typeof recordingDeliveryItemSchema>;
 export type RecordingDownloadUrl = z.infer<typeof recordingDownloadUrlSchema>;
+export type RecordingDownloadUrlEnvelope = z.infer<
+  typeof recordingDownloadUrlEnvelopeSchema
+>;

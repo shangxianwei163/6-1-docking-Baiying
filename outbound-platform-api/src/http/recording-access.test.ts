@@ -2,10 +2,12 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import type { MappingRepository } from '../mapping/repository.js';
+import type { ExternalRequestAuthenticator } from '../openapi/authenticator.js';
 import {
   RecordingAccessFailure,
   type RecordingAccess,
 } from '../recording/access-service.js';
+import type { RecordingUrlReissue } from '../recording/reissue-service.js';
 import { createApp } from './app.js';
 
 const recordingId = '92cbd92c-9caa-4e3c-8b40-1d4ee5504900';
@@ -29,7 +31,11 @@ describe('operator recording access HTTP API', () => {
       sizeBytes: BigInt(bytes.byteLength),
       sha256: 'c'.repeat(64),
     }));
-    const app = appWith({ issueOperatorUrl, openSignedUrl });
+    const app = appWith({
+      issueOperatorUrl,
+      issueIntegrationUrl: vi.fn(),
+      openSignedUrl,
+    });
 
     const unauthorized = await app.request(
       `/api/v1/recordings/${recordingId}/download-url`,
@@ -80,6 +86,7 @@ describe('operator recording access HTTP API', () => {
           409,
         );
       }),
+      issueIntegrationUrl: vi.fn(),
       openSignedUrl: vi.fn(),
     });
     const response = await app.request(
@@ -94,6 +101,109 @@ describe('operator recording access HTTP API', () => {
         requestId: 'request-recording-001',
       },
     });
+  });
+
+  it('authenticates an ERP/CRM client before reissuing its recording URL', async () => {
+    const issue = vi.fn<RecordingUrlReissue['issue']>(async () => ({
+      status: 200,
+      replayed: true,
+      body: {
+        code: 'OK',
+        message: 'success',
+        requestId: 'request-recording-original',
+        data: {
+          recordingId,
+          downloadUrl: `https://recordings.mock.invalid/api/v1/recordings/${recordingId}/content?exp=1788696900&aud=${audience}&sig=${signature}`,
+          expiresAt: '2026-09-06T12:15:00.000Z',
+          sha256: 'c'.repeat(64),
+        },
+      },
+    }));
+    const authenticate = vi.fn<ExternalRequestAuthenticator['authenticate']>(
+      async () => ({
+        integrationClientId: '68cd995c-8ddf-46c9-a580-154124518037',
+        clientId: 'erp-local-01',
+        sourceSystem: 'ERP',
+      }),
+    );
+    const app = createApp({
+      mappingRepository: {} as MappingRepository,
+      externalRequestAuthenticator: { authenticate },
+      recordingAccessService: {
+        issueOperatorUrl: vi.fn(),
+        issueIntegrationUrl: vi.fn(),
+        openSignedUrl: vi.fn(),
+      },
+      recordingUrlReissueService: { issue },
+      consoleOrigin: 'http://localhost:4173',
+      workerSharedSecret: 'test-worker-secret-at-least-24',
+      createId: () => 'request-recording-001',
+    });
+    const missingIdempotencyKey = await app.request(
+      `/openapi/v1/outbound/recordings/${recordingId}/download-url`,
+      {
+        method: 'POST',
+        headers: {
+          'x-client-id': 'erp-local-01',
+          'x-timestamp': '1788696000000',
+          'x-nonce': 'stage5b-reissue-nonce',
+          'x-signature': 'signed-by-client',
+        },
+      },
+    );
+    expect(missingIdempotencyKey.status).toBe(400);
+    expect(issue).not.toHaveBeenCalled();
+
+    const unexpectedBody = await app.request(
+      `/openapi/v1/outbound/recordings/${recordingId}/download-url`,
+      {
+        method: 'POST',
+        headers: {
+          'x-client-id': 'erp-local-01',
+          'x-timestamp': '1788696000000',
+          'x-nonce': 'stage5b-reissue-nonce',
+          'x-signature': 'signed-by-client',
+          'idempotency-key': 'stage5b-recording-reissue-001',
+        },
+        body: '{}',
+      },
+    );
+    expect(unexpectedBody.status).toBe(400);
+    expect(issue).not.toHaveBeenCalled();
+
+    const response = await app.request(
+      `/openapi/v1/outbound/recordings/${recordingId}/download-url`,
+      {
+        method: 'POST',
+        headers: {
+          'x-client-id': 'erp-local-01',
+          'x-timestamp': '1788696000000',
+          'x-nonce': 'stage5b-reissue-nonce',
+          'x-signature': 'signed-by-client',
+          'idempotency-key': 'stage5b-recording-reissue-001',
+        },
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get('idempotent-replayed')).toBe('true');
+    expect(response.headers.get('x-request-id')).toBe(
+      'request-recording-original',
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'OK',
+      data: { recordingId, sha256: 'c'.repeat(64) },
+    });
+    expect(issue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recordingId,
+        idempotencyKey: 'stage5b-recording-reissue-001',
+        principal: expect.objectContaining({
+          integrationClientId: '68cd995c-8ddf-46c9-a580-154124518037',
+          sourceSystem: 'ERP',
+        }),
+        requestId: 'request-recording-001',
+      }),
+    );
   });
 });
 

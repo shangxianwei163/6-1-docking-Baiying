@@ -30,6 +30,9 @@ const configSchema = z.object({
     .regex(/^[a-z0-9][a-z0-9-]{1,62}$/)
     .default('local-recordings'),
   RECORDING_PUBLIC_BASE_URL: z.url().default('http://127.0.0.1:8788'),
+  RECORDING_CALLBACK_BASE_URL: z
+    .url()
+    .default('https://recordings.mock.invalid'),
   RECORDING_DOWNLOAD_TTL_SECONDS: z.coerce
     .number()
     .int()

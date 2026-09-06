@@ -510,7 +510,9 @@ paths:
       tags: [Outbound Tasks]
       operationId: issueRecordingDownloadUrl
       summary: 重新签发录音下载地址
-      description: 返回默认 15 分钟有效的 OSS V4 预签名 URL；URL 不得写入普通应用日志。
+      description: |
+        返回默认 15 分钟有效的 OSS V4 预签名 URL；URL 不得写入普通应用日志。
+        同一客户端使用相同 Idempotency-Key 重试时返回首次签发结果；URL 过期后应使用新幂等键重新签发。
       security:
         - ClientIdHeader: []
           TimestampHeader: []
@@ -529,10 +531,14 @@ paths:
             application/json:
               schema:
                 { $ref: '#/components/schemas/RecordingDownloadUrlEnvelope' }
+        '400': { $ref: '#/components/responses/ExternalError' }
         '401': { $ref: '#/components/responses/ExternalError' }
         '404': { $ref: '#/components/responses/ExternalError' }
         '409': { $ref: '#/components/responses/ExternalError' }
+        '410': { $ref: '#/components/responses/ExternalError' }
+        '413': { $ref: '#/components/responses/ExternalError' }
         '429': { $ref: '#/components/responses/ExternalError' }
+        '503': { $ref: '#/components/responses/ExternalError' }
   /openapi/v1/studios/{mcCode}/balance:
     get:
       tags: [Studio Billing]
@@ -881,6 +887,9 @@ components:
             - TASK_NOT_FOUND
             - COMMAND_NOT_ALLOWED
             - RECORDING_NOT_FOUND
+            - RECORDING_NOT_ARCHIVED
+            - RECORDING_EXPIRED
+            - RECORDING_OBJECT_UNAVAILABLE
             - RATE_LIMITED
             - SERVICE_TEMPORARILY_UNAVAILABLE
         message: { type: string, minLength: 1, maxLength: 1000 }
@@ -1370,7 +1379,7 @@ components:
       properties:
         code: { const: OK }
         message: { const: success }
-        requestId: { type: string }
+        requestId: { type: string, minLength: 1, maxLength: 128 }
         data: { $ref: '#/components/schemas/RecordingDownloadUrl' }
     StudioBalance:
       type: object

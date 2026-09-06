@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
 import {
   deadLetterEvents,
   platformTasks,
+  queueOutbox,
   recordingAssets,
 } from '../db/schema.js';
 import {
@@ -32,6 +34,7 @@ export class PostgresRecordingArchiveRepository implements RecordingArchiveRepos
   constructor(
     private readonly db: Database,
     private readonly clock: () => Date = () => new Date(),
+    private readonly deliveryQueueName = 'callback-delivery-queue',
   ) {}
 
   async claimNext(input: {
@@ -134,13 +137,36 @@ export class PostgresRecordingArchiveRepository implements RecordingArchiveRepos
         )
         .returning({ id: recordingAssets.id });
       if (!changed.length) throw claimLost(input.recordingId);
-      await refreshTaskArchiveSummary(tx, recording.taskId, this.clock());
+      const now = this.clock();
+      const summary = await refreshTaskArchiveSummary(
+        tx,
+        recording.taskId,
+        now,
+      );
+      const eventId = randomUUID();
+      await tx.insert(queueOutbox).values({
+        id: eventId,
+        eventType: 'RECORDING_ARCHIVED_FOR_DELIVERY',
+        queueName: this.deliveryQueueName,
+        payload: {
+          schemaVersion: '1.0',
+          eventId,
+          eventType: 'RECORDING_ARCHIVED_FOR_DELIVERY',
+          occurredAt: now.toISOString(),
+          taskId: recording.taskId,
+          recordingId: recording.id,
+          batchNo: summary.archived,
+          isLastBatch: summary.archived === summary.total,
+        },
+        availableAt: now,
+        createdAt: now,
+      });
       await tx
         .update(deadLetterEvents)
         .set({
           status: 'RESOLVED',
           resolvedBy: input.workerId,
-          resolvedAt: this.clock(),
+          resolvedAt: now,
           resolutionNote: '人工重放后录音归档成功',
         })
         .where(
@@ -285,7 +311,13 @@ async function refreshTaskArchiveSummary(
   tx: Transaction,
   taskId: string,
   now: Date,
-): Promise<void> {
+): Promise<{ total: number; archived: number }> {
+  await tx.execute(sql`
+    SELECT id
+    FROM platform_task
+    WHERE id = ${taskId}
+    FOR UPDATE
+  `);
   const [summary] = await tx.execute<{
     total: number;
     archived: number;
@@ -321,6 +353,7 @@ async function refreshTaskArchiveSummary(
       lockVersion: sql`${platformTasks.lockVersion} + 1`,
     })
     .where(eq(platformTasks.id, taskId));
+  return { total, archived };
 }
 
 function assertWorkerId(workerId: string): void {

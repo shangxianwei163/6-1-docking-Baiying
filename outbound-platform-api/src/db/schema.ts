@@ -19,7 +19,10 @@ import {
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
-import type { TransformConfig } from '@outbound/contracts';
+import type {
+  RecordingDownloadUrlEnvelope,
+  TransformConfig,
+} from '@outbound/contracts';
 
 export const sceneSyncStatus = pgEnum('scene_sync_status', [
   'SUCCESS',
@@ -1442,6 +1445,46 @@ export const recordingAssets = pgTable(
   ],
 );
 
+export const recordingUrlIssues = pgTable(
+  'recording_url_issue',
+  {
+    integrationClientId: uuid('integration_client_id')
+      .notNull()
+      .references(() => integrationClients.id, { onDelete: 'restrict' }),
+    sourceSystem: varchar('source_system', { length: 32 }).notNull(),
+    idempotencyKeyHash: char('idempotency_key_hash', { length: 64 }).notNull(),
+    requestFingerprint: char('request_fingerprint', { length: 64 }).notNull(),
+    recordingId: uuid('recording_id')
+      .notNull()
+      .references(() => recordingAssets.id, { onDelete: 'restrict' }),
+    requestId: varchar('request_id', { length: 128 }).notNull(),
+    responseStatus: integer('response_status').notNull(),
+    responseBody: jsonb('response_body_json')
+      .$type<RecordingDownloadUrlEnvelope>()
+      .notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.integrationClientId, table.idempotencyKeyHash],
+    }),
+    index('recording_url_issue_expiry_idx').on(table.expiresAt),
+    index('recording_url_issue_recording_idx').on(table.recordingId),
+    check(
+      'recording_url_issue_source_ck',
+      sql`${table.sourceSystem} IN ('ERP', 'CRM')`,
+    ),
+    check('recording_url_issue_status_ck', sql`${table.responseStatus} = 200`),
+    check(
+      'recording_url_issue_expiry_ck',
+      sql`${table.expiresAt} > ${table.createdAt}`,
+    ),
+  ],
+);
+
 export const deliveryEvents = pgTable(
   'delivery_event',
   {
@@ -1462,6 +1505,9 @@ export const deliveryEvents = pgTable(
     payloadObjectKey: varchar('payload_object_key', { length: 1024 }),
     status: deliveryStatus('status').notNull().default('PENDING'),
     attemptCount: integer('attempt_count').notNull().default(0),
+    retryCycleAttemptCount: integer('retry_cycle_attempt_count')
+      .notNull()
+      .default(0),
     availableAt: timestamp('available_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -1484,6 +1530,10 @@ export const deliveryEvents = pgTable(
     check(
       'delivery_event_payload_ck',
       sql`${table.payload} IS NOT NULL OR ${table.payloadObjectKey} IS NOT NULL`,
+    ),
+    check(
+      'delivery_event_attempts_ck',
+      sql`${table.attemptCount} >= 0 AND ${table.retryCycleAttemptCount} >= 0`,
     ),
   ],
 );

@@ -82,6 +82,7 @@ import {
   RecordingAccessFailure,
   type RecordingAccess,
 } from '../recording/access-service.js';
+import type { RecordingUrlReissue } from '../recording/reissue-service.js';
 export { calculateBillingMinutes } from '../callback/schema.js';
 
 type AppVariables = { requestId: string };
@@ -110,6 +111,7 @@ export type AppDependencies = {
   taskControlService?: TaskControlService;
   callbackPreviewService?: CallbackPreviewService;
   recordingAccessService?: RecordingAccess;
+  recordingUrlReissueService?: RecordingUrlReissue;
   baiyingCallbackIngress?: BaiyingCallbackIngress;
   clock?: () => Date;
   createId?: () => string;
@@ -1154,6 +1156,56 @@ export function createApp(dependencies: AppDependencies) {
     });
   });
 
+  app.post(
+    '/openapi/v1/outbound/recordings/:recordingId/download-url',
+    async (context) => {
+      const rawBody = new Uint8Array(await context.req.arrayBuffer());
+      if (rawBody.byteLength > 1_024) {
+        throw new ExternalApiFailure(
+          'INVALID_REQUEST',
+          '重新签发请求体超过 1 KiB 上限',
+          413,
+        );
+      }
+      const principal = await authenticateExternal(
+        externalAuthenticatorDependency(dependencies),
+        context.req.raw,
+        rawBody,
+      );
+      if (rawBody.byteLength > 0) {
+        throw new ExternalApiFailure(
+          'INVALID_REQUEST',
+          '录音重新签发接口不接受请求体',
+          400,
+        );
+      }
+      const idempotencyKey = context.req.header('idempotency-key')?.trim();
+      if (
+        !idempotencyKey ||
+        idempotencyKey.length < 8 ||
+        idempotencyKey.length > 128
+      ) {
+        throw new ExternalApiFailure(
+          'INVALID_REQUEST',
+          'Idempotency-Key 长度必须为 8～128 个字符',
+          400,
+        );
+      }
+      const recordingId = z.uuid().parse(context.req.param('recordingId'));
+      const result = await recordingUrlReissueDependency(dependencies).issue({
+        recordingId,
+        principal,
+        idempotencyKey,
+        requestId: context.get('requestId'),
+      });
+      if (result.replayed) {
+        context.header('Idempotent-Replayed', 'true');
+        context.header('X-Request-Id', result.body.requestId);
+      }
+      return context.json(result.body, result.status);
+    },
+  );
+
   app.notFound((context) =>
     context.req.path.startsWith('/openapi/')
       ? context.json(
@@ -1192,6 +1244,20 @@ export function createApp(dependencies: AppDependencies) {
       );
     }
     if (error instanceof RecordingAccessFailure) {
+      if (context.req.path.startsWith('/openapi/')) {
+        const code =
+          error.code === 'RECORDING_URL_INVALID'
+            ? 'INVALID_REQUEST'
+            : error.code;
+        return context.json(
+          {
+            code,
+            message: error.message,
+            requestId,
+          },
+          error.status,
+        );
+      }
       return context.json(
         {
           error: {
@@ -1417,6 +1483,17 @@ function recordingAccessDependency(dependencies: AppDependencies) {
   return dependencies.recordingAccessService;
 }
 
+function recordingUrlReissueDependency(dependencies: AppDependencies) {
+  if (!dependencies.recordingUrlReissueService) {
+    throw new ExternalApiFailure(
+      'SERVICE_TEMPORARILY_UNAVAILABLE',
+      '录音重签服务尚未配置',
+      503,
+    );
+  }
+  return dependencies.recordingUrlReissueService;
+}
+
 function recoveryDependency(dependencies: AppDependencies) {
   if (!dependencies.recoveryOperationsService) {
     throw new OperationsConsoleFailure(
@@ -1454,6 +1531,17 @@ function externalApiDependencies(dependencies: AppDependencies) {
     authenticator: dependencies.externalRequestAuthenticator,
     taskService: dependencies.outboundTaskService,
   };
+}
+
+function externalAuthenticatorDependency(dependencies: AppDependencies) {
+  if (!dependencies.externalRequestAuthenticator) {
+    throw new ExternalApiFailure(
+      'SERVICE_TEMPORARILY_UNAVAILABLE',
+      '外部身份认证服务尚未配置',
+      503,
+    );
+  }
+  return dependencies.externalRequestAuthenticator;
 }
 
 function authenticateExternal(

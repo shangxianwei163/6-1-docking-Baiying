@@ -1,6 +1,8 @@
 export type RecordingAccessAsset = {
   id: string;
   taskId: string;
+  integrationClientId: string;
+  sourceSystem: 'ERP' | 'CRM';
   archiveStatus:
     | 'PENDING'
     | 'DOWNLOADING'

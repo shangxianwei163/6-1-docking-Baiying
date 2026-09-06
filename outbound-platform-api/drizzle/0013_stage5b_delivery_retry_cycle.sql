@@ -1,0 +1,2 @@
+ALTER TABLE "delivery_event" ADD COLUMN "retry_cycle_attempt_count" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "delivery_event" ADD CONSTRAINT "delivery_event_attempts_ck" CHECK ("delivery_event"."attempt_count" >= 0 AND "delivery_event"."retry_cycle_attempt_count" >= 0);

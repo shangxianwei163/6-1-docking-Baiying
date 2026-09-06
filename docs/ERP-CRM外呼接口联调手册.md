@@ -359,6 +359,8 @@ Content-Type: application/json
 3. URL 过期或即将过期时，调用重新签发接口；不要直接重试旧 URL。
 4. 以 `recordingId` 幂等保存文件，避免重复事件产生重复附件。
 
+重新签发请求必须携带 8～128 字符的 `Idempotency-Key`。网络超时后以新 Nonce、时间戳和签名重试，但沿用原幂等键；平台返回第一次签发的 URL，并携带 `Idempotent-Replayed: true`。同一幂等键改用于其他 `recordingId` 会返回 `409 IDEMPOTENCY_CONFLICT`。若第一次 URL 已过期，需要换一个新的幂等键重新签发。
+
 ## 9. 重试决策
 
 | 结果                       | 调用方动作                              |

@@ -1,6 +1,11 @@
 import { eq } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
-import { auditLogs, callInstances, recordingAssets } from '../db/schema.js';
+import {
+  auditLogs,
+  callInstances,
+  platformTasks,
+  recordingAssets,
+} from '../db/schema.js';
 import type {
   RecordingAccessAsset,
   RecordingAccessRepository,
@@ -14,6 +19,8 @@ export class PostgresRecordingAccessRepository implements RecordingAccessReposit
       .select({
         id: recordingAssets.id,
         taskId: callInstances.taskId,
+        integrationClientId: platformTasks.integrationClientId,
+        sourceSystem: platformTasks.sourceSystem,
         archiveStatus: recordingAssets.archiveStatus,
         bucket: recordingAssets.ossBucket,
         objectKey: recordingAssets.ossObjectKey,
@@ -28,9 +35,14 @@ export class PostgresRecordingAccessRepository implements RecordingAccessReposit
         callInstances,
         eq(callInstances.id, recordingAssets.callInstanceId),
       )
+      .innerJoin(platformTasks, eq(platformTasks.id, callInstances.taskId))
       .where(eq(recordingAssets.id, recordingId))
       .limit(1);
-    return row ?? null;
+    if (!row) return null;
+    if (row.sourceSystem !== 'ERP' && row.sourceSystem !== 'CRM') {
+      throw new Error(`录音 ${recordingId} 的来源系统无效`);
+    }
+    return { ...row, sourceSystem: row.sourceSystem };
   }
 
   async recordAudit(

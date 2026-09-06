@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { and, count, countDistinct, eq, sql } from 'drizzle-orm';
-import type { TaskExecutionStatus } from '@outbound/contracts';
+import {
+  callResultBatchEventSchema,
+  taskCompletedEventSchema,
+  type SourceSystem,
+  type TaskExecutionStatus,
+} from '@outbound/contracts';
 import {
   moneyToMicros,
   microsToMoney,
@@ -16,6 +21,7 @@ import {
   callInstances,
   fundHolds,
   platformTasks,
+  queueOutbox,
   recordingAssets,
   studioAccounts,
   taskCallItems,
@@ -35,10 +41,14 @@ type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 type LockedTask = {
   id: string;
   taskNo: string;
+  sourceSystem: string;
+  mcCode: string;
   studioId: string;
   phoneCount: number;
   importSucceededCount: number;
+  callInstanceCount: number;
   customerRate: string;
+  baiyingCallJobId: string | null;
   executionStatus: TaskExecutionStatus;
   billingStatus: 'RESERVED' | 'SETTLING' | 'SETTLED' | 'FAILED';
   providerStatus: number | null;
@@ -83,6 +93,7 @@ export class PostgresBaiyingCallbackProcessor implements BaiyingCallbackProcesso
     private readonly protector: DataProtector,
     private readonly options: {
       lowBalanceThreshold?: string;
+      deliveryQueueName?: string;
       clock?: () => Date;
       createId?: () => string;
     } = {},
@@ -230,11 +241,52 @@ export class PostgresBaiyingCallbackProcessor implements BaiyingCallbackProcesso
         })
         .where(eq(platformTasks.id, task.id));
 
+      const callEventId = this.createId();
+      const expectedCalls = task.importSucceededCount || task.phoneCount;
+      const callEvent = callResultBatchEventSchema.parse({
+        schemaVersion: '1.0',
+        eventId: callEventId,
+        eventType: 'OUTBOUND_CALL_RESULT_BATCH',
+        occurredAt: now.toISOString(),
+        sourceSystem: requireSourceSystem(task.sourceSystem),
+        mcCode: task.mcCode,
+        taskNo: task.taskNo,
+        baiyingCallJobId: callback.callJobId,
+        batchNo: task.callInstanceCount + 1,
+        isLastBatch:
+          task.executionStatus === 'RECONCILING' &&
+          task.callInstanceCount + 1 >= expectedCalls,
+        calls: [
+          {
+            externalCustomerId: item.externalCustomerId,
+            platformCallId: callInstanceId,
+            baiyingCallInstanceId: callback.callInstanceId,
+            phoneMasked: `*******${item.phoneTail4}`,
+            callStatus: callback.callStatus,
+            finishStatus: callback.finishStatus,
+            durationSeconds: callback.durationSeconds,
+            billingMinutes,
+            customerCharge,
+            collectProperties: callback.collectProperties,
+          },
+        ],
+      });
+      await tx.insert(queueOutbox).values({
+        id: callEventId,
+        eventType: callEvent.eventType,
+        queueName: this.deliveryQueueName,
+        payload: callEvent,
+        availableAt: now,
+        createdAt: now,
+      });
+
       const settled = await tryFinalizeTask(
         tx,
         task.id,
         now,
         this.lowBalanceThreshold,
+        this.deliveryQueueName,
+        () => this.createId(),
       );
       return {
         callbackType: callback.callbackType,
@@ -277,6 +329,8 @@ export class PostgresBaiyingCallbackProcessor implements BaiyingCallbackProcesso
           task.id,
           now,
           this.lowBalanceThreshold,
+          this.deliveryQueueName,
+          () => this.createId(),
         );
       } else if (
         isProviderTermination(callback.callJobStatus) &&
@@ -354,6 +408,10 @@ export class PostgresBaiyingCallbackProcessor implements BaiyingCallbackProcesso
   private createId(): string {
     return this.options.createId?.() ?? randomUUID();
   }
+
+  private get deliveryQueueName(): string {
+    return this.options.deliveryQueueName ?? 'callback-delivery-queue';
+  }
 }
 
 async function storeFullRecording(
@@ -389,10 +447,17 @@ async function matchCallItem(
 ): Promise<{
   id: string;
   callStatus: 'PENDING' | NormalizedCallStatus;
+  externalCustomerId: string;
+  phoneTail4: string;
 }> {
   if (callback.platformItemId) {
     const [item] = await tx
-      .select({ id: taskCallItems.id, callStatus: taskCallItems.callStatus })
+      .select({
+        id: taskCallItems.id,
+        callStatus: taskCallItems.callStatus,
+        externalCustomerId: taskCallItems.externalCustomerId,
+        phoneTail4: taskCallItems.phoneTail4,
+      })
       .from(taskCallItems)
       .where(
         and(
@@ -423,7 +488,12 @@ async function matchCallItem(
     normalizePhone(callback.customerTelephone),
   );
   const matches = await tx
-    .select({ id: taskCallItems.id, callStatus: taskCallItems.callStatus })
+    .select({
+      id: taskCallItems.id,
+      callStatus: taskCallItems.callStatus,
+      externalCustomerId: taskCallItems.externalCustomerId,
+      phoneTail4: taskCallItems.phoneTail4,
+    })
     .from(taskCallItems)
     .where(
       and(
@@ -537,6 +607,8 @@ async function tryFinalizeTask(
   taskId: string,
   now: Date,
   lowBalanceThreshold: string,
+  deliveryQueueName: string,
+  createId: () => string,
 ): Promise<boolean> {
   const task = await lockTaskById(tx, taskId);
   if (task.executionStatus === 'COMPLETED') return true;
@@ -576,6 +648,77 @@ async function tryFinalizeTask(
       lockVersion: sql`${platformTasks.lockVersion} + 1`,
     })
     .where(eq(platformTasks.id, taskId));
+  const [completed] = await tx.execute<{
+    sourceSystem: string;
+    mcCode: string;
+    taskNo: string;
+    baiyingCallJobId: string | null;
+    phoneCount: number;
+    importedCount: number;
+    callInstanceCount: number;
+    answeredCount: number;
+    totalDurationSeconds: number;
+    billingMinutes: number;
+    customerCharge: string;
+    recordingDiscoveredCount: number;
+    recordingArchivedCount: number;
+  }>(sql`
+    SELECT
+      task.source_system AS "sourceSystem",
+      task.mc_code_snapshot AS "mcCode",
+      task.task_no AS "taskNo",
+      task.baiying_call_job_id AS "baiyingCallJobId",
+      task.phone_count AS "phoneCount",
+      task.import_succeeded_count AS "importedCount",
+      task.call_instance_count AS "callInstanceCount",
+      count(call.id) FILTER (WHERE call.call_status = 'ANSWERED')::int AS "answeredCount",
+      task.total_duration_seconds AS "totalDurationSeconds",
+      task.billing_minutes AS "billingMinutes",
+      task.customer_charge AS "customerCharge",
+      task.recording_discovered_count AS "recordingDiscoveredCount",
+      task.recording_archived_count AS "recordingArchivedCount"
+    FROM platform_task AS task
+    LEFT JOIN call_instance AS call ON call.task_id = task.id
+    WHERE task.id = ${taskId}
+    GROUP BY task.id
+  `);
+  if (!completed?.baiyingCallJobId) {
+    throw new CallbackBusinessConflictError(
+      `任务 ${taskId} 完成时缺少百应任务 ID`,
+    );
+  }
+  const eventId = createId();
+  const event = taskCompletedEventSchema.parse({
+    schemaVersion: '1.0',
+    eventId,
+    eventType: 'OUTBOUND_TASK_COMPLETED',
+    occurredAt: now.toISOString(),
+    sourceSystem: requireSourceSystem(completed.sourceSystem),
+    mcCode: completed.mcCode,
+    taskNo: completed.taskNo,
+    baiyingCallJobId: completed.baiyingCallJobId,
+    executionStatus: 'COMPLETED',
+    summary: {
+      phoneCount: completed.phoneCount,
+      importedCount: completed.importedCount,
+      callInstanceCount: completed.callInstanceCount,
+      answeredCount: completed.answeredCount,
+      totalDurationSeconds: completed.totalDurationSeconds,
+      billingMinutes: completed.billingMinutes,
+      customerCharge: completed.customerCharge,
+      recordingDiscoveredCount: completed.recordingDiscoveredCount,
+      recordingArchivedCount: completed.recordingArchivedCount,
+    },
+    completedAt: now.toISOString(),
+  });
+  await tx.insert(queueOutbox).values({
+    id: eventId,
+    eventType: event.eventType,
+    queueName: deliveryQueueName,
+    payload: event,
+    availableAt: now,
+    createdAt: now,
+  });
   return true;
 }
 
@@ -638,10 +781,14 @@ async function lockTaskByProvider(
     SELECT
       ${platformTasks.id} AS "id",
       ${platformTasks.taskNo} AS "taskNo",
+      ${platformTasks.sourceSystem} AS "sourceSystem",
+      ${platformTasks.mcCodeSnapshot} AS "mcCode",
       ${platformTasks.studioId} AS "studioId",
       ${platformTasks.phoneCount} AS "phoneCount",
       ${platformTasks.importSucceededCount} AS "importSucceededCount",
+      ${platformTasks.callInstanceCount} AS "callInstanceCount",
       ${platformTasks.customerRate} AS "customerRate",
+      ${platformTasks.baiyingCallJobId} AS "baiyingCallJobId",
       ${platformTasks.executionStatus} AS "executionStatus",
       ${platformTasks.billingStatus} AS "billingStatus",
       ${platformTasks.providerStatus} AS "providerStatus"
@@ -667,10 +814,14 @@ async function lockTaskById(
     SELECT
       ${platformTasks.id} AS "id",
       ${platformTasks.taskNo} AS "taskNo",
+      ${platformTasks.sourceSystem} AS "sourceSystem",
+      ${platformTasks.mcCodeSnapshot} AS "mcCode",
       ${platformTasks.studioId} AS "studioId",
       ${platformTasks.phoneCount} AS "phoneCount",
       ${platformTasks.importSucceededCount} AS "importSucceededCount",
+      ${platformTasks.callInstanceCount} AS "callInstanceCount",
       ${platformTasks.customerRate} AS "customerRate",
+      ${platformTasks.baiyingCallJobId} AS "baiyingCallJobId",
       ${platformTasks.executionStatus} AS "executionStatus",
       ${platformTasks.billingStatus} AS "billingStatus",
       ${platformTasks.providerStatus} AS "providerStatus"
@@ -783,4 +934,9 @@ function accountStatus(
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function requireSourceSystem(value: string): SourceSystem {
+  if (value === 'ERP' || value === 'CRM') return value;
+  throw new CallbackBusinessConflictError(`任务来源系统无效：${value}`);
 }
