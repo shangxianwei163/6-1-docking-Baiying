@@ -61,6 +61,7 @@ import {
 } from '@/lib/platform-api';
 import { Metric, PageIntro, Panel, Status } from './shared';
 import { ApiDocumentation } from './api-documentation';
+import { OutboundTaskConsole } from './outbound-task-console';
 export { MappingView } from './mapping-view';
 
 type TaskStatus = '执行中' | '执行完成' | '执行失败';
@@ -2450,10 +2451,10 @@ export function TaskView() {
       <header className="task-page-intro">
         <div>
           <h2>呼叫任务</h2>
-          <p>按创建时间倒序查看任务状态、映射快照、回传进度与录音归档结果。</p>
+          <p>直接读取平台数据库，查看任务状态、计费余额、通话结果与录音归档进度。</p>
         </div>
       </header>
-      <TaskTable className="task-list-panel" />
+      <OutboundTaskConsole />
     </div>
   );
 }

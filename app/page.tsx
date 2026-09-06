@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Activity,
   BadgeDollarSign,
@@ -29,6 +29,7 @@ import {
   StudioView,
   TaskView,
 } from '@/components/platform/views';
+import { loadOutboundTasks } from '@/lib/platform-api';
 
 export type PlatformSection =
   | '总览'
@@ -55,7 +56,7 @@ const navigation: Array<{
   { label: '字段映射', icon: FileCog },
   { label: '数据分类', icon: Tags },
   { label: '话术列表', icon: CalendarClock },
-  { label: '呼叫任务', icon: PhoneCall, hint: '5' },
+  { label: '呼叫任务', icon: PhoneCall },
   { label: '话费设置', icon: BadgeDollarSign },
   { label: '充值记录', icon: CircleDollarSign },
   { label: '接口日志', icon: Activity },
@@ -80,6 +81,21 @@ const pageMap: Record<PlatformSection, React.ReactNode> = {
 
 export default function Home() {
   const [activeSection, setActiveSection] = useState<PlatformSection>('总览');
+  const [taskCount, setTaskCount] = useState<number | null>(null);
+  const environmentLabel = import.meta.env.DEV ? '本地联调环境' : '生产环境';
+  useEffect(() => {
+    let cancelled = false;
+    void loadOutboundTasks({ pageNum: 0, pageSize: 1 })
+      .then((result) => {
+        if (!cancelled) setTaskCount(result.total);
+      })
+      .catch(() => {
+        if (!cancelled) setTaskCount(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   return (
     <div className="min-h-screen bg-[#f5f5f1] text-[#182a27]">
       <div className="app-shell">
@@ -93,22 +109,28 @@ export default function Home() {
             <p>ERP / CRM / 百应 · 统一运营后台</p>
           </div>
           <nav className="nav-list" aria-label="平台功能菜单">
-            {navigation.map(({ label, icon: Icon, hint }) => (
-              <button
-                aria-current={activeSection === label ? 'page' : undefined}
-                className={
-                  activeSection === label
-                    ? 'nav-item nav-item-active'
-                    : 'nav-item'
-                }
-                key={label}
-                onClick={() => setActiveSection(label)}
-              >
-                <Icon aria-hidden="true" />
-                <span>{label}</span>
-                {hint ? <small>{hint}</small> : null}
-              </button>
-            ))}
+            {navigation.map(({ label, icon: Icon, hint }) => {
+              const visibleHint =
+                label === '呼叫任务' && taskCount !== null
+                  ? String(taskCount)
+                  : hint;
+              return (
+                <button
+                  aria-current={activeSection === label ? 'page' : undefined}
+                  className={
+                    activeSection === label
+                      ? 'nav-item nav-item-active'
+                      : 'nav-item'
+                  }
+                  key={label}
+                  onClick={() => setActiveSection(label)}
+                >
+                  <Icon aria-hidden="true" />
+                  <span>{label}</span>
+                  {visibleHint ? <small>{visibleHint}</small> : null}
+                </button>
+              );
+            })}
           </nav>
           <div className="operator-card">
             <div className="operator-avatar">王</div>
@@ -123,9 +145,9 @@ export default function Home() {
           <header className="topbar">
             <p>
               <span className="environment-dot" />
-              生产环境 <i>›</i> 运营后台 <i>›</i> {activeSection}
+              {environmentLabel} <i>›</i> 运营后台 <i>›</i> {activeSection}
             </p>
-            <p className="topbar-right">最后同步于 2026-09-02 09:30 · CST</p>
+            <p className="topbar-right">PostgreSQL 实时读取 · CST</p>
           </header>
           {pageMap[activeSection]}
         </main>

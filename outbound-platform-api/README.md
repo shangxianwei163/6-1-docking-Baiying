@@ -89,8 +89,24 @@ npm run stage4:worker:local
 
 开发/测试环境需要撤销 0010 时，可使用 `drizzle/rollback/0010_callback_inbox_worker.down.sql`。生产环境继续采用 expand → backfill → switch → contract，不执行破坏性 down 脚本。
 
+## 阶段 6A 真实任务运营页
+
+运营后台现已使用以下内部只读接口展示 PostgreSQL 中的任务，不再使用页面内静态任务数据：
+
+- `GET /api/v1/outbound-tasks`：关键词、状态、创建日期与页码筛选，同时返回状态数量汇总。
+- `GET /api/v1/outbound-tasks/{taskNo}`：任务快照、独立状态线、失败原因、计费、实时账户余额和脱敏后的回调配置。
+- `GET /api/v1/outbound-tasks/{taskNo}/calls`：游标分页通话明细，只返回掩码手机号和已归一化结果。
+
+三个接口均要求运营后台发送 `X-Actor-Id`。前端会校验共享契约，Schema 漂移不会被静默展示。具备至少一条“呼叫中”和一条含通话的“执行完成”本地任务后，可运行浏览器回归：
+
+```bash
+npm run stage6:verify:ui
+```
+
+该脚本复用本机 Chrome，验证真实列表、完成状态筛选、任务详情、通话计费和手机号脱敏，并将检查截图写入 `/tmp`。阶段 6B 才会继续接真影楼增改、充值、价格版本、总览指标、日志、重试与死信页面。
+
 ## 当前交付范围
 
-阶段 0 契约、阶段 1 数据底座、阶段 2A 本地任务受理、阶段 3A 本地百应编排和阶段 4A 本地回调计费闭环已完成，包括配置版本、任务模型、账户账本、外部 HMAC/Nonce/限流、原子受理、可恢复的 Callback Inbox、录音发现、投递/死信、规范化话术绑定，以及 PostgreSQL Outbox 的安全领取与重试语义。
+阶段 0 契约、阶段 1 数据底座、阶段 2A 本地任务受理、阶段 3A 本地百应编排、阶段 4A 本地回调计费闭环和阶段 6A 真实任务运营页已完成，包括配置版本、任务模型、账户账本、外部 HMAC/Nonce/限流、原子受理、可恢复的 Callback Inbox、录音发现、投递/死信、规范化话术绑定，以及 PostgreSQL Outbox 的安全领取与重试语义。
 
 百应最新 OAuth v2 鉴权、公司发现、机器人/话术发现和话术变量查询已接入。可执行 `npm run baiying:check` 做只读链路检查，或执行 `npm run baiying:sync` 将真实变量快照幂等写入本地 PostgreSQL。真实 ERP/CRM 凭证、回调地址和阿里云 KMS 适配归入阶段 2B；真实百应写接口、回调联调和完成通话分页补偿归入阶段 3B/4B，当前不会拨号或调用真实 ERP/CRM。生产队列首期使用 PostgreSQL Outbox/Inbox Worker，达到方案阈值后接入阿里云 RocketMQ 5.x，事务 Outbox 与持久 Inbox 始终保留。

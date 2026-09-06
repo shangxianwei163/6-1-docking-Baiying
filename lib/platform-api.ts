@@ -1,12 +1,21 @@
 import type {
+  ConsoleTaskPage,
+  ConsoleTaskRecord,
+  ConsoleTaskStatusFilter,
   MappingDraftInput,
   MappingRule,
   MappingVersion,
+  OutboundCallPage,
   PublishMappingInput,
   RemoveMappingDraftInput,
   SceneReadiness,
   SourceSystem,
   VariableSyncRequested,
+} from '@outbound/contracts';
+import {
+  consoleTaskPageSchema,
+  consoleTaskRecordSchema,
+  outboundCallPageSchema,
 } from '@outbound/contracts';
 
 export type MappingDraftRecord = {
@@ -22,7 +31,12 @@ export type MappingDraftRecord = {
   updatedAt: string;
 };
 
-export type PlannedTaskStatus = 'DRAFT' | 'UNSTART' | 'START' | 'FINISH' | 'PAUSE';
+export type PlannedTaskStatus =
+  | 'DRAFT'
+  | 'UNSTART'
+  | 'START'
+  | 'FINISH'
+  | 'PAUSE';
 
 export type PlannedTaskCategoryBinding = {
   workflowId: string;
@@ -157,9 +171,13 @@ export type ScriptPage = {
 };
 
 type ApiEnvelope<T> = { requestId: string; data: T };
-type ApiErrorEnvelope = { error?: { code?: string; message?: string; requestId?: string } };
+type ApiErrorEnvelope = {
+  error?: { code?: string; message?: string; requestId?: string };
+};
 
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8788').replace(/\/$/, '');
+const apiBaseUrl = (
+  import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8788'
+).replace(/\/$/, '');
 const actorId = 'platform-admin';
 
 export class PlatformApiError extends Error {
@@ -179,7 +197,12 @@ export async function loadMappingCenter() {
     request<{ versions: MappingVersion[] }>('/api/v1/mapping-versions'),
     request<{ scenes: SceneReadiness[] }>('/api/v1/scenes/readiness'),
   ]);
-  return { rules: rules.rules, drafts: drafts.drafts, versions: versions.versions, scenes: scenes.scenes };
+  return {
+    rules: rules.rules,
+    drafts: drafts.drafts,
+    versions: versions.versions,
+    scenes: scenes.scenes,
+  };
 }
 
 export function saveMappingDraft(input: MappingDraftInput) {
@@ -190,24 +213,39 @@ export function saveMappingDraft(input: MappingDraftInput) {
 }
 
 export function removeMappingDraft(input: RemoveMappingDraftInput) {
-  return request<{ draft: MappingDraftRecord }>('/api/v1/mappings/drafts/remove', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
+  return request<{ draft: MappingDraftRecord }>(
+    '/api/v1/mappings/drafts/remove',
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  );
 }
 
 export function publishMappings(input: PublishMappingInput) {
-  return request<{ version: MappingVersion; rules: MappingRule[] }>('/api/v1/mappings/publish', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
+  return request<{ version: MappingVersion; rules: MappingRule[] }>(
+    '/api/v1/mappings/publish',
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  );
 }
 
 export function requestVariableSync() {
-  return request<VariableSyncRequested>('/api/v1/variable-sync-jobs', { method: 'POST' });
+  return request<VariableSyncRequested>('/api/v1/variable-sync-jobs', {
+    method: 'POST',
+  });
 }
 
-export function loadPlannedTasks(input: { name?: string; status?: PlannedTaskStatus | 'ALL'; pageNum?: number; pageSize?: number } = {}) {
+export function loadPlannedTasks(
+  input: {
+    name?: string;
+    status?: PlannedTaskStatus | 'ALL';
+    pageNum?: number;
+    pageSize?: number;
+  } = {},
+) {
   const search = new URLSearchParams({
     status: input.status ?? 'ALL',
     pageNum: String(input.pageNum ?? 0),
@@ -218,7 +256,9 @@ export function loadPlannedTasks(input: { name?: string; status?: PlannedTaskSta
 }
 
 export function loadSourceCategories(sourceSystem: SourceSystem) {
-  return request<{ categories: SourceDataCategory[] }>(`/api/v1/source-categories?sourceSystem=${sourceSystem}`);
+  return request<{ categories: SourceDataCategory[] }>(
+    `/api/v1/source-categories?sourceSystem=${sourceSystem}`,
+  );
 }
 
 export function loadDataCategories(sourceSystem: SourceSystem) {
@@ -227,10 +267,13 @@ export function loadDataCategories(sourceSystem: SourceSystem) {
 }
 
 export function syncDataCategories(sourceSystem: SourceSystem) {
-  return request<{ sourceSystem: 'ERP'; count: number; syncedAt: string }>('/api/v1/data-categories/sync', {
-    method: 'POST',
-    body: JSON.stringify({ sourceSystem }),
-  });
+  return request<{ sourceSystem: 'ERP'; count: number; syncedAt: string }>(
+    '/api/v1/data-categories/sync',
+    {
+      method: 'POST',
+      body: JSON.stringify({ sourceSystem }),
+    },
+  );
 }
 
 export function savePlannedTaskCategoryBinding(input: {
@@ -239,13 +282,23 @@ export function savePlannedTaskCategoryBinding(input: {
   sourceCategoryId: string;
   categoryPath: string;
 }) {
-  return request<{ binding: PlannedTaskCategoryBinding }>('/api/v1/planned-task-category-bindings', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
+  return request<{ binding: PlannedTaskCategoryBinding }>(
+    '/api/v1/planned-task-category-bindings',
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  );
 }
 
-export function loadScripts(input: { query?: string; robotStatus?: 0 | 1 | 2; pageNum?: number; pageSize?: number } = {}) {
+export function loadScripts(
+  input: {
+    query?: string;
+    robotStatus?: 0 | 1 | 2;
+    pageNum?: number;
+    pageSize?: number;
+  } = {},
+) {
   const search = new URLSearchParams({
     robotStatus: String(input.robotStatus ?? 0),
     pageNum: String(input.pageNum ?? 0),
@@ -289,10 +342,56 @@ export function saveLineStudioBindings(input: {
   userPhoneId: string;
   studios: Array<{ studioId: string; studioName: string }>;
 }) {
-  return request<{ bindings: LineStudioBinding[] }>('/api/v1/line-studio-bindings', {
-    method: 'POST',
-    body: JSON.stringify(input),
+  return request<{ bindings: LineStudioBinding[] }>(
+    '/api/v1/line-studio-bindings',
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function loadOutboundTasks(
+  input: {
+    keyword?: string;
+    status?: ConsoleTaskStatusFilter;
+    createdFrom?: string;
+    createdBefore?: string;
+    pageNum?: number;
+    pageSize?: number;
+  } = {},
+) {
+  const search = new URLSearchParams({
+    status: input.status ?? 'ALL',
+    pageNum: String(input.pageNum ?? 0),
+    pageSize: String(input.pageSize ?? 20),
   });
+  if (input.keyword?.trim()) search.set('keyword', input.keyword.trim());
+  if (input.createdFrom) search.set('createdFrom', input.createdFrom);
+  if (input.createdBefore) search.set('createdBefore', input.createdBefore);
+  return consoleTaskPageSchema.parse(
+    await request<unknown>(`/api/v1/outbound-tasks?${search}`),
+  ) as ConsoleTaskPage;
+}
+
+export async function loadOutboundTask(taskNo: string) {
+  const result = await request<{ task: unknown }>(
+    `/api/v1/outbound-tasks/${encodeURIComponent(taskNo)}`,
+  );
+  return consoleTaskRecordSchema.parse(result.task) as ConsoleTaskRecord;
+}
+
+export async function loadOutboundTaskCalls(
+  taskNo: string,
+  input: { cursor?: string; limit?: number } = {},
+) {
+  const search = new URLSearchParams({ limit: String(input.limit ?? 100) });
+  if (input.cursor) search.set('cursor', input.cursor);
+  return outboundCallPageSchema.parse(
+    await request<unknown>(
+      `/api/v1/outbound-tasks/${encodeURIComponent(taskNo)}/calls?${search}`,
+    ),
+  ) as OutboundCallPage;
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -307,13 +406,20 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       headers,
     });
   } catch {
-    throw new PlatformApiError('无法连接平台 API，请确认本地后端已启动', 'NETWORK_ERROR');
+    throw new PlatformApiError(
+      '无法连接平台 API，请确认本地后端已启动',
+      'NETWORK_ERROR',
+    );
   }
 
-  const payload = await response.json() as ApiEnvelope<T> | ApiErrorEnvelope;
+  const payload = (await response.json()) as ApiEnvelope<T> | ApiErrorEnvelope;
   if (!response.ok || !('data' in payload)) {
     const error = 'error' in payload ? payload.error : undefined;
-    throw new PlatformApiError(error?.message || '平台 API 请求失败', error?.code || 'API_ERROR', error?.requestId);
+    throw new PlatformApiError(
+      error?.message || '平台 API 请求失败',
+      error?.code || 'API_ERROR',
+      error?.requestId,
+    );
   }
   return payload.data;
 }

@@ -7,3 +7,4 @@ export * from './billing.js';
 export * from './recording.js';
 export * from './outbound-task.js';
 export * from './callback-event.js';
+export * from './console.js';

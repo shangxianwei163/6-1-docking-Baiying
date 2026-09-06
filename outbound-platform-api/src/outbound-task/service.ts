@@ -1,10 +1,30 @@
 import { randomUUID } from 'node:crypto';
-import { asc, and, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import {
+  asc,
+  and,
+  desc,
+  eq,
+  gt,
+  gte,
+  ilike,
+  inArray,
+  isNull,
+  lt,
+  lte,
+  or,
+  sql,
+} from 'drizzle-orm';
+import {
+  consoleTaskPageSchema,
+  consoleTaskRecordSchema,
   taskAcceptedEnvelopeSchema,
+  type ConsoleTaskPage,
+  type ConsoleTaskRecord,
+  type ConsoleTaskStatusFilter,
   type CreateOutboundTaskRequest,
   type MappingRule,
   type OutboundCallPage,
+  type SourceSystem,
   type TaskAcceptedEnvelope,
   type TaskDetail,
   type TaskDisplayStatus,
@@ -75,6 +95,19 @@ export interface OutboundTaskService {
     taskNo: string,
     input: { cursor?: string; limit: number },
   ): Promise<OutboundCallPage>;
+  listConsoleTasks(input: {
+    keyword?: string;
+    status: ConsoleTaskStatusFilter;
+    createdFrom?: Date;
+    createdBefore?: Date;
+    pageNum: number;
+    pageSize: number;
+  }): Promise<ConsoleTaskPage>;
+  getConsoleTask(taskNo: string): Promise<ConsoleTaskRecord>;
+  listConsoleCalls(
+    taskNo: string,
+    input: { cursor?: string; limit: number },
+  ): Promise<OutboundCallPage>;
 }
 
 type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
@@ -86,6 +119,37 @@ type LockedAccount = {
   activeHoldAmount: string;
   status: AccountStatus;
 };
+
+type TaskReadRow = {
+  task: typeof platformTasks.$inferSelect;
+  studioBusinessCode: string;
+  mappingVersion: number;
+  mappingVariables: string[];
+  accountBalance: string;
+  accountHold: string;
+};
+
+const runningStatuses: TaskExecutionStatus[] = [
+  'ACCEPTED',
+  'BAIYING_CREATING',
+  'BAIYING_CREATED',
+  'IMPORTING',
+  'IMPORTED',
+  'STARTING',
+  'CALLING',
+  'PAUSED',
+];
+const completedStatuses: TaskExecutionStatus[] = [
+  'CALL_COMPLETED',
+  'RECONCILING',
+  'COMPLETED',
+];
+const failedStatuses: TaskExecutionStatus[] = [
+  'CREATE_FAILED',
+  'IMPORT_FAILED',
+  'START_FAILED',
+];
+const terminatedStatuses: TaskExecutionStatus[] = ['CANCELLED', 'TERMINATED'];
 
 export class PostgresOutboundTaskService implements OutboundTaskService {
   constructor(
@@ -390,128 +454,11 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
     principal: ExternalPrincipal,
     taskNo: string,
   ): Promise<TaskDetail> {
-    const [row] = await this.db
-      .select({
-        task: platformTasks,
-        studioBusinessCode: studios.businessCode,
-        mappingVersion: mappingVersions.version,
-        accountBalance: studioAccounts.balance,
-        accountHold: studioAccounts.activeHoldAmount,
-      })
-      .from(platformTasks)
-      .innerJoin(studios, eq(studios.id, platformTasks.studioId))
-      .innerJoin(
-        mappingVersions,
-        eq(mappingVersions.id, platformTasks.mappingVersionId),
-      )
-      .innerJoin(
-        studioAccounts,
-        eq(studioAccounts.studioId, platformTasks.studioId),
-      )
-      .where(
-        and(
-          eq(platformTasks.taskNo, taskNo),
-          eq(platformTasks.integrationClientId, principal.integrationClientId),
-        ),
-      )
-      .limit(1);
+    const row = await this.readTask(taskNo, principal.integrationClientId);
     if (!row) {
       throw new ExternalApiFailure('TASK_NOT_FOUND', '任务不存在', 404);
     }
-    const [snapshot] = await this.db
-      .select({ variables: taskMappingSnapshots.variables })
-      .from(taskMappingSnapshots)
-      .where(eq(taskMappingSnapshots.taskId, row.task.id))
-      .limit(1);
-    const task = row.task;
-    const platformRateStatus = task.platformRate
-      ? task.billingStatus === 'SETTLED'
-        ? 'FINAL'
-        : 'PROVISIONAL'
-      : 'NOT_AVAILABLE';
-    return {
-      taskId: task.id,
-      taskNo: task.taskNo,
-      externalRequestId: task.externalRequestId,
-      sourceSystem: principal.sourceSystem,
-      mcCode: task.mcCodeSnapshot,
-      studioId: row.studioBusinessCode,
-      studioName: task.studioNameSnapshot,
-      taskName: task.taskName,
-      phoneCount: task.phoneCount,
-      dataCategories: task.categorySnapshot,
-      script: { robotDefId: task.robotDefId, name: task.robotName },
-      line: { userPhoneId: task.userPhoneId, name: task.lineName },
-      mapping: {
-        version: row.mappingVersion,
-        variableCount: snapshot?.variables.length ?? 0,
-      },
-      baiyingCallJobId: task.baiyingCallJobId,
-      providerStatus: {
-        code: task.providerStatus,
-        description: describeBaiyingJobStatus(task.providerStatus),
-      },
-      statuses: {
-        execution: task.executionStatus,
-        display: displayStatusFor(task.executionStatus),
-        resultDelivery: task.resultDeliveryStatus,
-        recordingArchive: task.recordingArchiveStatus,
-        recordingDelivery: task.recordingDeliveryStatus,
-        billing: task.billingStatus,
-      },
-      importSummary: {
-        requested: task.importRequestedCount,
-        succeeded: task.importSucceededCount,
-        failed: task.importFailedCount,
-        repeated: task.importRepeatedCount,
-      },
-      counts: {
-        imported: task.importSucceededCount,
-        callInstances: task.callInstanceCount,
-        recordingsDiscovered: task.recordingDiscoveredCount,
-        recordingsArchived: task.recordingArchivedCount,
-        recordingsDelivered: task.recordingDeliveredCount,
-      },
-      durations: {
-        totalSeconds: task.totalDurationSeconds,
-        billingMinutes: task.billingMinutes,
-      },
-      billing: {
-        currency: 'CNY',
-        customerRate: normalizeMoney(task.customerRate),
-        frozenMinutes: task.frozenMinutes,
-        reservedAmount: normalizeMoney(task.reservedAmount),
-        customerCharge: normalizeMoney(task.customerCharge),
-        platformRate: task.platformRate
-          ? normalizeMoney(task.platformRate)
-          : null,
-        platformRateStatus,
-        platformCost: task.platformCost
-          ? normalizeMoney(task.platformCost)
-          : null,
-        profit: task.profit ? normalizeMoney(task.profit) : null,
-        studioBalance: normalizeMoney(row.accountBalance),
-        availableBalance: subtractMoney(row.accountBalance, row.accountHold),
-        status: task.billingStatus,
-      },
-      failure: task.failureCode
-        ? {
-            stage: failureStage(task.failureStage),
-            code: task.failureCode,
-            message: task.failureMessage ?? '任务执行失败',
-            retryable: task.failureRetryable ?? false,
-            occurredAt: (task.lastRetryAt ?? task.updatedAt).toISOString(),
-          }
-        : null,
-      timestamps: {
-        createdAt: task.createdAt.toISOString(),
-        acceptedAt: task.acceptedAt.toISOString(),
-        startedAt: task.startedAt?.toISOString() ?? null,
-        providerCompletedAt: task.providerCompletedAt?.toISOString() ?? null,
-        reconciledAt: task.reconciledAt?.toISOString() ?? null,
-        closedAt: task.closedAt?.toISOString() ?? null,
-      },
-    };
+    return toTaskDetail(row);
   }
 
   async listCalls(
@@ -520,6 +467,139 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
     input: { cursor?: string; limit: number },
   ): Promise<OutboundCallPage> {
     const task = await this.getTask(principal, taskNo);
+    return this.listCallsForTask(
+      task.taskId,
+      task.statuses.resultDelivery,
+      input,
+    );
+  }
+
+  async listConsoleTasks(input: {
+    keyword?: string;
+    status: ConsoleTaskStatusFilter;
+    createdFrom?: Date;
+    createdBefore?: Date;
+    pageNum: number;
+    pageSize: number;
+  }): Promise<ConsoleTaskPage> {
+    const keyword = input.keyword?.trim();
+    const keywordCondition = keyword
+      ? or(
+          ilike(platformTasks.taskNo, containsPattern(keyword)),
+          ilike(platformTasks.taskName, containsPattern(keyword)),
+          ilike(platformTasks.studioNameSnapshot, containsPattern(keyword)),
+          ilike(platformTasks.externalRequestId, containsPattern(keyword)),
+          ilike(platformTasks.baiyingCallJobId, containsPattern(keyword)),
+        )
+      : undefined;
+    const baseWhere = and(
+      keywordCondition,
+      input.createdFrom
+        ? gte(platformTasks.createdAt, input.createdFrom)
+        : undefined,
+      input.createdBefore
+        ? lt(platformTasks.createdAt, input.createdBefore)
+        : undefined,
+    );
+    const filteredWhere = and(
+      baseWhere,
+      input.status === 'ALL'
+        ? undefined
+        : inArray(
+            platformTasks.executionStatus,
+            statusesForConsoleFilter(input.status),
+          ),
+    );
+    const [totalRow, groupedCounts, rows] = await Promise.all([
+      this.db
+        .select({ total: sql<number>`count(*)::int` })
+        .from(platformTasks)
+        .where(filteredWhere)
+        .then((result) => result[0]),
+      this.db
+        .select({
+          executionStatus: platformTasks.executionStatus,
+          total: sql<number>`count(*)::int`,
+        })
+        .from(platformTasks)
+        .where(baseWhere)
+        .groupBy(platformTasks.executionStatus),
+      this.db
+        .select({
+          task: platformTasks,
+          studioBusinessCode: studios.businessCode,
+          mappingVersion: mappingVersions.version,
+          mappingVariables: taskMappingSnapshots.variables,
+          accountBalance: studioAccounts.balance,
+          accountHold: studioAccounts.activeHoldAmount,
+        })
+        .from(platformTasks)
+        .innerJoin(studios, eq(studios.id, platformTasks.studioId))
+        .innerJoin(
+          mappingVersions,
+          eq(mappingVersions.id, platformTasks.mappingVersionId),
+        )
+        .innerJoin(
+          taskMappingSnapshots,
+          eq(taskMappingSnapshots.taskId, platformTasks.id),
+        )
+        .innerJoin(
+          studioAccounts,
+          eq(studioAccounts.studioId, platformTasks.studioId),
+        )
+        .where(filteredWhere)
+        .orderBy(desc(platformTasks.createdAt), desc(platformTasks.id))
+        .limit(input.pageSize)
+        .offset(input.pageNum * input.pageSize),
+    ]);
+    const statusCounts = {
+      all: 0,
+      running: 0,
+      completed: 0,
+      failed: 0,
+      terminated: 0,
+    };
+    for (const count of groupedCounts) {
+      const key = consoleStatusKey(count.executionStatus);
+      statusCounts[key] += count.total;
+      statusCounts.all += count.total;
+    }
+    const total = totalRow?.total ?? 0;
+    return consoleTaskPageSchema.parse({
+      total,
+      pages: Math.ceil(total / input.pageSize),
+      pageNum: input.pageNum,
+      pageSize: input.pageSize,
+      statusCounts,
+      tasks: rows.map((row) => toConsoleTask(row)),
+    });
+  }
+
+  async getConsoleTask(taskNo: string): Promise<ConsoleTaskRecord> {
+    const row = await this.readTask(taskNo);
+    if (!row) {
+      throw new ExternalApiFailure('TASK_NOT_FOUND', '任务不存在', 404);
+    }
+    return consoleTaskRecordSchema.parse(toConsoleTask(row));
+  }
+
+  async listConsoleCalls(
+    taskNo: string,
+    input: { cursor?: string; limit: number },
+  ): Promise<OutboundCallPage> {
+    const task = await this.getConsoleTask(taskNo);
+    return this.listCallsForTask(
+      task.taskId,
+      task.statuses.resultDelivery,
+      input,
+    );
+  }
+
+  private async listCallsForTask(
+    taskId: string,
+    resultDeliveryStatus: TaskDetail['statuses']['resultDelivery'],
+    input: { cursor?: string; limit: number },
+  ): Promise<OutboundCallPage> {
     const cursor = input.cursor ? decodeCallCursor(input.cursor) : null;
     const rows = await this.db
       .select({
@@ -553,7 +633,7 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
       )
       .where(
         and(
-          eq(callInstances.taskId, task.taskId),
+          eq(callInstances.taskId, taskId),
           cursor
             ? or(
                 gt(callInstances.createdAt, cursor.createdAt),
@@ -587,13 +667,52 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
           recordingId: call.recordingId,
           expiresAt: call.recordingExpiresAt?.toISOString() ?? null,
         },
-        resultDeliveryStatus: task.statuses.resultDelivery,
+        resultDeliveryStatus,
         calledAt: null,
         completedAt: call.providerOccurredAt?.toISOString() ?? null,
       })),
       nextCursor:
         hasNextPage && last ? encodeCallCursor(last.createdAt, last.id) : null,
     };
+  }
+
+  private async readTask(
+    taskNo: string,
+    integrationClientId?: string,
+  ): Promise<TaskReadRow | undefined> {
+    const [row] = await this.db
+      .select({
+        task: platformTasks,
+        studioBusinessCode: studios.businessCode,
+        mappingVersion: mappingVersions.version,
+        mappingVariables: taskMappingSnapshots.variables,
+        accountBalance: studioAccounts.balance,
+        accountHold: studioAccounts.activeHoldAmount,
+      })
+      .from(platformTasks)
+      .innerJoin(studios, eq(studios.id, platformTasks.studioId))
+      .innerJoin(
+        mappingVersions,
+        eq(mappingVersions.id, platformTasks.mappingVersionId),
+      )
+      .innerJoin(
+        taskMappingSnapshots,
+        eq(taskMappingSnapshots.taskId, platformTasks.id),
+      )
+      .innerJoin(
+        studioAccounts,
+        eq(studioAccounts.studioId, platformTasks.studioId),
+      )
+      .where(
+        and(
+          eq(platformTasks.taskNo, taskNo),
+          integrationClientId
+            ? eq(platformTasks.integrationClientId, integrationClientId)
+            : undefined,
+        ),
+      )
+      .limit(1);
+    return row;
   }
 
   private async precheck(tx: Transaction, input: AcceptTaskInput, now: Date) {
@@ -924,6 +1043,132 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
   private createId(): string {
     return this.options.createId?.() ?? randomUUID();
   }
+}
+
+function toTaskDetail(row: TaskReadRow): TaskDetail {
+  const task = row.task;
+  const platformRateStatus = task.platformRate
+    ? task.billingStatus === 'SETTLED'
+      ? 'FINAL'
+      : 'PROVISIONAL'
+    : 'NOT_AVAILABLE';
+  return {
+    taskId: task.id,
+    taskNo: task.taskNo,
+    externalRequestId: task.externalRequestId,
+    sourceSystem: task.sourceSystem as SourceSystem,
+    mcCode: task.mcCodeSnapshot,
+    studioId: row.studioBusinessCode,
+    studioName: task.studioNameSnapshot,
+    taskName: task.taskName,
+    phoneCount: task.phoneCount,
+    dataCategories: task.categorySnapshot,
+    script: { robotDefId: task.robotDefId, name: task.robotName },
+    line: { userPhoneId: task.userPhoneId, name: task.lineName },
+    mapping: {
+      version: row.mappingVersion,
+      variableCount: row.mappingVariables.length,
+    },
+    baiyingCallJobId: task.baiyingCallJobId,
+    providerStatus: {
+      code: task.providerStatus,
+      description: describeBaiyingJobStatus(task.providerStatus),
+    },
+    statuses: {
+      execution: task.executionStatus,
+      display: displayStatusFor(task.executionStatus),
+      resultDelivery: task.resultDeliveryStatus,
+      recordingArchive: task.recordingArchiveStatus,
+      recordingDelivery: task.recordingDeliveryStatus,
+      billing: task.billingStatus,
+    },
+    importSummary: {
+      requested: task.importRequestedCount,
+      succeeded: task.importSucceededCount,
+      failed: task.importFailedCount,
+      repeated: task.importRepeatedCount,
+    },
+    counts: {
+      imported: task.importSucceededCount,
+      callInstances: task.callInstanceCount,
+      recordingsDiscovered: task.recordingDiscoveredCount,
+      recordingsArchived: task.recordingArchivedCount,
+      recordingsDelivered: task.recordingDeliveredCount,
+    },
+    durations: {
+      totalSeconds: task.totalDurationSeconds,
+      billingMinutes: task.billingMinutes,
+    },
+    billing: {
+      currency: 'CNY',
+      customerRate: normalizeMoney(task.customerRate),
+      frozenMinutes: task.frozenMinutes,
+      reservedAmount: normalizeMoney(task.reservedAmount),
+      customerCharge: normalizeMoney(task.customerCharge),
+      platformRate: task.platformRate
+        ? normalizeMoney(task.platformRate)
+        : null,
+      platformRateStatus,
+      platformCost: task.platformCost
+        ? normalizeMoney(task.platformCost)
+        : null,
+      profit: task.profit ? normalizeMoney(task.profit) : null,
+      studioBalance: normalizeMoney(row.accountBalance),
+      availableBalance: subtractMoney(row.accountBalance, row.accountHold),
+      status: task.billingStatus,
+    },
+    failure: task.failureCode
+      ? {
+          stage: failureStage(task.failureStage),
+          code: task.failureCode,
+          message: task.failureMessage ?? '任务执行失败',
+          retryable: task.failureRetryable ?? false,
+          occurredAt: (task.lastRetryAt ?? task.updatedAt).toISOString(),
+        }
+      : null,
+    timestamps: {
+      createdAt: task.createdAt.toISOString(),
+      acceptedAt: task.acceptedAt.toISOString(),
+      startedAt: task.startedAt?.toISOString() ?? null,
+      providerCompletedAt: task.providerCompletedAt?.toISOString() ?? null,
+      reconciledAt: task.reconciledAt?.toISOString() ?? null,
+      closedAt: task.closedAt?.toISOString() ?? null,
+    },
+  };
+}
+
+function toConsoleTask(row: TaskReadRow): ConsoleTaskRecord {
+  const task = toTaskDetail(row);
+  return {
+    ...task,
+    mapping: { ...task.mapping, variables: row.mappingVariables },
+    callbacks: {
+      resultUrl: row.task.endpointSnapshot.resultUrl,
+      recordingUrl: row.task.endpointSnapshot.recordingUrl,
+    },
+  };
+}
+
+function statusesForConsoleFilter(
+  filter: Exclude<ConsoleTaskStatusFilter, 'ALL'>,
+): TaskExecutionStatus[] {
+  if (filter === 'RUNNING') return runningStatuses;
+  if (filter === 'COMPLETED') return completedStatuses;
+  if (filter === 'FAILED') return failedStatuses;
+  return terminatedStatuses;
+}
+
+function consoleStatusKey(
+  status: TaskExecutionStatus,
+): Exclude<keyof ConsoleTaskPage['statusCounts'], 'all'> {
+  if (completedStatuses.includes(status)) return 'completed';
+  if (failedStatuses.includes(status)) return 'failed';
+  if (terminatedStatuses.includes(status)) return 'terminated';
+  return 'running';
+}
+
+function containsPattern(value: string): string {
+  return `%${value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
 }
 
 export function displayStatusFor(
