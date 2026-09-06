@@ -1,7 +1,9 @@
 import { z } from 'zod';
 
 const configSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  NODE_ENV: z
+    .enum(['development', 'test', 'production'])
+    .default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(8788),
   DATABASE_URL: z.string().min(1),
   CONSOLE_ORIGIN: z.url().default('http://localhost:4173'),
@@ -10,11 +12,18 @@ const configSchema = z.object({
   BAIYING_COMPANY_ID: z.string().regex(/^\d+$/).optional(),
   BAIYING_APP_KEY: z.string().optional(),
   BAIYING_APP_SECRET: z.string().optional(),
-  SX_ERP_CATEGORY_URL: z.url().default('http://testmc.6161520.cn:8083/SAi/Sx_AllCategoryLevel'),
+  SX_ERP_CATEGORY_URL: z
+    .url()
+    .default('http://testmc.6161520.cn:8083/SAi/Sx_AllCategoryLevel'),
   SX_ERP_CATEGORY_TOKEN: z.string().optional(),
-  SX_ERP_CATEGORY_SYNC_INTERVAL_MS: z.coerce.number().int().min(60_000).default(21_600_000),
+  SX_ERP_CATEGORY_SYNC_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(60_000)
+    .default(21_600_000),
   VARIABLE_SYNC_QUEUE_NAME: z.string().default('variable-sync-queue'),
   TASK_ORCHESTRATION_QUEUE_NAME: z.string().default('task-orchestration-queue'),
+  CALLBACK_DELIVERY_QUEUE_NAME: z.string().default('callback-delivery-queue'),
   WORKER_SHARED_SECRET: z.string().min(24),
 });
 
@@ -30,10 +39,14 @@ const baiyingConfigSchema = z.object({
 
 export type BaiyingConfig = z.infer<typeof baiyingConfigSchema>;
 
-export function readConfig(environment: NodeJS.ProcessEnv = process.env): AppConfig {
+export function readConfig(
+  environment: NodeJS.ProcessEnv = process.env,
+): AppConfig {
   return configSchema.parse(environment);
 }
 
-export function readBaiyingConfig(environment: NodeJS.ProcessEnv = process.env): BaiyingConfig {
+export function readBaiyingConfig(
+  environment: NodeJS.ProcessEnv = process.env,
+): BaiyingConfig {
   return baiyingConfigSchema.parse(environment);
 }
