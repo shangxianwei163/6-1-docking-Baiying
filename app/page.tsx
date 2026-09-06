@@ -23,13 +23,13 @@ import {
   LineManagementView,
   MappingView,
   OverviewView,
-  RateSettingView,
-  RechargeView,
   ScriptListView,
-  StudioView,
   TaskView,
 } from '@/components/platform/views';
 import { loadOutboundTasks } from '@/lib/platform-api';
+import { PricingOperationsConsole } from '@/components/platform/pricing-operations-console';
+import { RechargeLedgerConsole } from '@/components/platform/recharge-ledger-console';
+import { StudioOperationsConsole } from '@/components/platform/studio-operations-console';
 
 export type PlatformSection =
   | '总览'
@@ -66,14 +66,14 @@ const navigation: Array<{
 
 const pageMap: Record<PlatformSection, React.ReactNode> = {
   总览: <OverviewView />,
-  影楼管理: <StudioView />,
+  影楼管理: <StudioOperationsConsole />,
   话术列表: <ScriptListView />,
   字段映射: <MappingView />,
   线路管理: <LineManagementView />,
   数据分类: <DataCategoryView />,
   呼叫任务: <TaskView />,
-  充值记录: <RechargeView />,
-  话费设置: <RateSettingView />,
+  充值记录: <RechargeLedgerConsole />,
+  话费设置: <PricingOperationsConsole />,
   操作日志: <AuditLogView />,
   接口日志: <ApiLogView />,
   API接口: <ApiInterfaceView />,

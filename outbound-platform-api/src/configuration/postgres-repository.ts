@@ -140,13 +140,17 @@ export class PostgresConfigurationRepository implements ConfigurationRepository 
       .where(
         and(
           eq(studioPricingVersions.studioId, studioId),
-          eq(studioPricingVersions.status, 'ACTIVE'),
+          inArray(studioPricingVersions.status, ['ACTIVE', 'SCHEDULED']),
           lte(studioPricingVersions.effectiveFrom, at),
           or(
             isNull(studioPricingVersions.effectiveTo),
             gt(studioPricingVersions.effectiveTo, at),
           ),
         ),
+      )
+      .orderBy(
+        desc(studioPricingVersions.effectiveFrom),
+        desc(studioPricingVersions.version),
       )
       .limit(1);
     return row ? toPricing(row) : null;

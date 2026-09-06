@@ -17,14 +17,25 @@ import { PostgresExternalRequestAuthenticator } from './openapi/authenticator.js
 import { PostgresOutboundTaskService } from './outbound-task/service.js';
 import { PostgresCallbackInboxRepository } from './callback/postgres-repository.js';
 import { BaiyingCallbackIngressService } from './callback/ingress-service.js';
+import { PostgresOperationsConsoleService } from './operations/service.js';
 
-for (const name of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) {
+for (const name of [
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'ALL_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'all_proxy',
+]) {
   Reflect.deleteProperty(process.env, name);
 }
 
 const config = readConfig();
 const database = createDatabase(config.DATABASE_URL);
-const repository = new PostgresMappingRepository(database.db, config.VARIABLE_SYNC_QUEUE_NAME);
+const repository = new PostgresMappingRepository(
+  database.db,
+  config.VARIABLE_SYNC_QUEUE_NAME,
+);
 const plannedTaskRepository = new PostgresPlannedTaskRepository(
   database.db,
   () => new Date(),
@@ -32,28 +43,35 @@ const plannedTaskRepository = new PostgresPlannedTaskRepository(
 );
 const scriptRepository = new PostgresScriptRepository(database.db);
 const lineRepository = new PostgresLineRepository(database.db);
-const erpCategoryClient = new HttpSxErpCategoryClient(config.SX_ERP_CATEGORY_URL);
+const erpCategoryClient = new HttpSxErpCategoryClient(
+  config.SX_ERP_CATEGORY_URL,
+);
 const erpCategorySyncService = config.SX_ERP_CATEGORY_TOKEN
-  ? new ErpCategorySyncService(erpCategoryClient, config.SX_ERP_CATEGORY_TOKEN, plannedTaskRepository)
+  ? new ErpCategorySyncService(
+      erpCategoryClient,
+      config.SX_ERP_CATEGORY_TOKEN,
+      plannedTaskRepository,
+    )
   : undefined;
-const localSecretProvider = config.NODE_ENV === 'production'
-  ? undefined
-  : new LocalDevelopmentSecretProvider(config.WORKER_SHARED_SECRET, config.NODE_ENV);
+const localSecretProvider =
+  config.NODE_ENV === 'production'
+    ? undefined
+    : new LocalDevelopmentSecretProvider(
+        config.WORKER_SHARED_SECRET,
+        config.NODE_ENV,
+      );
 const externalRequestAuthenticator = localSecretProvider
   ? new PostgresExternalRequestAuthenticator(database.db, localSecretProvider)
   : undefined;
-const localDataProtector = config.NODE_ENV === 'production'
-  ? undefined
-  : new LocalDataProtector(config.WORKER_SHARED_SECRET, config.NODE_ENV);
+const localDataProtector =
+  config.NODE_ENV === 'production'
+    ? undefined
+    : new LocalDataProtector(config.WORKER_SHARED_SECRET, config.NODE_ENV);
 const outboundTaskService = localSecretProvider
-  ? new PostgresOutboundTaskService(
-      database.db,
-      localDataProtector!,
-      {
-        baiyingCompanyId: config.BAIYING_COMPANY_ID ?? 'LOCAL-MOCK',
-        queueName: config.TASK_ORCHESTRATION_QUEUE_NAME,
-      },
-    )
+  ? new PostgresOutboundTaskService(database.db, localDataProtector!, {
+      baiyingCompanyId: config.BAIYING_COMPANY_ID ?? 'LOCAL-MOCK',
+      queueName: config.TASK_ORCHESTRATION_QUEUE_NAME,
+    })
   : undefined;
 const baiyingCallbackIngress = localDataProtector
   ? new BaiyingCallbackIngressService(
@@ -61,17 +79,29 @@ const baiyingCallbackIngress = localDataProtector
       localDataProtector,
     )
   : undefined;
-const baiyingTokenProvider = config.BAIYING_TOKEN_URL && config.BAIYING_APP_KEY && config.BAIYING_APP_SECRET && config.BAIYING_COMPANY_ID
-  ? new OAuthBaiyingTokenProvider({
-      tokenUrl: config.BAIYING_TOKEN_URL,
-      appKey: config.BAIYING_APP_KEY,
-      appSecret: config.BAIYING_APP_SECRET,
-      companyId: config.BAIYING_COMPANY_ID,
-    })
-  : undefined;
-const workflowClient = config.BAIYING_BASE_URL && baiyingTokenProvider
-  ? new HttpBaiyingVariableClient({ baseUrl: config.BAIYING_BASE_URL, tokenProvider: baiyingTokenProvider })
-  : undefined;
+const operationsConsoleService = new PostgresOperationsConsoleService(
+  database.db,
+  localDataProtector,
+);
+const baiyingTokenProvider =
+  config.BAIYING_TOKEN_URL &&
+  config.BAIYING_APP_KEY &&
+  config.BAIYING_APP_SECRET &&
+  config.BAIYING_COMPANY_ID
+    ? new OAuthBaiyingTokenProvider({
+        tokenUrl: config.BAIYING_TOKEN_URL,
+        appKey: config.BAIYING_APP_KEY,
+        appSecret: config.BAIYING_APP_SECRET,
+        companyId: config.BAIYING_COMPANY_ID,
+      })
+    : undefined;
+const workflowClient =
+  config.BAIYING_BASE_URL && baiyingTokenProvider
+    ? new HttpBaiyingVariableClient({
+        baseUrl: config.BAIYING_BASE_URL,
+        tokenProvider: baiyingTokenProvider,
+      })
+    : undefined;
 const app = createApp({
   mappingRepository: repository,
   plannedTaskRepository,
@@ -84,6 +114,7 @@ const app = createApp({
   erpCategorySyncService,
   externalRequestAuthenticator,
   outboundTaskService,
+  operationsConsoleService,
   baiyingCallbackIngress,
   baiyingCompanyId: config.BAIYING_COMPANY_ID,
   consoleOrigin: config.CONSOLE_ORIGIN,
@@ -91,7 +122,9 @@ const app = createApp({
 });
 
 const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
-  console.info(JSON.stringify({ level: 'info', message: 'API started', port: info.port }));
+  console.info(
+    JSON.stringify({ level: 'info', message: 'API started', port: info.port }),
+  );
 });
 
 let categorySyncTimer: NodeJS.Timeout | undefined;
@@ -99,20 +132,39 @@ async function synchronizeErpCategories(trigger: 'startup' | 'schedule') {
   if (!erpCategorySyncService) return;
   try {
     const result = await erpCategorySyncService.sync();
-    console.info(JSON.stringify({ level: 'info', message: 'ERP categories synchronized', trigger, ...result }));
+    console.info(
+      JSON.stringify({
+        level: 'info',
+        message: 'ERP categories synchronized',
+        trigger,
+        ...result,
+      }),
+    );
   } catch (error) {
-    console.error(JSON.stringify({ level: 'error', message: 'ERP category synchronization failed; cached data retained', trigger, error: error instanceof Error ? error.message : String(error) }));
+    console.error(
+      JSON.stringify({
+        level: 'error',
+        message: 'ERP category synchronization failed; cached data retained',
+        trigger,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
   }
 }
 
 if (erpCategorySyncService) {
   void synchronizeErpCategories('startup');
-  categorySyncTimer = setInterval(() => void synchronizeErpCategories('schedule'), config.SX_ERP_CATEGORY_SYNC_INTERVAL_MS);
+  categorySyncTimer = setInterval(
+    () => void synchronizeErpCategories('schedule'),
+    config.SX_ERP_CATEGORY_SYNC_INTERVAL_MS,
+  );
   categorySyncTimer.unref();
 }
 
 async function shutdown(signal: string) {
-  console.info(JSON.stringify({ level: 'info', message: 'API shutting down', signal }));
+  console.info(
+    JSON.stringify({ level: 'info', message: 'API shutting down', signal }),
+  );
   server.close();
   if (categorySyncTimer) clearInterval(categorySyncTimer);
   await database.close();

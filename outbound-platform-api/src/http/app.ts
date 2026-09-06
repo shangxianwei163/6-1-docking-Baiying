@@ -4,17 +4,25 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import {
   baiyingWorkflowStatusSchema,
+  createOperatorStudioInputSchema,
+  createTopUpInputSchema,
   consoleTaskStatusFilterSchema,
   createOutboundTaskRequestSchema,
   lineStudioBindingInputSchema,
   mappingDraftInputSchema,
   plannedTaskBindingInputSchema,
+  publishPricingInputSchema,
   publishMappingInputSchema,
   removeMappingDraftInputSchema,
   scriptBindingInputSchema,
+  setOperatorStudioStatusInputSchema,
   sourceCategoryObservationSchema,
   sourceSystemSchema,
   syncSceneObservationSchema,
+  updateOperatorStudioInputSchema,
+  ledgerEntryTypeSchema,
+  operatorAccountStatusSchema,
+  operatorStudioStatusSchema,
 } from '@outbound/contracts';
 import {
   MappingConflictError,
@@ -43,6 +51,10 @@ import {
   DEFAULT_CALLBACK_BODY_LIMIT_BYTES,
   type BaiyingCallbackIngress,
 } from '../callback/ingress-service.js';
+import {
+  OperationsConsoleFailure,
+  type OperationsConsoleService,
+} from '../operations/service.js';
 export { calculateBillingMinutes } from '../callback/schema.js';
 
 type AppVariables = { requestId: string };
@@ -62,6 +74,7 @@ export type AppDependencies = {
   erpCategorySyncService?: CategorySyncService;
   externalRequestAuthenticator?: ExternalRequestAuthenticator;
   outboundTaskService?: OutboundTaskService;
+  operationsConsoleService?: OperationsConsoleService;
   baiyingCallbackIngress?: BaiyingCallbackIngress;
   clock?: () => Date;
   createId?: () => string;
@@ -244,6 +257,121 @@ export function createApp(dependencies: AppDependencies) {
       query,
     );
     return context.json(success(context.get('requestId'), data));
+  });
+
+  app.get('/api/v1/studios', async (context) => {
+    requireActor(context.req.header('x-actor-id'));
+    const query = z
+      .object({
+        keyword: z.string().trim().max(200).optional(),
+        studioStatus: operatorStudioStatusSchema.optional(),
+        accountStatus: operatorAccountStatusSchema.optional(),
+        pageNum: z.coerce.number().int().min(0).default(0),
+        pageSize: z.coerce.number().int().min(1).max(100).default(20),
+      })
+      .parse(context.req.query());
+    const data = await operationsDependency(dependencies).listStudios({
+      ...query,
+      keyword: query.keyword || undefined,
+    });
+    return context.json(success(context.get('requestId'), data));
+  });
+
+  app.post('/api/v1/studios', async (context) => {
+    const actorId = requireActor(context.req.header('x-actor-id'));
+    const input = createOperatorStudioInputSchema.parse(
+      await context.req.json(),
+    );
+    const studio = await operationsDependency(dependencies).createStudio(
+      input,
+      actorId,
+      context.get('requestId'),
+    );
+    return context.json(success(context.get('requestId'), { studio }), 201);
+  });
+
+  app.patch('/api/v1/studios/:studioId', async (context) => {
+    const actorId = requireActor(context.req.header('x-actor-id'));
+    const studioId = z.uuid().parse(context.req.param('studioId'));
+    const input = updateOperatorStudioInputSchema.parse(
+      await context.req.json(),
+    );
+    const studio = await operationsDependency(dependencies).updateStudio(
+      studioId,
+      input,
+      actorId,
+      context.get('requestId'),
+    );
+    return context.json(success(context.get('requestId'), { studio }));
+  });
+
+  app.post('/api/v1/studios/:studioId/status', async (context) => {
+    const actorId = requireActor(context.req.header('x-actor-id'));
+    const studioId = z.uuid().parse(context.req.param('studioId'));
+    const input = setOperatorStudioStatusInputSchema.parse(
+      await context.req.json(),
+    );
+    const studio = await operationsDependency(dependencies).setStudioStatus(
+      studioId,
+      input.status,
+      input.reason,
+      actorId,
+      context.get('requestId'),
+    );
+    return context.json(success(context.get('requestId'), { studio }));
+  });
+
+  app.get('/api/v1/account-ledger', async (context) => {
+    requireActor(context.req.header('x-actor-id'));
+    const query = z
+      .object({
+        keyword: z.string().trim().max(200).optional(),
+        studioId: z.uuid().optional(),
+        entryType: ledgerEntryTypeSchema.optional(),
+        pageNum: z.coerce.number().int().min(0).default(0),
+        pageSize: z.coerce.number().int().min(1).max(100).default(20),
+      })
+      .parse(context.req.query());
+    const data = await operationsDependency(dependencies).listLedger({
+      ...query,
+      keyword: query.keyword || undefined,
+    });
+    return context.json(success(context.get('requestId'), data));
+  });
+
+  app.post('/api/v1/account-ledger/top-ups', async (context) => {
+    const actorId = requireActor(context.req.header('x-actor-id'));
+    const input = createTopUpInputSchema.parse(await context.req.json());
+    const data = await operationsDependency(dependencies).topUp(
+      input,
+      actorId,
+      context.get('requestId'),
+    );
+    return context.json(success(context.get('requestId'), data), 201);
+  });
+
+  app.get('/api/v1/pricing', async (context) => {
+    requireActor(context.req.header('x-actor-id'));
+    const data = await operationsDependency(dependencies).getPricingOverview();
+    return context.json(success(context.get('requestId'), data));
+  });
+
+  app.post('/api/v1/pricing/preview', async (context) => {
+    requireActor(context.req.header('x-actor-id'));
+    const input = publishPricingInputSchema.parse(await context.req.json());
+    const data = await operationsDependency(dependencies).previewPricing(input);
+    return context.json(success(context.get('requestId'), data));
+  });
+
+  app.post('/api/v1/pricing/publish', async (context) => {
+    const actorId = requireActor(context.req.header('x-actor-id'));
+    const input = publishPricingInputSchema.parse(await context.req.json());
+    const data = await operationsDependency(dependencies).publishPricing(
+      input,
+      actorId,
+      context.get('requestId'),
+    );
+    return context.json(success(context.get('requestId'), data), 201);
   });
 
   app.get('/api/v1/mappings', async (context) =>
@@ -793,6 +921,19 @@ export function createApp(dependencies: AppDependencies) {
 
   app.onError((error, context) => {
     const requestId = context.get('requestId');
+    if (error instanceof OperationsConsoleFailure) {
+      return context.json(
+        {
+          error: {
+            code: error.code,
+            message: error.message,
+            requestId,
+            ...(error.details ? { details: error.details } : {}),
+          },
+        },
+        error.status,
+      );
+    }
     if (error instanceof ExternalApiFailure) {
       if (!context.req.path.startsWith('/openapi/')) {
         return context.json(
@@ -928,6 +1069,17 @@ function consoleTaskDependency(dependencies: AppDependencies) {
     );
   }
   return dependencies.outboundTaskService;
+}
+
+function operationsDependency(dependencies: AppDependencies) {
+  if (!dependencies.operationsConsoleService) {
+    throw new OperationsConsoleFailure(
+      'SERVICE_TEMPORARILY_UNAVAILABLE',
+      '运营配置与账务服务尚未配置',
+      503,
+    );
+  }
+  return dependencies.operationsConsoleService;
 }
 
 function externalApiDependencies(dependencies: AppDependencies) {

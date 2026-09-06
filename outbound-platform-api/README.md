@@ -103,10 +103,29 @@ npm run stage4:worker:local
 npm run stage6:verify:ui
 ```
 
-该脚本复用本机 Chrome，验证真实列表、完成状态筛选、任务详情、通话计费和手机号脱敏，并将检查截图写入 `/tmp`。阶段 6B 才会继续接真影楼增改、充值、价格版本、总览指标、日志、重试与死信页面。
+该脚本复用本机 Chrome，验证真实列表、完成状态筛选、任务详情、通话计费和手机号脱敏，并将检查截图写入 `/tmp`。
+
+## 阶段 6B-1 影楼、账务与价格运营
+
+运营后台的“影楼管理”“充值记录”和“话费设置”已连接 PostgreSQL，不再依赖浏览器静态业务数据：
+
+- `GET/POST /api/v1/studios`、`PATCH /api/v1/studios/{studioId}` 和 `POST /api/v1/studios/{studioId}/status`：分页查询、新增、修改和启停；MC code 保持唯一，联系人电话加密保存、脱敏返回，写操作均记录审计日志。
+- `GET /api/v1/account-ledger` 和 `POST /api/v1/account-ledger/top-ups`：查询不可变账户流水，并在账户行锁内原子完成线下充值、余额更新和审计；同一幂等键不会重复入账。当前保存收款渠道、凭证号和文件名元数据，文件内容待阶段 5 接入阿里云 OSS。
+- `GET /api/v1/pricing`、`POST /api/v1/pricing/preview` 和 `POST /api/v1/pricing/publish`：读取当前/预约客户价格及供应商成本阶梯，支持统一或单影楼预览和不可变版本发布；立即版本只影响新任务，预约版本按上海时区次日零点生效。
+
+所有内部接口均要求 `X-Actor-Id`。本轮刻意不开放无审批的退款和人工调整入口，也不激活 ERP/CRM 回传端点；这两部分分别留给 6B-2 和取得真实地址、KMS 密钥后的外部联调阶段。
+
+从仓库根目录执行事务和只读页面回归：
+
+```bash
+npm run db:verify:stage6b
+npm run stage6b:verify:ui
+```
+
+数据库脚本会创建隔离影楼并在结束时清理，覆盖加密、幂等充值、即时/预约定价与审计；浏览器脚本只读取数据、打开表单和调用价格预览，不会新增、充值或发布版本，截图写入 `/tmp`。
 
 ## 当前交付范围
 
-阶段 0 契约、阶段 1 数据底座、阶段 2A 本地任务受理、阶段 3A 本地百应编排、阶段 4A 本地回调计费闭环和阶段 6A 真实任务运营页已完成，包括配置版本、任务模型、账户账本、外部 HMAC/Nonce/限流、原子受理、可恢复的 Callback Inbox、录音发现、投递/死信、规范化话术绑定，以及 PostgreSQL Outbox 的安全领取与重试语义。
+阶段 0 契约、阶段 1 数据底座、阶段 2A 本地任务受理、阶段 3A 本地百应编排、阶段 4A 本地回调计费闭环、阶段 6A 真实任务运营页和阶段 6B-1 影楼/充值/价格运营已完成，包括配置版本、任务模型、账户账本、外部 HMAC/Nonce/限流、原子受理、可恢复的 Callback Inbox、录音发现、投递/死信、规范化话术绑定，以及 PostgreSQL Outbox 的安全领取与重试语义。
 
 百应最新 OAuth v2 鉴权、公司发现、机器人/话术发现和话术变量查询已接入。可执行 `npm run baiying:check` 做只读链路检查，或执行 `npm run baiying:sync` 将真实变量快照幂等写入本地 PostgreSQL。真实 ERP/CRM 凭证、回调地址和阿里云 KMS 适配归入阶段 2B；真实百应写接口、回调联调和完成通话分页补偿归入阶段 3B/4B，当前不会拨号或调用真实 ERP/CRM。生产队列首期使用 PostgreSQL Outbox/Inbox Worker，达到方案阈值后接入阿里云 RocketMQ 5.x，事务 Outbox 与持久 Inbox 始终保留。

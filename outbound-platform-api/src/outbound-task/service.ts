@@ -780,13 +780,17 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
       .where(
         and(
           eq(studioPricingVersions.studioId, studio.id),
-          eq(studioPricingVersions.status, 'ACTIVE'),
+          inArray(studioPricingVersions.status, ['ACTIVE', 'SCHEDULED']),
           lte(studioPricingVersions.effectiveFrom, now),
           or(
             isNull(studioPricingVersions.effectiveTo),
             gt(studioPricingVersions.effectiveTo, now),
           ),
         ),
+      )
+      .orderBy(
+        desc(studioPricingVersions.effectiveFrom),
+        desc(studioPricingVersions.version),
       )
       .limit(1);
     if (!price) {

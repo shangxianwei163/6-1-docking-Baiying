@@ -2,20 +2,41 @@ import type {
   ConsoleTaskPage,
   ConsoleTaskRecord,
   ConsoleTaskStatusFilter,
+  CreateOperatorStudioInput,
+  CreateTopUpInput,
+  LedgerEntryType,
   MappingDraftInput,
   MappingRule,
   MappingVersion,
   OutboundCallPage,
+  OperatorAccountStatus,
+  OperatorLedgerPage,
+  OperatorStudio,
+  OperatorStudioPage,
+  OperatorStudioStatus,
+  OperatorTopUpResult,
+  PricingOverview,
+  PricingPreview,
+  PricingPublishResult,
+  PublishPricingInput,
   PublishMappingInput,
   RemoveMappingDraftInput,
   SceneReadiness,
   SourceSystem,
   VariableSyncRequested,
+  UpdateOperatorStudioInput,
 } from '@outbound/contracts';
 import {
   consoleTaskPageSchema,
   consoleTaskRecordSchema,
+  operatorLedgerPageSchema,
+  operatorStudioPageSchema,
+  operatorStudioSchema,
+  operatorTopUpResultSchema,
   outboundCallPageSchema,
+  pricingOverviewSchema,
+  pricingPreviewSchema,
+  pricingPublishResultSchema,
 } from '@outbound/contracts';
 
 export type MappingDraftRecord = {
@@ -392,6 +413,111 @@ export async function loadOutboundTaskCalls(
       `/api/v1/outbound-tasks/${encodeURIComponent(taskNo)}/calls?${search}`,
     ),
   ) as OutboundCallPage;
+}
+
+export async function loadOperatorStudios(
+  input: {
+    keyword?: string;
+    studioStatus?: OperatorStudioStatus;
+    accountStatus?: OperatorAccountStatus;
+    pageNum?: number;
+    pageSize?: number;
+  } = {},
+) {
+  const search = new URLSearchParams({
+    pageNum: String(input.pageNum ?? 0),
+    pageSize: String(input.pageSize ?? 20),
+  });
+  if (input.keyword?.trim()) search.set('keyword', input.keyword.trim());
+  if (input.studioStatus) search.set('studioStatus', input.studioStatus);
+  if (input.accountStatus) search.set('accountStatus', input.accountStatus);
+  return operatorStudioPageSchema.parse(
+    await request<unknown>(`/api/v1/studios?${search}`),
+  ) as OperatorStudioPage;
+}
+
+export async function createOperatorStudio(input: CreateOperatorStudioInput) {
+  const result = await request<{ studio: unknown }>('/api/v1/studios', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  return operatorStudioSchema.parse(result.studio) as OperatorStudio;
+}
+
+export async function updateOperatorStudio(
+  studioId: string,
+  input: UpdateOperatorStudioInput,
+) {
+  const result = await request<{ studio: unknown }>(
+    `/api/v1/studios/${encodeURIComponent(studioId)}`,
+    { method: 'PATCH', body: JSON.stringify(input) },
+  );
+  return operatorStudioSchema.parse(result.studio) as OperatorStudio;
+}
+
+export async function changeOperatorStudioStatus(
+  studioId: string,
+  input: { status: OperatorStudioStatus; reason: string },
+) {
+  const result = await request<{ studio: unknown }>(
+    `/api/v1/studios/${encodeURIComponent(studioId)}/status`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+  return operatorStudioSchema.parse(result.studio) as OperatorStudio;
+}
+
+export async function loadOperatorLedger(
+  input: {
+    keyword?: string;
+    studioId?: string;
+    entryType?: LedgerEntryType;
+    pageNum?: number;
+    pageSize?: number;
+  } = {},
+) {
+  const search = new URLSearchParams({
+    pageNum: String(input.pageNum ?? 0),
+    pageSize: String(input.pageSize ?? 20),
+  });
+  if (input.keyword?.trim()) search.set('keyword', input.keyword.trim());
+  if (input.studioId) search.set('studioId', input.studioId);
+  if (input.entryType) search.set('entryType', input.entryType);
+  return operatorLedgerPageSchema.parse(
+    await request<unknown>(`/api/v1/account-ledger?${search}`),
+  ) as OperatorLedgerPage;
+}
+
+export async function postOperatorTopUp(input: CreateTopUpInput) {
+  return operatorTopUpResultSchema.parse(
+    await request<unknown>('/api/v1/account-ledger/top-ups', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  ) as OperatorTopUpResult;
+}
+
+export async function loadPricingOverview() {
+  return pricingOverviewSchema.parse(
+    await request<unknown>('/api/v1/pricing'),
+  ) as PricingOverview;
+}
+
+export async function previewPricing(input: PublishPricingInput) {
+  return pricingPreviewSchema.parse(
+    await request<unknown>('/api/v1/pricing/preview', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  ) as PricingPreview;
+}
+
+export async function publishPricing(input: PublishPricingInput) {
+  return pricingPublishResultSchema.parse(
+    await request<unknown>('/api/v1/pricing/publish', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  ) as PricingPublishResult;
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {

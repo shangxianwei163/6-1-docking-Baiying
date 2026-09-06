@@ -1,0 +1,137 @@
+from pathlib import Path
+import json
+import re
+from urllib.request import ProxyHandler, Request, build_opener
+
+from playwright.sync_api import expect, sync_playwright
+
+
+CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+APP_URL = 'http://localhost:4173/'
+API_BASE_URL = 'http://127.0.0.1:8788'
+STUDIO_SCREENSHOT = Path('/tmp/outbound-platform-stage6b-studios.png')
+LEDGER_SCREENSHOT = Path('/tmp/outbound-platform-stage6b-ledger.png')
+PRICING_SCREENSHOT = Path('/tmp/outbound-platform-stage6b-pricing.png')
+
+
+def api_json(path: str) -> dict:
+    opener = build_opener(ProxyHandler({}))
+    request = Request(
+        f'{API_BASE_URL}{path}',
+        headers={'x-actor-id': 'stage6b-ui-verifier'},
+    )
+    with opener.open(request, timeout=10) as response:
+        return json.load(response)['data']
+
+
+def load_fixtures() -> tuple[dict, list[dict], dict]:
+    studio_page = api_json('/api/v1/studios?pageNum=0&pageSize=100')
+    pricing = api_json('/api/v1/pricing')
+    ledger = api_json('/api/v1/account-ledger?pageNum=0&pageSize=100')
+    if not studio_page['studios']:
+        raise AssertionError('Stage 6B UI verification needs at least one studio')
+    if not pricing['studios']:
+        raise AssertionError('Stage 6B UI verification needs studio pricing data')
+    if not pricing['supplierTiers']:
+        raise AssertionError('Stage 6B UI verification needs supplier pricing tiers')
+    return studio_page['studios'][0], ledger['items'], pricing
+
+
+def main() -> None:
+    studio, ledger_items, pricing = load_fixtures()
+    page_errors: list[str] = []
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=str(CHROME) if CHROME.exists() else None,
+            headless=True,
+        )
+        page = browser.new_page(viewport={'width': 1600, 'height': 1000})
+        page.on('pageerror', lambda error: page_errors.append(str(error)))
+        page.goto(APP_URL, wait_until='networkidle')
+
+        page.get_by_role('button', name=re.compile(r'^影楼管理')).click()
+        expect(page.get_by_text('PostgreSQL 实时数据')).to_be_visible()
+        studio_row = page.locator('tr', has_text=studio['businessCode'])
+        expect(studio_row.get_by_text(studio['name'], exact=True)).to_be_visible()
+        expect(studio_row).to_contain_text(studio['mcCode'])
+        studio_row.get_by_role(
+            'button', name=f"查看 {studio['name']} 详情"
+        ).click()
+        studio_dialog = page.get_by_role('dialog')
+        expect(studio_dialog.get_by_text(studio['name'], exact=True)).to_be_visible()
+        expect(studio_dialog.get_by_text('可用余额', exact=True)).to_be_visible()
+        expect(studio_dialog.get_by_text('ERP / CRM 回传端点', exact=True)).to_be_visible()
+        studio_dialog.locator('[data-slot="dialog-close"]').click()
+
+        page.get_by_role('button', name=re.compile(r'^新增影楼$')).click()
+        create_dialog = page.get_by_role('dialog')
+        expect(create_dialog.get_by_text('新增影楼', exact=True)).to_be_visible()
+        expect(
+            create_dialog.get_by_text(
+                '联系人手机号只写入加密字段，列表仅返回脱敏值。', exact=True
+            )
+        ).to_be_visible()
+        create_dialog.locator('[data-slot="dialog-close"]').click()
+        page.screenshot(path=str(STUDIO_SCREENSHOT), full_page=True)
+
+        page.get_by_role('button', name=re.compile(r'^充值记录')).click()
+        expect(page.get_by_text('真实账户流水', exact=True)).to_be_visible()
+        if ledger_items:
+            first_entry = ledger_items[0]
+            ledger_row = page.locator('tr', has_text=first_entry['businessKey'])
+            expect(
+                ledger_row.get_by_text(first_entry['studioName'], exact=True)
+            ).to_be_visible()
+        else:
+            expect(page.get_by_text('没有符合条件的账本流水')).to_be_visible()
+        page.get_by_role('button', name='登记线下充值').click()
+        top_up_dialog = page.get_by_role('dialog')
+        expect(top_up_dialog.get_by_text('登记线下充值', exact=True)).to_be_visible()
+        expect(
+            top_up_dialog.get_by_text(
+                re.compile(r'当前只保存凭证编号和文件名元数据')
+            )
+        ).to_be_visible()
+        page.screenshot(path=str(LEDGER_SCREENSHOT), full_page=True)
+        top_up_dialog.get_by_role('button', name='取消').click()
+        expect(top_up_dialog).not_to_be_visible()
+
+        page.get_by_role('button', name=re.compile(r'^话费设置')).click()
+        expect(page.get_by_text('影楼价格版本', exact=True)).to_be_visible()
+        first_pricing = pricing['studios'][0]
+        pricing_row = page.locator('tr', has_text=first_pricing['businessCode'])
+        expect(
+            pricing_row.get_by_text(first_pricing['name'], exact=True)
+        ).to_be_visible()
+        first_tier = pricing['supplierTiers'][0]
+        expect(page.get_by_text(first_tier['tierCode'], exact=True)).to_be_visible()
+
+        pricing_row.get_by_role('button', name='单独调价').click()
+        expect(page.get_by_role('tab', name=re.compile(r'^单影楼价格'))).to_have_attribute(
+            'aria-selected', 'true'
+        )
+        expect(page.get_by_role('button', name='单影楼价格目标')).to_contain_text(
+            first_pricing['name']
+        )
+        page.get_by_role('button', name='预览发布影响').click()
+        preview_dialog = page.get_by_role('dialog')
+        expect(preview_dialog.get_by_text('确认价格版本影响', exact=True)).to_be_visible()
+        expect(preview_dialog.get_by_text(re.compile(r'1 家影楼'))).to_be_visible()
+        expect(
+            preview_dialog.get_by_text(first_pricing['name'], exact=True)
+        ).to_be_visible()
+        page.screenshot(path=str(PRICING_SCREENSHOT), full_page=True)
+        preview_dialog.get_by_role('button', name='返回修改').click()
+        expect(preview_dialog).not_to_be_visible()
+        browser.close()
+
+    if page_errors:
+        raise AssertionError(f'Browser page errors: {page_errors}')
+    print('Stage 6B UI verification passed (read-only + pricing preview)')
+    print(f'Studio screenshot: {STUDIO_SCREENSHOT}')
+    print(f'Ledger screenshot: {LEDGER_SCREENSHOT}')
+    print(f'Pricing screenshot: {PRICING_SCREENSHOT}')
+
+
+if __name__ == '__main__':
+    main()
