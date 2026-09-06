@@ -17,11 +17,9 @@ import {
 } from 'lucide-react';
 import {
   ApiInterfaceView,
-  ApiLogView,
   DataCategoryView,
   LineManagementView,
   MappingView,
-  OverviewView,
   ScriptListView,
   TaskView,
 } from '@/components/platform/views';
@@ -30,6 +28,8 @@ import { PricingOperationsConsole } from '@/components/platform/pricing-operatio
 import { RechargeLedgerConsole } from '@/components/platform/recharge-ledger-console';
 import { StudioOperationsConsole } from '@/components/platform/studio-operations-console';
 import { AuditOperationsConsole } from '@/components/platform/audit-operations-console';
+import { OperationsOverviewConsole } from '@/components/platform/operations-overview-console';
+import { IntegrationLogConsole } from '@/components/platform/integration-log-console';
 
 export type PlatformSection =
   | '总览'
@@ -63,21 +63,6 @@ const navigation: Array<{
   { label: '操作日志', icon: BellRing },
   { label: 'API接口', icon: Braces },
 ];
-
-const pageMap: Record<PlatformSection, React.ReactNode> = {
-  总览: <OverviewView />,
-  影楼管理: <StudioOperationsConsole />,
-  话术列表: <ScriptListView />,
-  字段映射: <MappingView />,
-  线路管理: <LineManagementView />,
-  数据分类: <DataCategoryView />,
-  呼叫任务: <TaskView />,
-  充值记录: <RechargeLedgerConsole />,
-  话费设置: <PricingOperationsConsole />,
-  操作日志: <AuditOperationsConsole />,
-  接口日志: <ApiLogView />,
-  API接口: <ApiInterfaceView />,
-};
 
 export default function Home() {
   const [activeSection, setActiveSection] = useState<PlatformSection>('总览');
@@ -149,9 +134,41 @@ export default function Home() {
             </p>
             <p className="topbar-right">PostgreSQL 实时读取 · CST</p>
           </header>
-          {pageMap[activeSection]}
+          {renderSection(activeSection, setActiveSection)}
         </main>
       </div>
     </div>
   );
+}
+
+function renderSection(
+  section: PlatformSection,
+  navigate: (section: PlatformSection) => void,
+) {
+  switch (section) {
+    case '总览':
+      return <OperationsOverviewConsole onNavigate={navigate} />;
+    case '影楼管理':
+      return <StudioOperationsConsole />;
+    case '话术列表':
+      return <ScriptListView />;
+    case '字段映射':
+      return <MappingView />;
+    case '线路管理':
+      return <LineManagementView />;
+    case '数据分类':
+      return <DataCategoryView />;
+    case '呼叫任务':
+      return <TaskView />;
+    case '充值记录':
+      return <RechargeLedgerConsole />;
+    case '话费设置':
+      return <PricingOperationsConsole />;
+    case '操作日志':
+      return <AuditOperationsConsole />;
+    case '接口日志':
+      return <IntegrationLogConsole />;
+    case 'API接口':
+      return <ApiInterfaceView />;
+  }
 }

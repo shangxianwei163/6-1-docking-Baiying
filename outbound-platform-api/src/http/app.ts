@@ -28,6 +28,9 @@ import {
   operatorAccountStatusSchema,
   operatorAuditCategorySchema,
   operatorStudioStatusSchema,
+  integrationLogDirectionSchema,
+  integrationLogStatusSchema,
+  integrationLogSystemSchema,
 } from '@outbound/contracts';
 import {
   MappingConflictError,
@@ -62,6 +65,8 @@ import {
 } from '../operations/service.js';
 import type { AccountAdjustmentService } from '../operations/adjustment-service.js';
 import type { OperatorAuditService } from '../operations/audit-service.js';
+import type { OperationsOverviewService } from '../operations/overview-service.js';
+import type { IntegrationLogService } from '../operations/integration-log-service.js';
 export { calculateBillingMinutes } from '../callback/schema.js';
 
 type AppVariables = { requestId: string };
@@ -84,6 +89,8 @@ export type AppDependencies = {
   operationsConsoleService?: OperationsConsoleService;
   accountAdjustmentService?: AccountAdjustmentService;
   operatorAuditService?: OperatorAuditService;
+  operationsOverviewService?: OperationsOverviewService;
+  integrationLogService?: IntegrationLogService;
   baiyingCallbackIngress?: BaiyingCallbackIngress;
   clock?: () => Date;
   createId?: () => string;
@@ -444,6 +451,31 @@ export function createApp(dependencies: AppDependencies) {
       })
       .parse(context.req.query());
     const data = await auditDependency(dependencies).listAuditEvents({
+      ...query,
+      keyword: query.keyword || undefined,
+    });
+    return context.json(success(context.get('requestId'), data));
+  });
+
+  app.get('/api/v1/operations-overview', async (context) => {
+    requireActor(context.req.header('x-actor-id'));
+    const data = await overviewDependency(dependencies).getOverview();
+    return context.json(success(context.get('requestId'), data));
+  });
+
+  app.get('/api/v1/integration-logs', async (context) => {
+    requireActor(context.req.header('x-actor-id'));
+    const query = z
+      .object({
+        keyword: z.string().trim().max(200).optional(),
+        sourceSystem: integrationLogSystemSchema.optional(),
+        direction: integrationLogDirectionSchema.optional(),
+        status: integrationLogStatusSchema.optional(),
+        pageNum: z.coerce.number().int().min(0).default(0),
+        pageSize: z.coerce.number().int().min(1).max(100).default(20),
+      })
+      .parse(context.req.query());
+    const data = await integrationLogDependency(dependencies).listLogs({
       ...query,
       keyword: query.keyword || undefined,
     });
@@ -1178,6 +1210,28 @@ function auditDependency(dependencies: AppDependencies) {
     );
   }
   return dependencies.operatorAuditService;
+}
+
+function overviewDependency(dependencies: AppDependencies) {
+  if (!dependencies.operationsOverviewService) {
+    throw new OperationsConsoleFailure(
+      'SERVICE_TEMPORARILY_UNAVAILABLE',
+      '运营总览服务尚未配置',
+      503,
+    );
+  }
+  return dependencies.operationsOverviewService;
+}
+
+function integrationLogDependency(dependencies: AppDependencies) {
+  if (!dependencies.integrationLogService) {
+    throw new OperationsConsoleFailure(
+      'SERVICE_TEMPORARILY_UNAVAILABLE',
+      '接口日志查询服务尚未配置',
+      503,
+    );
+  }
+  return dependencies.integrationLogService;
 }
 
 function externalApiDependencies(dependencies: AppDependencies) {

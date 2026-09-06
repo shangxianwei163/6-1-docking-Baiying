@@ -18,6 +18,11 @@ import type {
   OperatorAccountStatus,
   OperatorAuditCategory,
   OperatorAuditPage,
+  OperatorOperationsOverview,
+  OperatorIntegrationLogPage,
+  IntegrationLogDirection,
+  IntegrationLogStatus,
+  IntegrationLogSystem,
   OperatorLedgerPage,
   OperatorStudio,
   OperatorStudioPage,
@@ -40,6 +45,8 @@ import {
   operatorAccountAdjustmentPageSchema,
   operatorAccountAdjustmentSchema,
   operatorAuditPageSchema,
+  operatorOperationsOverviewSchema,
+  operatorIntegrationLogPageSchema,
   operatorLedgerPageSchema,
   operatorStudioPageSchema,
   operatorStudioSchema,
@@ -570,6 +577,35 @@ export async function loadOperatorAuditLogs(
   return operatorAuditPageSchema.parse(
     await request<unknown>(`/api/v1/audit-logs?${search}`),
   ) as OperatorAuditPage;
+}
+
+export async function loadOperationsOverview() {
+  return operatorOperationsOverviewSchema.parse(
+    await request<unknown>('/api/v1/operations-overview'),
+  ) as OperatorOperationsOverview;
+}
+
+export async function loadIntegrationLogs(
+  input: {
+    keyword?: string;
+    sourceSystem?: IntegrationLogSystem;
+    direction?: IntegrationLogDirection;
+    status?: IntegrationLogStatus;
+    pageNum?: number;
+    pageSize?: number;
+  } = {},
+) {
+  const search = new URLSearchParams({
+    pageNum: String(input.pageNum ?? 0),
+    pageSize: String(input.pageSize ?? 20),
+  });
+  if (input.keyword?.trim()) search.set('keyword', input.keyword.trim());
+  if (input.sourceSystem) search.set('sourceSystem', input.sourceSystem);
+  if (input.direction) search.set('direction', input.direction);
+  if (input.status) search.set('status', input.status);
+  return operatorIntegrationLogPageSchema.parse(
+    await request<unknown>(`/api/v1/integration-logs?${search}`),
+  ) as OperatorIntegrationLogPage;
 }
 
 export async function loadPricingOverview() {

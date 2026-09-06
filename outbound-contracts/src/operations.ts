@@ -5,6 +5,7 @@ import {
   nonNegativeAmountSchema,
 } from './billing.js';
 import { sourceSystemSchema } from './envelope.js';
+import { taskExecutionStatusSchema } from './outbound-task.js';
 
 export const operatorStudioStatusSchema = z.enum(['ACTIVE', 'DISABLED']);
 export const operatorAccountStatusSchema = z.enum([
@@ -444,6 +445,152 @@ export const operatorAuditPageSchema = z.object({
   items: z.array(operatorAuditEventSchema),
 });
 
+export const operatorAttentionPrioritySchema = z.enum(['P0', 'P1', 'P2']);
+export const operatorAttentionKindSchema = z.enum([
+  'TASK',
+  'ACCOUNT',
+  'APPROVAL',
+  'DEAD_LETTER',
+]);
+export const operatorAttentionDestinationSchema = z.enum([
+  'TASKS',
+  'STUDIOS',
+  'ADJUSTMENTS',
+  'INTEGRATION_LOGS',
+]);
+
+export const operatorOverviewAttentionItemSchema = z.object({
+  id: z.string().min(1).max(256),
+  kind: operatorAttentionKindSchema,
+  priority: operatorAttentionPrioritySchema,
+  title: z.string().min(1).max(300),
+  description: z.string().min(1).max(1000),
+  objectId: z.string().min(1).max(256),
+  destination: operatorAttentionDestinationSchema,
+  actionLabel: z.string().min(1).max(64),
+  occurredAt: z.iso.datetime({ offset: true }),
+});
+
+export const operatorOverviewRecentTaskSchema = z.object({
+  id: z.uuid(),
+  taskNo: z.string().regex(/^PT-\d{8}-\d{5,}$/),
+  taskName: z.string().min(1).max(200),
+  studioName: z.string().min(1).max(200),
+  sourceSystem: sourceSystemSchema,
+  executionStatus: taskExecutionStatusSchema,
+  phoneCount: z.number().int().positive(),
+  callInstanceCount: z.number().int().nonnegative(),
+  customerCharge: nonNegativeAmountSchema,
+  createdAt: z.iso.datetime({ offset: true }),
+  updatedAt: z.iso.datetime({ offset: true }),
+});
+
+export const operatorOperationsOverviewSchema = z.object({
+  generatedAt: z.iso.datetime({ offset: true }),
+  businessDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  tasks: z.object({
+    all: z.number().int().nonnegative(),
+    today: z.number().int().nonnegative(),
+    todayErp: z.number().int().nonnegative(),
+    todayCrm: z.number().int().nonnegative(),
+    running: z.number().int().nonnegative(),
+    runningPhoneCount: z.number().int().nonnegative(),
+    completedToday: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+  }),
+  finance: z.object({
+    totalBalance: decimalAmountSchema,
+    totalActiveHold: nonNegativeAmountSchema,
+    totalAvailable: decimalAmountSchema,
+    lowBalanceStudios: z.number().int().nonnegative(),
+    overdueStudios: z.number().int().nonnegative(),
+  }),
+  pipeline: z.object({
+    callbackPending: z.number().int().nonnegative(),
+    callbackStale: z.number().int().nonnegative(),
+    outboxPending: z.number().int().nonnegative(),
+    outboxStale: z.number().int().nonnegative(),
+    deliveryFailed: z.number().int().nonnegative(),
+    openDeadLetters: z.number().int().nonnegative(),
+    pendingApprovals: z.number().int().nonnegative(),
+  }),
+  attention: z.object({
+    total: z.number().int().nonnegative(),
+    highPriority: z.number().int().nonnegative(),
+    items: z.array(operatorOverviewAttentionItemSchema).max(12),
+  }),
+  callTrend: z.object({
+    total: z.number().int().nonnegative(),
+    answered: z.number().int().nonnegative(),
+    points: z.array(
+      z.object({
+        hour: z.number().int().min(0).max(23),
+        total: z.number().int().nonnegative(),
+        answered: z.number().int().nonnegative(),
+      }),
+    ),
+  }),
+  recentTasks: z.array(operatorOverviewRecentTaskSchema).max(8),
+});
+
+export const integrationLogSystemSchema = z.enum(['ERP', 'CRM', 'BAIYING']);
+export const integrationLogDirectionSchema = z.enum(['INBOUND', 'OUTBOUND']);
+export const integrationLogStatusSchema = z.enum([
+  'PENDING',
+  'SUCCEEDED',
+  'FAILED',
+  'UNKNOWN',
+]);
+export const integrationLogCategorySchema = z.enum([
+  'TASK_INTAKE',
+  'PROVIDER_OPERATION',
+  'CALLBACK',
+  'DELIVERY',
+]);
+
+export const operatorIntegrationLogSchema = z.object({
+  id: z.string().min(1).max(600),
+  requestId: z.string().min(1).max(512),
+  sourceSystem: integrationLogSystemSchema,
+  direction: integrationLogDirectionSchema,
+  category: integrationLogCategorySchema,
+  operationCode: z.string().min(1).max(256),
+  operationLabel: z.string().min(1).max(300),
+  endpointLabel: z.string().min(1).max(300),
+  taskNo: z
+    .string()
+    .regex(/^PT-\d{8}-\d{5,}$/)
+    .nullable(),
+  status: integrationLogStatusSchema,
+  responseStatus: z.number().int().min(100).max(599).nullable(),
+  durationMs: z.number().int().nonnegative().nullable(),
+  attemptNo: z.number().int().nonnegative().nullable(),
+  errorCode: z.string().max(256).nullable(),
+  errorMessage: z.string().max(2000).nullable(),
+  detail: z.record(z.string(), auditDetailValueSchema),
+  occurredAt: z.iso.datetime({ offset: true }),
+});
+
+export const operatorIntegrationLogSummarySchema = z.object({
+  all: z.number().int().nonnegative(),
+  succeeded: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  pending: z.number().int().nonnegative(),
+  unknown: z.number().int().nonnegative(),
+  inbound: z.number().int().nonnegative(),
+  outbound: z.number().int().nonnegative(),
+  averageDurationMs: z.number().int().nonnegative().nullable(),
+});
+
+export const operatorIntegrationLogPageSchema = z.object({
+  total: z.number().int().nonnegative(),
+  pages: z.number().int().nonnegative(),
+  pageNum: z.number().int().nonnegative(),
+  pageSize: z.number().int().positive().max(100),
+  summary: operatorIntegrationLogSummarySchema,
+  items: z.array(operatorIntegrationLogSchema),
+});
+
 export type OperatorStudio = z.infer<typeof operatorStudioSchema>;
 export type OperatorStudioPage = z.infer<typeof operatorStudioPageSchema>;
 export type CreateOperatorStudioInput = z.infer<
@@ -490,3 +637,33 @@ export type PricingPublishResult = z.infer<typeof pricingPublishResultSchema>;
 export type OperatorAuditCategory = z.infer<typeof operatorAuditCategorySchema>;
 export type OperatorAuditEvent = z.infer<typeof operatorAuditEventSchema>;
 export type OperatorAuditPage = z.infer<typeof operatorAuditPageSchema>;
+export type OperatorAttentionPriority = z.infer<
+  typeof operatorAttentionPrioritySchema
+>;
+export type OperatorAttentionKind = z.infer<typeof operatorAttentionKindSchema>;
+export type OperatorAttentionDestination = z.infer<
+  typeof operatorAttentionDestinationSchema
+>;
+export type OperatorOverviewAttentionItem = z.infer<
+  typeof operatorOverviewAttentionItemSchema
+>;
+export type OperatorOverviewRecentTask = z.infer<
+  typeof operatorOverviewRecentTaskSchema
+>;
+export type OperatorOperationsOverview = z.infer<
+  typeof operatorOperationsOverviewSchema
+>;
+export type IntegrationLogSystem = z.infer<typeof integrationLogSystemSchema>;
+export type IntegrationLogDirection = z.infer<
+  typeof integrationLogDirectionSchema
+>;
+export type IntegrationLogStatus = z.infer<typeof integrationLogStatusSchema>;
+export type IntegrationLogCategory = z.infer<
+  typeof integrationLogCategorySchema
+>;
+export type OperatorIntegrationLog = z.infer<
+  typeof operatorIntegrationLogSchema
+>;
+export type OperatorIntegrationLogPage = z.infer<
+  typeof operatorIntegrationLogPageSchema
+>;

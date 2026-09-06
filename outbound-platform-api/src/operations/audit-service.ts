@@ -16,6 +16,7 @@ import {
 } from '@outbound/contracts';
 import type { Database } from '../db/client.js';
 import { auditLogs } from '../db/schema.js';
+import { sanitizeOperatorDetail } from './redaction.js';
 
 const financialActions = [
   'ACCOUNT_TOP_UP_POSTED',
@@ -175,7 +176,7 @@ function toOperatorAuditEvent(
     objectType: row.objectType,
     objectId: row.objectId,
     objectLabel: objectLabel(row.objectType, row.objectId, row.detail),
-    detail: sanitizeDetail(row.detail),
+    detail: sanitizeOperatorDetail(row.detail),
     occurredAt: row.occurredAt.toISOString(),
   };
 }
@@ -221,43 +222,6 @@ function objectLabel(
       typeof value === 'string' && Boolean(value.trim()),
   );
   return `${humanizeAction(objectType)} · ${preferred ?? objectId}`;
-}
-
-function sanitizeDetail(detail: Record<string, unknown>) {
-  return Object.fromEntries(
-    Object.entries(detail).map(([key, value]) => [
-      key,
-      sensitiveKey(key) ? '[已脱敏]' : displayValue(sanitizeNested(value)),
-    ]),
-  );
-}
-
-function sanitizeNested(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sanitizeNested);
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([key, nestedValue]) => [
-      key,
-      sensitiveKey(key) ? '[已脱敏]' : sanitizeNested(nestedValue),
-    ]),
-  );
-}
-
-function sensitiveKey(key: string) {
-  return /(secret|password|token|authorization|cookie|cipher|phone)/i.test(key);
-}
-
-function displayValue(value: unknown): string | number | boolean | null {
-  if (
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'number' ||
-    typeof value === 'boolean'
-  ) {
-    return value;
-  }
-  const serialized = JSON.stringify(value) ?? '[无法显示]';
-  return serialized.length > 500 ? `${serialized.slice(0, 497)}…` : serialized;
 }
 
 function humanizeAction(value: string) {
