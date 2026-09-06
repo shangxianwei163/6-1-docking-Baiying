@@ -24,6 +24,30 @@ const configSchema = z.object({
   VARIABLE_SYNC_QUEUE_NAME: z.string().default('variable-sync-queue'),
   TASK_ORCHESTRATION_QUEUE_NAME: z.string().default('task-orchestration-queue'),
   CALLBACK_DELIVERY_QUEUE_NAME: z.string().default('callback-delivery-queue'),
+  RECORDING_LOCAL_ROOT: z.string().min(1).default('.local-recordings'),
+  RECORDING_LOCAL_BUCKET: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9-]{1,62}$/)
+    .default('local-recordings'),
+  RECORDING_PUBLIC_BASE_URL: z.url().default('http://127.0.0.1:8788'),
+  RECORDING_DOWNLOAD_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(60)
+    .max(3_600)
+    .default(900),
+  RECORDING_MAX_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1_024)
+    .max(1_073_741_824)
+    .default(104_857_600),
+  RECORDING_RETENTION_DAYS: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(3_650)
+    .default(180),
   WORKER_SHARED_SECRET: z.string().min(24),
 });
 

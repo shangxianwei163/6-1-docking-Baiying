@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { resolve } from 'node:path';
 import { serve } from '@hono/node-server';
 import { readConfig } from './config.js';
 import { createDatabase } from './db/client.js';
@@ -28,6 +29,10 @@ import {
   PostgresTaskControlService,
 } from './operations/task-control-service.js';
 import { SafeCallbackPreviewService } from './operations/callback-preview-service.js';
+import { RecordingAccessService } from './recording/access-service.js';
+import { LocalRecordingObjectStore } from './recording/local-object-store.js';
+import { PostgresRecordingAccessRepository } from './recording/postgres-access-repository.js';
+import { LocalRecordingUrlSigner } from './recording/url-signer.js';
 
 for (const name of [
   'HTTP_PROXY',
@@ -113,6 +118,18 @@ const taskControlService =
         { taskQueueName: config.TASK_ORCHESTRATION_QUEUE_NAME },
       );
 const callbackPreviewService = new SafeCallbackPreviewService();
+const recordingAccessService = localDataProtector
+  ? new RecordingAccessService(
+      new PostgresRecordingAccessRepository(database.db),
+      new LocalRecordingObjectStore(resolve(config.RECORDING_LOCAL_ROOT)),
+      new LocalRecordingUrlSigner(config.WORKER_SHARED_SECRET, config.NODE_ENV),
+      {
+        publicBaseUrl: config.RECORDING_PUBLIC_BASE_URL,
+        ttlSeconds: config.RECORDING_DOWNLOAD_TTL_SECONDS,
+        environment: config.NODE_ENV,
+      },
+    )
+  : undefined;
 const baiyingTokenProvider =
   config.BAIYING_TOKEN_URL &&
   config.BAIYING_APP_KEY &&
@@ -152,6 +169,7 @@ const app = createApp({
   recoveryOperationsService,
   taskControlService,
   callbackPreviewService,
+  recordingAccessService,
   baiyingCallbackIngress,
   baiyingCompanyId: config.BAIYING_COMPANY_ID,
   consoleOrigin: config.CONSOLE_ORIGIN,

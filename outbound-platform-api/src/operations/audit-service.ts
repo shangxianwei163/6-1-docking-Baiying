@@ -70,6 +70,8 @@ const actionLabels: Record<string, string> = {
   TASK_RETRY_REQUESTED: '提交任务安全重试',
   DEAD_LETTER_REPLAY_REQUESTED: '重放异常事件',
   DEAD_LETTER_IGNORED: '忽略异常事件',
+  RECORDING_DOWNLOAD_URL_ISSUED: '签发录音下载地址',
+  RECORDING_DOWNLOAD_OPENED: '访问归档录音',
 };
 
 export type AuditListInput = {

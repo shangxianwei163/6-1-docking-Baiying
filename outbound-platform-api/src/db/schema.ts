@@ -1405,12 +1405,19 @@ export const recordingAssets = pgTable(
       .notNull()
       .default('PENDING'),
     downloadAttempts: integer('download_attempts').notNull().default(0),
+    availableAt: timestamp('available_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lockedAt: timestamp('locked_at', { withTimezone: true }),
+    lockedBy: varchar('locked_by', { length: 128 }),
+    deadLetteredAt: timestamp('dead_lettered_at', { withTimezone: true }),
     lastError: text('last_error'),
     discoveredAt: timestamp('discovered_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
     expiresAt: timestamp('expires_at', { withTimezone: true }),
+    retentionUntil: timestamp('retention_until', { withTimezone: true }),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
   },
   (table) => [
@@ -1423,8 +1430,11 @@ export const recordingAssets = pgTable(
       .where(sql`${table.ossObjectKey} IS NOT NULL`),
     index('recording_asset_archive_idx').on(
       table.archiveStatus,
+      table.deadLetteredAt,
+      table.availableAt,
       table.discoveredAt,
     ),
+    index('recording_asset_lock_idx').on(table.lockedAt, table.lockedBy),
     check(
       'recording_asset_size_ck',
       sql`${table.sizeBytes} IS NULL OR ${table.sizeBytes} >= 0`,

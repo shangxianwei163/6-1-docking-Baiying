@@ -489,10 +489,29 @@ async function resetDeadLetterSource(
       .set({
         archiveStatus: 'PENDING',
         downloadAttempts: 0,
+        availableAt: now,
+        lockedAt: null,
+        lockedBy: null,
+        deadLetteredAt: null,
         lastError: null,
       })
       .where(eq(recordingAssets.id, sourceId))
       .returning({ id: recordingAssets.id });
+    if (changed.length) {
+      await tx.execute(sql`
+        UPDATE platform_task AS task
+        SET
+          recording_archive_status = 'PENDING',
+          updated_at = ${now.toISOString()}::timestamptz,
+          lock_version = task.lock_version + 1
+        WHERE task.id = (
+          SELECT call.task_id
+          FROM recording_asset AS recording
+          INNER JOIN call_instance AS call ON call.id = recording.call_instance_id
+          WHERE recording.id = ${sourceId}
+        )
+      `);
+    }
   } else {
     changed = await tx
       .update(deliveryEvents)

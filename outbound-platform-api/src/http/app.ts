@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
+import { Readable } from 'node:stream';
 import { z } from 'zod';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -77,6 +78,10 @@ import type { IntegrationLogService } from '../operations/integration-log-servic
 import type { RecoveryOperationsService } from '../operations/recovery-service.js';
 import type { TaskControlService } from '../operations/task-control-service.js';
 import type { CallbackPreviewService } from '../operations/callback-preview-service.js';
+import {
+  RecordingAccessFailure,
+  type RecordingAccess,
+} from '../recording/access-service.js';
 export { calculateBillingMinutes } from '../callback/schema.js';
 
 type AppVariables = { requestId: string };
@@ -104,6 +109,7 @@ export type AppDependencies = {
   recoveryOperationsService?: RecoveryOperationsService;
   taskControlService?: TaskControlService;
   callbackPreviewService?: CallbackPreviewService;
+  recordingAccessService?: RecordingAccess;
   baiyingCallbackIngress?: BaiyingCallbackIngress;
   clock?: () => Date;
   createId?: () => string;
@@ -128,7 +134,11 @@ export function createApp(dependencies: AppDependencies) {
         'X-Signature',
         'Idempotency-Key',
       ],
-      exposeHeaders: ['X-Request-Id', 'Idempotent-Replayed'],
+      exposeHeaders: [
+        'X-Request-Id',
+        'Idempotent-Replayed',
+        'X-Recording-Sha256',
+      ],
       credentials: true,
     }),
   );
@@ -286,6 +296,47 @@ export function createApp(dependencies: AppDependencies) {
       query,
     );
     return context.json(success(context.get('requestId'), data));
+  });
+
+  app.post('/api/v1/recordings/:recordingId/download-url', async (context) => {
+    const actorId = requireActor(context.req.header('x-actor-id'));
+    const recordingId = z.uuid().parse(context.req.param('recordingId'));
+    const data = await recordingAccessDependency(dependencies).issueOperatorUrl(
+      recordingId,
+      actorId,
+      context.get('requestId'),
+    );
+    return context.json(success(context.get('requestId'), data));
+  });
+
+  app.get('/api/v1/recordings/:recordingId/content', async (context) => {
+    const recordingId = z.uuid().parse(context.req.param('recordingId'));
+    const query = z
+      .object({
+        exp: z.coerce.number().int(),
+        aud: z.string().regex(/^[a-f0-9]{64}$/),
+        sig: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .parse(context.req.query());
+    const opened = await recordingAccessDependency(dependencies).openSignedUrl(
+      recordingId,
+      {
+        audience: query.aud,
+        expiresAtEpochSeconds: query.exp,
+        signature: query.sig,
+        requestId: context.get('requestId'),
+      },
+    );
+    const body = Readable.toWeb(Readable.from(opened.body)) as ReadableStream;
+    return context.body(body, 200, {
+      'Cache-Control': 'private, no-store',
+      'Content-Disposition': `inline; filename="recording-${recordingId}.audio"`,
+      'Content-Length': opened.sizeBytes.toString(),
+      'Content-Type': opened.contentType,
+      'Referrer-Policy': 'no-referrer',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Recording-Sha256': opened.sha256,
+    });
   });
 
   app.post('/api/v1/outbound-tasks/:taskNo/commands', async (context) => {
@@ -1140,6 +1191,18 @@ export function createApp(dependencies: AppDependencies) {
         error.status,
       );
     }
+    if (error instanceof RecordingAccessFailure) {
+      return context.json(
+        {
+          error: {
+            code: error.code,
+            message: error.message,
+            requestId,
+          },
+        },
+        error.status,
+      );
+    }
     if (error instanceof ExternalApiFailure) {
       if (!context.req.path.startsWith('/openapi/')) {
         return context.json(
@@ -1341,6 +1404,17 @@ function callbackPreviewDependency(dependencies: AppDependencies) {
     );
   }
   return dependencies.callbackPreviewService;
+}
+
+function recordingAccessDependency(dependencies: AppDependencies) {
+  if (!dependencies.recordingAccessService) {
+    throw new RecordingAccessFailure(
+      'RECORDING_OBJECT_UNAVAILABLE',
+      '录音访问服务尚未配置',
+      503,
+    );
+  }
+  return dependencies.recordingAccessService;
 }
 
 function recoveryDependency(dependencies: AppDependencies) {

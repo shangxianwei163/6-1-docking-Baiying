@@ -24,6 +24,7 @@
 10. 另开终端执行 `npm run stage2:send:erp` 或 `npm run stage2:send:crm`，发送一条签名后的本地模拟任务。
 11. 另开终端执行 `npm run baiying:worker --workspace @outbound/platform-api`，消费页面“同步百应变量”写入的本地 outbox 任务。
 12. 执行 `npm run db:verify:stage4` 验证本地回调、幂等计费和结算闭环；需要持续消费 Inbox 时运行 `npm run stage4:worker:local`。
+13. 执行 `npm run db:verify:stage5a` 验证本地录音归档、重试、死信和重放；需要持续消费模拟录音时运行 `npm run stage5:worker:local`。
 
 本机实际密码保存在忽略提交的 `.env.postgres.local` 和 `outbound-platform-api/.env`，示例文件不包含真实密钥。
 
@@ -88,6 +89,27 @@ npm run stage4:worker:local
 ```
 
 开发/测试环境需要撤销 0010 时，可使用 `drizzle/rollback/0010_callback_inbox_worker.down.sql`。生产环境继续采用 expand → backfill → switch → contract，不执行破坏性 down 脚本。
+
+## 阶段 5A 本地录音归档闭环
+
+阶段 5A 已实现不依赖真实百应、ERP/CRM、OSS 或 KMS 的录音归档底座：
+
+- Recording Worker 使用 PostgreSQL `FOR UPDATE SKIP LOCKED` 领取任务，并通过租约超时恢复、有界退避、死信和异常中心原位重放保证可恢复性。
+- 真实 HTTP 下载组件只接受精确 HTTPS 域名允许列表；DNS 全地址和每次重定向都会重新校验，并将公网 IP 固定到 TLS 请求，防止 DNS 重绑定和 SSRF。
+- 下载过程校验 MIME、音频文件头、Content-Length、实际字节数和文件大小上限，边传输边计算 SHA-256，不把完整录音载入内存。
+- 本地对象存储只允许安全对象键，以同目录临时文件原子落盘；对象键只含内部 UUID，不含手机号、姓名或临时 URL。
+- 归档成功后保存内容类型、大小、SHA-256、归档时间和默认 180 天保留期限，并更新任务的发现/归档计数。
+- `POST /api/v1/recordings/{recordingId}/download-url` 为已识别操作人重新签发默认 15 分钟地址；实际下载地址只暴露录音 UUID、不可逆调用方令牌、过期时间和 HMAC，不暴露 Bucket 或对象键，打开记录写入审计。
+
+本地验收和持续 Worker 均使用 `recording.mock.invalid` 的确定性合成音频，不发起网络请求：
+
+```bash
+npm run db:migrate
+npm run db:verify:stage5a
+npm run stage5:worker:local
+```
+
+`NODE_ENV=production` 会拒绝启动本地录音 Worker。0012 的开发/测试回滚脚本为 `drizzle/rollback/0012_recording_archive_worker.down.sql`；生产环境不执行破坏性 down 脚本。阿里云 OSS 私有 Bucket、SSE-KMS、面向 ERP/CRM 的鉴权重签接口和事件回传属于阶段 5B，在真实配置到位前不会进入生产启动路径。
 
 ## 阶段 6A 真实任务运营页
 
