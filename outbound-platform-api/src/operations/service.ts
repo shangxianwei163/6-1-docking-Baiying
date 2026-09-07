@@ -614,6 +614,23 @@ export class PostgresOperationsConsoleService implements OperationsConsoleServic
         (!tier.effectiveTo || tier.effectiveTo > now),
     );
     const scheduled = rows.find((tier) => tier.effectiveFrom > now);
+    const activeRows = rows.filter(
+      (tier) =>
+        tier.effectiveFrom <= now &&
+        (!tier.effectiveTo || tier.effectiveTo > now),
+    );
+    const delta = supplierPricingDelta(tiers, activeRows);
+    if (
+      !scheduled &&
+      delta.changed.length === 0 &&
+      delta.removed.length === 0
+    ) {
+      throw new OperationsConsoleFailure(
+        'SUPPLIER_PRICING_UNCHANGED',
+        '供应价格没有发生变化，无需发布新版本',
+        409,
+      );
+    }
     return supplierPricingPreviewSchema.parse({
       effectiveFrom: effectiveFrom.toISOString(),
       tierCount: tiers.length,
@@ -654,6 +671,19 @@ export class PostgresOperationsConsoleService implements OperationsConsoleServic
           ),
         );
 
+      const delta = supplierPricingDelta(tiers, activeRows);
+      if (
+        !scheduledRows.length &&
+        delta.changed.length === 0 &&
+        delta.removed.length === 0
+      ) {
+        throw new OperationsConsoleFailure(
+          'SUPPLIER_PRICING_UNCHANGED',
+          '供应价格没有发生变化，无需发布新版本',
+          409,
+        );
+      }
+
       if (scheduledRows.length) {
         await tx.delete(supplierPricingTiers).where(
           inArray(
@@ -665,7 +695,7 @@ export class PostgresOperationsConsoleService implements OperationsConsoleServic
       if (activeRows.length) {
         await tx
           .update(supplierPricingTiers)
-          .set({ effectiveTo: effectiveFrom })
+          .set({ effectiveTo: null })
           .where(
             inArray(
               supplierPricingTiers.id,
@@ -674,27 +704,46 @@ export class PostgresOperationsConsoleService implements OperationsConsoleServic
           );
       }
 
-      const published = await tx
-        .insert(supplierPricingTiers)
-        .values(
-          tiers.map((tier) => ({
-            id: this.createId(),
-            tierCode: tier.tierCode,
-            name: tier.name,
-            minMonthlyMinutes: BigInt(tier.minMonthlyMinutes),
-            maxMonthlyMinutes:
-              tier.maxMonthlyMinutes === null
-                ? null
-                : BigInt(tier.maxMonthlyMinutes),
-            voiceRate: tier.voiceRate,
-            smsRate: tier.smsRate,
-            effectiveFrom,
-            effectiveTo: null,
-            publishedBy: actorId,
-            publishedAt: now,
-          })),
-        )
-        .returning();
+      const rowsToClose = activeRows.filter(
+        (row) =>
+          delta.removed.includes(row.tierCode) ||
+          delta.changed.some((tier) => tier.tierCode === row.tierCode),
+      );
+      if (rowsToClose.length) {
+        await tx
+          .update(supplierPricingTiers)
+          .set({ effectiveTo: effectiveFrom })
+          .where(
+            inArray(
+              supplierPricingTiers.id,
+              rowsToClose.map((tier) => tier.id),
+            ),
+          );
+      }
+
+      const published = delta.changed.length
+        ? await tx
+            .insert(supplierPricingTiers)
+            .values(
+              delta.changed.map((tier) => ({
+                id: this.createId(),
+                tierCode: tier.tierCode,
+                name: tier.name,
+                minMonthlyMinutes: BigInt(tier.minMonthlyMinutes),
+                maxMonthlyMinutes:
+                  tier.maxMonthlyMinutes === null
+                    ? null
+                    : BigInt(tier.maxMonthlyMinutes),
+                voiceRate: tier.voiceRate,
+                smsRate: tier.smsRate,
+                effectiveFrom,
+                effectiveTo: null,
+                publishedBy: actorId,
+                publishedAt: now,
+              })),
+            )
+            .returning()
+        : [];
       await tx.insert(auditLogs).values({
         id: this.createId(),
         requestId,
@@ -704,7 +753,10 @@ export class PostgresOperationsConsoleService implements OperationsConsoleServic
         objectId: effectiveFrom.toISOString(),
         detail: {
           effectiveFrom: effectiveFrom.toISOString(),
-          tierCount: published.length,
+          tierCount: tiers.length,
+          changedTierCount: published.length,
+          unchangedTierCount: tiers.length - published.length,
+          removedTierCodes: delta.removed,
           replacedScheduledCount: scheduledRows.length,
           reason: input.reason,
           tiers: tiers.map((tier) => ({
@@ -1171,6 +1223,38 @@ function normalizeSupplierPricingTiers(
       voiceRate: normalizeMoney(tier.voiceRate),
       smsRate: normalizeMoney(tier.smsRate),
     }));
+}
+
+function supplierPricingDelta(
+  tiers: SupplierPricingTierDraft[],
+  activeRows: SupplierPricingRow[],
+) {
+  const activeByCode = new Map(
+    activeRows.map((row) => [row.tierCode, row] as const),
+  );
+  const nextCodes = new Set(tiers.map((tier) => tier.tierCode));
+  return {
+    changed: tiers.filter((tier) => {
+      const active = activeByCode.get(tier.tierCode);
+      return !active || !sameSupplierPricingTier(active, tier);
+    }),
+    removed: activeRows
+      .filter((row) => !nextCodes.has(row.tierCode))
+      .map((row) => row.tierCode),
+  };
+}
+
+function sameSupplierPricingTier(
+  row: SupplierPricingRow,
+  tier: SupplierPricingTierDraft,
+) {
+  return (
+    row.name === tier.name &&
+    row.minMonthlyMinutes.toString() === tier.minMonthlyMinutes &&
+    (row.maxMonthlyMinutes?.toString() ?? null) === tier.maxMonthlyMinutes &&
+    normalizeMoney(row.voiceRate) === tier.voiceRate &&
+    normalizeMoney(row.smsRate) === tier.smsRate
+  );
 }
 
 function validateSupplierPricingEffectiveFrom(value: string, now: Date): Date {

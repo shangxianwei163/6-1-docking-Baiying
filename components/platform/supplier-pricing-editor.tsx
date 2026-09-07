@@ -36,6 +36,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { UnifiedDatePicker } from '@/components/ui/unified-date-picker';
 
 type EditableTier = {
   tierCode: string;
@@ -116,7 +117,10 @@ export function SupplierPricingEditor({
       : {};
 
   const beginEditing = () => {
-    const baseline = scheduledTiers.length ? scheduledTiers : currentTiers;
+    const baseline = supplierPricingEditingBaseline(
+      currentTiers,
+      scheduledTiers,
+    );
     setTiers(baseline.map(toEditableTier));
     setEffectiveMonth(
       scheduledTiers[0]
@@ -258,21 +262,30 @@ export function SupplierPricingEditor({
               </div>
 
               <div className="supplier-pricing-meta-fields">
-                <label>
+                <div className="supplier-pricing-date-field">
                   <span>生效月份</span>
-                  <input
-                    aria-label="供应价格生效月份"
-                    {...validationProps('effectiveMonth')}
-                    type="month"
+                  <UnifiedDatePicker
+                    ariaLabel="供应价格生效月份"
+                    mode="month"
                     min={nextShanghaiMonth()}
                     value={effectiveMonth}
-                    onChange={(event) => {
-                      setEffectiveMonth(event.target.value);
+                    popupLabel="选择供应价格生效月份"
+                    ariaInvalid={
+                      validationFeedback?.field === 'effectiveMonth' &&
+                      validationFeedback.tierIndex === undefined
+                    }
+                    ariaDescribedBy={
+                      validationFeedback?.field === 'effectiveMonth'
+                        ? 'supplier-pricing-validation'
+                        : undefined
+                    }
+                    onValueChange={(value) => {
+                      setEffectiveMonth(value);
                       setPreview(null);
                       setPreparedInput(null);
                     }}
                   />
-                </label>
+                </div>
                 <label>
                   <span>发布原因</span>
                   <input
@@ -562,6 +575,25 @@ function toEditableTier(tier: OperatorSupplierPricingTier): EditableTier {
     voiceRate: trimRate(tier.voiceRate),
     smsRate: trimRate(tier.smsRate),
   };
+}
+
+function supplierPricingEditingBaseline(
+  currentTiers: OperatorSupplierPricingTier[],
+  scheduledTiers: OperatorSupplierPricingTier[],
+) {
+  if (!scheduledTiers.length) return currentTiers;
+  const effectiveFrom = scheduledTiers[0]!.effectiveFrom;
+  const scheduledCodes = new Set(scheduledTiers.map((tier) => tier.tierCode));
+  return [
+    ...currentTiers.filter(
+      (tier) =>
+        !scheduledCodes.has(tier.tierCode) &&
+        (!tier.effectiveTo || tier.effectiveTo > effectiveFrom),
+    ),
+    ...scheduledTiers,
+  ].sort((left, right) =>
+    BigInt(left.minMonthlyMinutes) < BigInt(right.minMonthlyMinutes) ? -1 : 1,
+  );
 }
 
 function supplierPricingValidationFeedback(

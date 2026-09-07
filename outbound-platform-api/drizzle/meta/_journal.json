@@ -127,6 +127,13 @@
       "when": 1788749320744,
       "tag": "0017_jittery_nebula",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1788750000000,
+      "tag": "0018_supplier_pricing_delta_versions",
+      "breakpoints": true
     }
   ]
 }

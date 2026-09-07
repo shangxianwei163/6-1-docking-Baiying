@@ -8,6 +8,8 @@ from playwright.sync_api import Route, expect, sync_playwright
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
 APP_URL = 'http://localhost:4173/'
 STUDIO_SCREENSHOT = Path('/tmp/outbound-platform-pricing-studio.png')
+STUDIO_EDITOR_SCREENSHOT = Path('/tmp/outbound-platform-studio-pricing-editor.png')
+MONTH_PICKER_SCREENSHOT = Path('/tmp/outbound-platform-month-picker.png')
 HAINAN_SCREENSHOT = Path('/tmp/outbound-platform-pricing-hainan.png')
 HAINAN_TIERS_SCREENSHOT = Path('/tmp/outbound-platform-pricing-hainan-tiers.png')
 MOBILE_SCREENSHOT = Path('/tmp/outbound-platform-pricing-tabs-mobile.png')
@@ -80,6 +82,26 @@ def assert_studio_scope(page, studio_tab, hainan_tab) -> None:
     ).not_to_be_visible()
 
 
+def assert_single_studio_editor(page) -> None:
+    page.get_by_role('tab', name=re.compile(r'^单影楼价格')).click()
+    expect(
+        page.get_by_text('在下方影楼列表中选择要调整的客户', exact=True)
+    ).to_be_visible()
+    expect(page.get_by_label('客户话费单价')).not_to_be_visible()
+    expect(page.get_by_text('影楼价格版本', exact=True)).to_be_visible()
+    page.get_by_role('button', name='单独调价').first.click()
+    dialog = page.get_by_role('dialog')
+    expect(
+        dialog.get_by_role('heading', name=re.compile(r'^单独调整'))
+    ).to_be_visible()
+    expect(dialog.get_by_label('单影楼客户话费单价')).to_be_visible()
+    expect(dialog.get_by_label('单影楼客户短信单价')).to_be_visible()
+    expect(dialog.get_by_label('单影楼每号码冻结分钟')).to_be_visible()
+    page.screenshot(path=str(STUDIO_EDITOR_SCREENSHOT), full_page=True)
+    dialog.get_by_role('button', name='取消').click()
+    expect(dialog).not_to_be_visible()
+
+
 def assert_hainan_scope(page, studio_tab, hainan_tab) -> None:
     panel = page.locator('#pricing-panel-hainan')
     expect(studio_tab).to_have_attribute('aria-selected', 'false')
@@ -99,11 +121,11 @@ def assert_hainan_scope(page, studio_tab, hainan_tab) -> None:
     tier_rows = panel.locator('.ops-tier-table tbody tr')
     expect(tier_rows).to_have_count(4)
     expect(panel.locator('.ops-tier-table .status-green')).to_have_count(3)
-    expect(panel.locator('.ops-tier-table .status-blue')).to_have_count(4)
+    expect(panel.locator('.ops-tier-table .status-blue')).to_have_count(2)
     expect(panel.get_by_text('系统初始化导入', exact=True)).to_have_count(3)
-    expect(panel.get_by_text('平台管理员', exact=True)).to_have_count(4)
+    expect(panel.get_by_text('平台管理员', exact=True)).to_have_count(2)
     expect(panel.get_by_text('历史配置迁移', exact=True)).to_have_count(3)
-    expect(panel.get_by_text('运营后台发布', exact=True)).to_have_count(4)
+    expect(panel.get_by_text('运营后台发布', exact=True)).to_have_count(2)
     range_cells = tier_rows.locator('td:nth-child(3)').all_inner_texts()
     voice_cells = tier_rows.locator('td:nth-child(4)').all_inner_texts()
     if len(range_cells) != len(set(range_cells)):
@@ -209,11 +231,19 @@ def main() -> None:
         studio_tab, hainan_tab = open_pricing(page)
 
         assert_studio_scope(page, studio_tab, hainan_tab)
+        assert_single_studio_editor(page)
         assert_internal_scroll(page, 'pricing-panel-studio')
         page.screenshot(path=str(STUDIO_SCREENSHOT), full_page=True)
 
         hainan_tab.click()
         assert_hainan_scope(page, studio_tab, hainan_tab)
+        month_picker = page.get_by_label('供应商结算月份')
+        expect(month_picker).to_have_class(re.compile(r'unified-date-trigger'))
+        month_picker.click()
+        expect(page.get_by_text('选择结算月份', exact=True)).to_be_visible()
+        expect(page.locator('.unified-month-grid')).to_be_visible()
+        page.screenshot(path=str(MONTH_PICKER_SCREENSHOT), full_page=True)
+        page.keyboard.press('Escape')
         assert_internal_scroll(page, 'pricing-panel-hainan')
         page.screenshot(path=str(HAINAN_SCREENSHOT), full_page=True)
         hainan_panel = page.locator('#pricing-panel-hainan')
@@ -312,7 +342,7 @@ def main() -> None:
         page.screenshot(path=str(EDITOR_SCREENSHOT), full_page=True)
         dialog.get_by_role('button', name='确认发布新版本').click()
         expect(dialog).not_to_be_visible()
-        expect(page.get_by_text(re.compile(r'海南人像供应价格已发布'))).to_be_visible()
+        expect(page.get_by_text(re.compile(r'海南人像供应价格已预约'))).to_be_visible()
 
         if [item['path'] for item in supplier_pricing_requests] != [
             'preview',
@@ -379,6 +409,8 @@ def main() -> None:
         'footer + mobile layout)'
     )
     print(f'Studio screenshot: {STUDIO_SCREENSHOT}')
+    print(f'Studio editor screenshot: {STUDIO_EDITOR_SCREENSHOT}')
+    print(f'Month picker screenshot: {MONTH_PICKER_SCREENSHOT}')
     print(f'Hainan screenshot: {HAINAN_SCREENSHOT}')
     print(f'Hainan tier table screenshot: {HAINAN_TIERS_SCREENSHOT}')
     print(f'Supplier pricing editor screenshot: {EDITOR_SCREENSHOT}')

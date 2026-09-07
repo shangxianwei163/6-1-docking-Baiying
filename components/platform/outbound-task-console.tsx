@@ -42,6 +42,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { UnifiedSelect } from '@/components/ui/unified-select';
+import { UnifiedDatePicker } from '@/components/ui/unified-date-picker';
 import { Panel, Status } from './shared';
 
 type DetailTab = 'summary' | 'calls';
@@ -259,32 +260,34 @@ export function OutboundTaskConsole() {
               placeholder="搜索任务编号、名称、影楼、外部请求或百应任务 ID"
             />
           </label>
-          <label className="real-task-date-field">
+          <div className="real-task-date-field">
             <span>创建日期从</span>
-            <input
-              aria-label="任务创建开始日期"
-              type="date"
+            <UnifiedDatePicker
+              ariaLabel="任务创建开始日期"
               value={startDate}
               max={endDate || undefined}
-              onChange={(event) => {
-                setStartDate(event.target.value);
+              clearable
+              popupLabel="选择开始日期"
+              onValueChange={(value) => {
+                setStartDate(value);
                 setPageNum(0);
               }}
             />
-          </label>
-          <label className="real-task-date-field">
+          </div>
+          <div className="real-task-date-field">
             <span>至</span>
-            <input
-              aria-label="任务创建结束日期"
-              type="date"
+            <UnifiedDatePicker
+              ariaLabel="任务创建结束日期"
               value={endDate}
               min={startDate || undefined}
-              onChange={(event) => {
-                setEndDate(event.target.value);
+              clearable
+              popupLabel="选择结束日期"
+              onValueChange={(value) => {
+                setEndDate(value);
                 setPageNum(0);
               }}
             />
-          </label>
+          </div>
           <UnifiedSelect
             ariaLabel="真实任务每页数量"
             value={String(pageSize)}

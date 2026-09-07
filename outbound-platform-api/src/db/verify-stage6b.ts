@@ -268,36 +268,22 @@ async function verifySupplierPricingPublishing(): Promise<void> {
         randomUUID,
       );
       const currentBefore = await supplierService.getPricingOverview();
+      assert.ok(currentBefore.supplierTiers.length >= 3);
       const effectiveFrom = '2026-10-31T16:00:00.000Z';
+      const currentDrafts = currentBefore.supplierTiers.map((tier) => ({
+        tierCode: tier.tierCode,
+        name: tier.name,
+        minMonthlyMinutes: tier.minMonthlyMinutes,
+        maxMonthlyMinutes: tier.maxMonthlyMinutes,
+        voiceRate: tier.voiceRate,
+        smsRate: tier.smsRate,
+      }));
       const firstInput = {
         effectiveFrom,
         reason: '阶段 6B 海南供应价格人工发布验收',
-        tiers: [
-          {
-            tierCode: 'tier-basic',
-            name: '基础阶梯',
-            minMonthlyMinutes: '0',
-            maxMonthlyMinutes: '10000',
-            voiceRate: '0.210000',
-            smsRate: '0.080000',
-          },
-          {
-            tierCode: 'tier-growth',
-            name: '成长阶梯',
-            minMonthlyMinutes: '10000',
-            maxMonthlyMinutes: '50000',
-            voiceRate: '0.190000',
-            smsRate: '0.070000',
-          },
-          {
-            tierCode: 'tier-scale',
-            name: '规模阶梯',
-            minMonthlyMinutes: '50000',
-            maxMonthlyMinutes: null,
-            voiceRate: '0.170000',
-            smsRate: '0.060000',
-          },
-        ],
+        tiers: currentDrafts.map((tier, index) =>
+          index === 0 ? { ...tier, voiceRate: '9.210000' } : tier,
+        ),
       };
       const preview = await supplierService.previewSupplierPricing(firstInput);
       assert.equal(preview.tierCount, 3);
@@ -309,7 +295,7 @@ async function verifySupplierPricingPublishing(): Promise<void> {
         'stage6b-supplier-pricing-verifier',
         firstRequestId,
       );
-      assert.equal(firstPublished.published.length, 3);
+      assert.equal(firstPublished.published.length, 1);
       assert.ok(
         firstPublished.published.every(
           (tier) => tier.effectiveFrom === effectiveFrom,
@@ -317,18 +303,34 @@ async function verifySupplierPricingPublishing(): Promise<void> {
       );
 
       const secondRequestId = randomUUID();
+      const lastIndex = currentDrafts.length - 1;
+      const finalTier = currentDrafts[lastIndex]!;
+      const secondTiers = currentDrafts.flatMap((tier, index) => {
+        if (index === 0) return [{ ...tier, voiceRate: '9.220000' }];
+        if (index !== lastIndex) return [tier];
+        return [
+          { ...tier, maxMonthlyMinutes: '60000' },
+          {
+            tierCode: 'tier-verifier-new',
+            name: '验收新增阶梯',
+            minMonthlyMinutes: '60000',
+            maxMonthlyMinutes: null,
+            voiceRate: finalTier.voiceRate,
+            smsRate: finalTier.smsRate,
+          },
+        ];
+      });
       const secondPublished = await supplierService.publishSupplierPricing(
         {
           ...firstInput,
           reason: '阶段 6B 海南供应价格预约替换验收',
-          tiers: firstInput.tiers.map((tier, index) =>
-            index === 0 ? { ...tier, voiceRate: '0.220000' } : tier,
-          ),
+          tiers: secondTiers,
         },
         'stage6b-supplier-pricing-verifier',
         secondRequestId,
       );
-      assert.equal(secondPublished.replacedScheduledCount, 3);
+      assert.equal(secondPublished.replacedScheduledCount, 1);
+      assert.equal(secondPublished.published.length, 3);
 
       const overview = await supplierService.getPricingOverview();
       assert.deepEqual(
@@ -337,7 +339,13 @@ async function verifySupplierPricingPublishing(): Promise<void> {
         '未来供应价格发布不能提前改变当前生效价格',
       );
       assert.equal(overview.scheduledSupplierTiers.length, 3);
-      assert.equal(overview.scheduledSupplierTiers[0]?.voiceRate, '0.220000');
+      assert.equal(overview.scheduledSupplierTiers[0]?.voiceRate, '9.220000');
+      assert.ok(
+        !overview.scheduledSupplierTiers.some(
+          (tier) => tier.tierCode === currentDrafts[1]!.tierCode,
+        ),
+        '未变化阶梯不应生成待启用记录',
+      );
 
       const auditRows = await tx
         .select({ action: auditLogs.action, detail: auditLogs.detail })
@@ -348,9 +356,14 @@ async function verifySupplierPricingPublishing(): Promise<void> {
         auditRows.every(
           (row) =>
             row.action === 'SUPPLIER_PRICING_PUBLISHED' &&
-            Array.isArray(row.detail.tiers) &&
-            row.detail.tiers.length === 3,
+            Array.isArray(row.detail.tiers),
         ),
+      );
+      assert.deepEqual(
+        auditRows
+          .map((row) => (row.detail.tiers as unknown[]).length)
+          .sort((left, right) => left - right),
+        [currentDrafts.length, currentDrafts.length + 1],
       );
 
       completed = true;

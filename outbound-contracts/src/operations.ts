@@ -447,7 +447,7 @@ export const supplierPricingPreviewSchema = z.object({
 export const supplierPricingPublishResultSchema = z.object({
   effectiveFrom: z.iso.datetime({ offset: true }),
   replacedScheduledCount: z.number().int().nonnegative(),
-  published: z.array(operatorSupplierPricingTierSchema).min(1),
+  published: z.array(operatorSupplierPricingTierSchema),
 });
 
 export const pricingRateInputSchema = z

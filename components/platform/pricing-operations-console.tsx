@@ -44,6 +44,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { UnifiedSelect } from '@/components/ui/unified-select';
+import { UnifiedDatePicker } from '@/components/ui/unified-date-picker';
 import { SupplierPricingEditor } from './supplier-pricing-editor';
 import { Panel, Status } from './shared';
 
@@ -74,6 +75,7 @@ export function PricingOperationsConsole() {
     useState<EffectiveChoice>('NOW');
   const [reason, setReason] = useState('运营后台价格版本发布');
   const [preview, setPreview] = useState<PricingPreview | null>(null);
+  const [studioEditorOpen, setStudioEditorOpen] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [actionError, setActionError] = useState('');
@@ -137,7 +139,9 @@ export function PricingOperationsConsole() {
     setPreviewing(true);
     setActionError('');
     try {
-      setPreview(await previewPricing(input));
+      const result = await previewPricing(input);
+      setPreview(result);
+      if (mode === 'PER_STUDIO') setStudioEditorOpen(false);
     } catch (caught) {
       setActionError(apiErrorMessage(caught));
     } finally {
@@ -175,9 +179,7 @@ export function PricingOperationsConsole() {
       setFrozenMinutes(String(target.currentPricing.frozenMinutes));
     }
     setActionError('');
-    document
-      .querySelector('.ops-pricing-composer')
-      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setStudioEditorOpen(true);
   };
 
   const handleScopeKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -373,151 +375,132 @@ export function PricingOperationsConsole() {
               onClick={() => {
                 setMode('PER_STUDIO');
                 setPreview(null);
+                setActionError('');
               }}
             >
               单影楼价格<small>只发布所选影楼</small>
             </button>
           </div>
-          <div className="ops-price-form">
-            {mode === 'PER_STUDIO' ? (
-              <div className="ops-field ops-field-wide">
-                <span>
-                  目标影楼 <i>*</i>
-                </span>
-                <UnifiedSelect
-                  ariaLabel="单影楼价格目标"
-                  value={studioId}
-                  placeholder="选择影楼"
-                  popupLabel="选择价格目标影楼"
-                  options={overview.studios.map((studio) => ({
-                    value: studio.studioId,
-                    label: `${studio.businessCode} · ${studio.name}`,
-                    description: studio.currentPricing
-                      ? `当前 ${formatRate(studio.currentPricing.voiceRate)} / 分钟`
-                      : '当前未配置价格',
-                  }))}
-                  onValueChange={(value) => {
-                    setStudioId(value);
-                    const target = overview.studios.find(
-                      (studio) => studio.studioId === value,
-                    );
-                    if (target?.currentPricing) {
-                      setVoiceRate(trimMoney(target.currentPricing.voiceRate));
-                      setSmsRate(trimMoney(target.currentPricing.smsRate));
-                      setFrozenMinutes(
-                        String(target.currentPricing.frozenMinutes),
-                      );
-                    }
-                  }}
-                />
-              </div>
-            ) : (
-              <div className="ops-price-impact ops-field-wide">
-                <Sparkles aria-hidden="true" size={16} />
-                <div>
-                  <b>
-                    统一发布将为 {overview.studios.length}{' '}
-                    家影楼各生成一个独立版本
-                  </b>
-                  <p>
-                    包含已停用影楼，确保其未来启用时已有明确价格；发布前会显示完整影响清单。
-                  </p>
+          {mode === 'UNIFORM' ? (
+            <>
+              <div className="ops-price-form">
+                <div className="ops-price-impact ops-field-wide">
+                  <Sparkles aria-hidden="true" size={16} />
+                  <div>
+                    <b>
+                      统一发布将为 {overview.studios.length}{' '}
+                      家影楼各生成一个独立版本
+                    </b>
+                    <p>
+                      包含已停用影楼，确保其未来启用时已有明确价格；发布前会显示完整影响清单。
+                    </p>
+                  </div>
                 </div>
-              </div>
-            )}
-            <label className="ops-field">
-              <span>
-                话费单价（元 / 分钟） <i>*</i>
-              </span>
-              <input
-                aria-label="客户话费单价"
-                inputMode="decimal"
-                value={voiceRate}
-                onChange={(event) => setVoiceRate(event.target.value)}
-              />
-            </label>
-            <label className="ops-field">
-              <span>
-                短信单价（元 / 条） <i>*</i>
-              </span>
-              <input
-                aria-label="客户短信单价"
-                inputMode="decimal"
-                value={smsRate}
-                onChange={(event) => setSmsRate(event.target.value)}
-              />
-            </label>
-            <label className="ops-field">
-              <span>
-                每号码冻结分钟 <i>*</i>
-              </span>
-              <input
-                aria-label="每号码冻结分钟"
-                inputMode="numeric"
-                value={frozenMinutes}
-                onChange={(event) => setFrozenMinutes(event.target.value)}
-              />
-            </label>
-            <div className="ops-field">
-              <span>
-                生效时间 <i>*</i>
-              </span>
-              <UnifiedSelect
-                ariaLabel="价格生效时间"
-                value={effectiveChoice}
-                popupLabel="选择价格生效时间"
-                options={[
-                  { value: 'NOW', label: '立即对新任务生效' },
-                  { value: 'TOMORROW', label: '明日 00:00（上海）' },
-                ]}
-                onValueChange={(value) =>
-                  setEffectiveChoice(value as EffectiveChoice)
-                }
-              />
-            </div>
-            <label className="ops-field ops-field-wide">
-              <span>
-                发布原因 <i>*</i>
-              </span>
-              <textarea
-                rows={3}
-                maxLength={500}
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-              />
-            </label>
-          </div>
-          {actionError ? (
-            <div className="ops-inline-error" role="alert">
-              <AlertTriangle aria-hidden="true" size={14} />
-              {actionError}
-            </div>
-          ) : null}
-          <div className="ops-price-submit">
-            <span>
-              <ShieldCheck aria-hidden="true" size={13} />
-              发布动作与每家影楼生成的版本均写入审计日志
-            </span>
-            <button
-              type="button"
-              className="primary-button"
-              disabled={!input || previewing}
-              onClick={() => void requestPreview()}
-            >
-              {previewing ? (
-                <>
-                  <LoaderCircle
-                    aria-hidden="true"
-                    className="is-spinning"
-                    size={13}
+                <label className="ops-field">
+                  <span>
+                    话费单价（元 / 分钟） <i>*</i>
+                  </span>
+                  <input
+                    aria-label="客户话费单价"
+                    inputMode="decimal"
+                    value={voiceRate}
+                    onChange={(event) => setVoiceRate(event.target.value)}
                   />
-                  正在计算影响…
-                </>
-              ) : (
-                '预览发布影响'
-              )}
-            </button>
-          </div>
+                </label>
+                <label className="ops-field">
+                  <span>
+                    短信单价（元 / 条） <i>*</i>
+                  </span>
+                  <input
+                    aria-label="客户短信单价"
+                    inputMode="decimal"
+                    value={smsRate}
+                    onChange={(event) => setSmsRate(event.target.value)}
+                  />
+                </label>
+                <label className="ops-field">
+                  <span>
+                    每号码冻结分钟 <i>*</i>
+                  </span>
+                  <input
+                    aria-label="每号码冻结分钟"
+                    inputMode="numeric"
+                    value={frozenMinutes}
+                    onChange={(event) => setFrozenMinutes(event.target.value)}
+                  />
+                </label>
+                <div className="ops-field">
+                  <span>
+                    生效时间 <i>*</i>
+                  </span>
+                  <UnifiedSelect
+                    ariaLabel="价格生效时间"
+                    value={effectiveChoice}
+                    popupLabel="选择价格生效时间"
+                    options={[
+                      { value: 'NOW', label: '立即对新任务生效' },
+                      { value: 'TOMORROW', label: '明日 00:00（上海）' },
+                    ]}
+                    onValueChange={(value) =>
+                      setEffectiveChoice(value as EffectiveChoice)
+                    }
+                  />
+                </div>
+                <label className="ops-field ops-field-wide">
+                  <span>
+                    发布原因 <i>*</i>
+                  </span>
+                  <textarea
+                    rows={3}
+                    maxLength={500}
+                    value={reason}
+                    onChange={(event) => setReason(event.target.value)}
+                  />
+                </label>
+              </div>
+              {actionError ? (
+                <div className="ops-inline-error" role="alert">
+                  <AlertTriangle aria-hidden="true" size={14} />
+                  {actionError}
+                </div>
+              ) : null}
+              <div className="ops-price-submit">
+                <span>
+                  <ShieldCheck aria-hidden="true" size={13} />
+                  发布动作与每家影楼生成的版本均写入审计日志
+                </span>
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={!input || previewing}
+                  onClick={() => void requestPreview()}
+                >
+                  {previewing ? (
+                    <>
+                      <LoaderCircle
+                        aria-hidden="true"
+                        className="is-spinning"
+                        size={13}
+                      />
+                      正在计算影响…
+                    </>
+                  ) : (
+                    '预览发布影响'
+                  )}
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="ops-single-studio-guide">
+              <Store aria-hidden="true" size={17} />
+              <div>
+                <b>在下方影楼列表中选择要调整的客户</b>
+                <p>
+                  每家影楼直接展示当前价格和预约情况；点击“单独调价”后，在弹窗中编辑并预览影响。
+                </p>
+              </div>
+            </div>
+          )}
         </Panel>
 
         <Panel
@@ -708,7 +691,9 @@ export function PricingOperationsConsole() {
               scheduledTiers={overview.scheduledSupplierTiers}
               onPublished={(result) => {
                 setSupplierFeedback(
-                  `海南人像供应价格已发布：${result.published.length} 档，${formatDateTime(result.effectiveFrom)} 生效。`,
+                  result.published.length
+                    ? `海南人像供应价格已预约：${result.published.length} 项变化，${formatDateTime(result.effectiveFrom)} 生效；未变化阶梯继续沿用。`
+                    : '已取消未生效的预约，当前未变化阶梯继续沿用。',
                 );
                 setRefreshToken((current) => current + 1);
               }}
@@ -719,14 +704,14 @@ export function PricingOperationsConsole() {
               <CalendarClock aria-hidden="true" size={14} />
               <div>
                 <b>
-                  已预约 {overview.scheduledSupplierTiers.length} 档供应价格
+                  已预约 {overview.scheduledSupplierTiers.length} 项价格变化
                 </b>
                 <span>
-                  新版本已列入下方列表，将于{' '}
+                  价格变化已列入下方列表，将于{' '}
                   {formatDateTime(
                     overview.scheduledSupplierTiers[0]!.effectiveFrom,
                   )}{' '}
-                  启用；再次发布将替换这组预约。
+                  启用；未变化阶梯继续沿用当前记录，再次发布将替换这组预约。
                 </span>
               </div>
             </output>
@@ -760,7 +745,17 @@ export function PricingOperationsConsole() {
                         }
                       >
                         <td>
-                          <b>{tier.name}</b>
+                          {current &&
+                          scheduled &&
+                          current.name !== scheduled.name ? (
+                            <SupplierTierComparisonValue
+                              currentValue={current.name}
+                              scheduledValue={scheduled.name}
+                              emphasized
+                            />
+                          ) : (
+                            <b>{tier.name}</b>
+                          )}
                           <span className="table-meta">{tierCode}</span>
                         </td>
                         <td>
@@ -858,13 +853,154 @@ export function PricingOperationsConsole() {
         </Panel>
       </section>
 
+      <Dialog
+        open={studioEditorOpen}
+        onOpenChange={(open) => {
+          if (!previewing) setStudioEditorOpen(open);
+        }}
+      >
+        <DialogContent className="ops-dialog ops-studio-pricing-dialog">
+          <DialogHeader>
+            <span className="ops-dialog-kicker">PER-STUDIO PRICING</span>
+            <DialogTitle>
+              {selectedStudio
+                ? `单独调整「${selectedStudio.name}」价格`
+                : '单影楼调价'}
+            </DialogTitle>
+            <DialogDescription>
+              只为当前影楼生成新价格版本，其他影楼不受影响。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="ops-studio-pricing-editor">
+            {selectedStudio ? (
+              <div className="ops-studio-pricing-current">
+                <Store aria-hidden="true" size={16} />
+                <div>
+                  <b>{selectedStudio.name}</b>
+                  <span>{selectedStudio.businessCode}</span>
+                </div>
+                <p>
+                  当前话费：
+                  <strong>
+                    {selectedStudio.currentPricing
+                      ? `${formatRate(selectedStudio.currentPricing.voiceRate)} / 分钟`
+                      : '未配置'}
+                  </strong>
+                </p>
+              </div>
+            ) : null}
+            <div className="ops-studio-pricing-form">
+              <label className="ops-field">
+                <span>
+                  话费单价（元 / 分钟） <i>*</i>
+                </span>
+                <input
+                  aria-label="单影楼客户话费单价"
+                  inputMode="decimal"
+                  value={voiceRate}
+                  onChange={(event) => setVoiceRate(event.target.value)}
+                />
+              </label>
+              <label className="ops-field">
+                <span>
+                  短信单价（元 / 条） <i>*</i>
+                </span>
+                <input
+                  aria-label="单影楼客户短信单价"
+                  inputMode="decimal"
+                  value={smsRate}
+                  onChange={(event) => setSmsRate(event.target.value)}
+                />
+              </label>
+              <label className="ops-field">
+                <span>
+                  每号码冻结分钟 <i>*</i>
+                </span>
+                <input
+                  aria-label="单影楼每号码冻结分钟"
+                  inputMode="numeric"
+                  value={frozenMinutes}
+                  onChange={(event) => setFrozenMinutes(event.target.value)}
+                />
+              </label>
+              <div className="ops-field">
+                <span>
+                  生效时间 <i>*</i>
+                </span>
+                <UnifiedSelect
+                  ariaLabel="单影楼价格生效时间"
+                  value={effectiveChoice}
+                  popupLabel="选择价格生效时间"
+                  options={[
+                    { value: 'NOW', label: '立即对新任务生效' },
+                    { value: 'TOMORROW', label: '明日 00:00（上海）' },
+                  ]}
+                  onValueChange={(value) =>
+                    setEffectiveChoice(value as EffectiveChoice)
+                  }
+                />
+              </div>
+              <label className="ops-field ops-field-wide">
+                <span>
+                  发布原因 <i>*</i>
+                </span>
+                <textarea
+                  rows={3}
+                  maxLength={500}
+                  value={reason}
+                  onChange={(event) => setReason(event.target.value)}
+                />
+              </label>
+            </div>
+            {actionError ? (
+              <div className="ops-inline-error" role="alert">
+                <AlertTriangle aria-hidden="true" size={14} />
+                {actionError}
+              </div>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <button
+              type="button"
+              className="filter-button"
+              disabled={previewing}
+              onClick={() => setStudioEditorOpen(false)}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              disabled={!input || previewing}
+              onClick={() => void requestPreview()}
+            >
+              {previewing ? (
+                <>
+                  <LoaderCircle
+                    aria-hidden="true"
+                    className="is-spinning"
+                    size={13}
+                  />
+                  正在计算影响…
+                </>
+              ) : (
+                '预览发布影响'
+              )}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <PricingPreviewDialog
         preview={preview}
         selectedStudio={selectedStudio?.name ?? null}
         publishing={publishing}
         error={actionError}
         onClose={() => {
-          if (!publishing) setPreview(null);
+          if (!publishing) {
+            setPreview(null);
+            if (mode === 'PER_STUDIO') setStudioEditorOpen(true);
+          }
         }}
         onPublish={() => void confirmPublish()}
       />
@@ -979,21 +1115,22 @@ function SupplierSettlementConsole() {
             </p>
           </div>
           <div className="ops-settlement-controls">
-            <label className="ops-field">
+            <div className="ops-field">
               <span>结算月份</span>
-              <input
-                aria-label="供应商结算月份"
-                type="month"
+              <UnifiedDatePicker
+                ariaLabel="供应商结算月份"
+                mode="month"
                 max={currentShanghaiMonth()}
                 value={month}
-                onChange={(event) => {
-                  setMonth(event.target.value);
+                popupLabel="选择结算月份"
+                onValueChange={(value) => {
+                  setMonth(value);
                   setSummary(null);
                   setFeedback('');
                   setError('');
                 }}
               />
-            </label>
+            </div>
             <button
               type="button"
               className="ops-icon-button"
