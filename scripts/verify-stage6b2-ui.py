@@ -174,6 +174,12 @@ def main() -> None:
         )
         expect(review_dialog.get_by_role('button', name='拒绝申请')).to_be_enabled()
         expect(review_dialog.get_by_role('button', name='批准并记账')).to_be_enabled()
+        assert_dialog_has_no_overflow(review_dialog, 'Adjustment review dialog')
+        page.set_viewport_size({'width': 1024, 'height': 640})
+        assert_dialog_has_no_overflow(
+            review_dialog, 'Adjustment review dialog at short viewport'
+        )
+        page.set_viewport_size({'width': 1600, 'height': 1000})
         page.screenshot(path=str(APPROVAL_SCREENSHOT), full_page=True)
         review_dialog.get_by_role('button', name='关闭').click()
         expect(review_dialog).not_to_be_visible()
@@ -216,6 +222,12 @@ def main() -> None:
         expect(audit_dialog.get_by_text(audit_event['actionLabel'], exact=True)).to_be_visible()
         expect(audit_dialog.get_by_text('服务端脱敏详情', exact=True)).to_be_visible()
         expect(audit_dialog.get_by_text(audit_event['requestId'], exact=True)).to_be_visible()
+        assert_dialog_has_no_overflow(audit_dialog, 'Audit detail dialog')
+        page.set_viewport_size({'width': 1024, 'height': 640})
+        assert_dialog_has_no_overflow(
+            audit_dialog, 'Audit detail dialog at short viewport'
+        )
+        page.set_viewport_size({'width': 1600, 'height': 1000})
         page.screenshot(path=str(AUDIT_SCREENSHOT), full_page=True)
         audit_dialog.get_by_role('button', name='关闭详情').click()
 

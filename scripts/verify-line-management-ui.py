@@ -4,6 +4,8 @@ import re
 
 from playwright.sync_api import Route, expect, sync_playwright
 
+from dialog_assertions import assert_dialog_has_no_outer_overflow
+
 
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
 APP_URL = 'http://localhost:4173/'
@@ -89,6 +91,23 @@ def main() -> None:
             raise AssertionError('Live synchronization returned no line cards')
         if live.locator('.line-card:not(.is-inactive)').count() < 1:
             raise AssertionError('Live synchronization returned no active line')
+        active_line = live.locator('.line-card:not(.is-inactive)').first
+        active_line.get_by_role(
+            'button', name=re.compile(r'绑定影楼|修改绑定')
+        ).click()
+        line_dialog = live.get_by_role('dialog')
+        expect(
+            line_dialog.get_by_role('heading', name='绑定线路适用影楼')
+        ).to_be_visible()
+        assert_dialog_has_no_outer_overflow(
+            live, line_dialog, 'Line binding dialog'
+        )
+        live.set_viewport_size({'width': 1024, 'height': 640})
+        assert_dialog_has_no_outer_overflow(
+            live, line_dialog, 'Line binding dialog at short viewport'
+        )
+        line_dialog.get_by_role('button', name='取消').click()
+        live.set_viewport_size({'width': 1440, 'height': 1000})
         live.screenshot(path=str(LIVE_SCREENSHOT), full_page=True)
 
         stale = browser.new_page(viewport={'width': 1440, 'height': 1000})

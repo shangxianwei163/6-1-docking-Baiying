@@ -5,6 +5,8 @@ import uuid
 
 from playwright.sync_api import Route, expect, sync_playwright
 
+from dialog_assertions import assert_dialog_has_no_outer_overflow
+
 
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
 APP_URL = 'http://localhost:4173/'
@@ -127,11 +129,26 @@ def open_settlement(page) -> None:
     hainan_tab.click()
     expect(hainan_tab).to_have_attribute('aria-selected', 'true')
     expect(page.get_by_text('供应商月度结算', exact=True)).to_be_visible()
-    month_input = page.get_by_label('供应商结算月份')
-    if month_input.input_value() != SETTLEMENT_MONTH:
-        month_input.fill(SETTLEMENT_MONTH)
+    select_settlement_month(page, SETTLEMENT_MONTH)
     panel = page.locator('.ops-settlement-panel')
     expect(panel.get_by_text('账务平衡', exact=True)).to_be_visible()
+
+
+def select_settlement_month(page, value: str) -> None:
+    year, month = value.split('-')
+    trigger = page.get_by_label('供应商结算月份')
+    expected_label = f'{year} 年 {month} 月'
+    if trigger.inner_text().strip() == expected_label:
+        return
+    trigger.click()
+    picker = page.locator('.unified-month-picker')
+    while picker.locator('.unified-month-nav b').inner_text().strip() != f'{year} 年':
+        visible_year = int(
+            picker.locator('.unified-month-nav b').inner_text().split()[0]
+        )
+        direction = '上一年' if visible_year > int(year) else '下一年'
+        picker.get_by_role('button', name=direction).click()
+    picker.get_by_role('button', name=f'{int(month)} 月', exact=True).click()
 
 
 def main() -> None:
@@ -170,6 +187,12 @@ def main() -> None:
         expect(dialog.get_by_text(f'确认封账 {SETTLEMENT_MONTH}', exact=True)).to_be_visible()
         expect(dialog.get_by_text('封账结果不可编辑或覆盖', exact=True)).to_be_visible()
         expect(dialog.get_by_text(SOURCE_HASH, exact=True)).to_be_visible()
+        assert_dialog_has_no_outer_overflow(page, dialog, 'Settlement dialog')
+        page.set_viewport_size({'width': 1024, 'height': 640})
+        assert_dialog_has_no_outer_overflow(
+            page, dialog, 'Settlement dialog at short viewport'
+        )
+        page.set_viewport_size({'width': 1600, 'height': 1000})
         dialog.get_by_role('button', name='确认不可逆封账').click()
 
         expect(panel.get_by_text('已封账', exact=True)).to_be_visible()
@@ -182,7 +205,7 @@ def main() -> None:
         expect(panel.get_by_text(re.compile(SETTLEMENT_ID))).to_be_visible()
         page.screenshot(path=str(SCREENSHOT), full_page=True)
 
-        panel.get_by_label('供应商结算月份').fill(EMPTY_SETTLEMENT_MONTH)
+        select_settlement_month(page, EMPTY_SETTLEMENT_MONTH)
         expect(panel.get_by_text('无需封账', exact=True)).to_be_visible()
         expect(panel.get_by_text('本月无结算任务', exact=True)).to_be_visible()
         expect(

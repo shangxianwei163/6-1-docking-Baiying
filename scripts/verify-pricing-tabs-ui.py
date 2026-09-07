@@ -4,6 +4,8 @@ import re
 
 from playwright.sync_api import Route, expect, sync_playwright
 
+from dialog_assertions import assert_dialog_has_no_outer_overflow
+
 
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
 APP_URL = 'http://localhost:4173/'
@@ -274,6 +276,7 @@ def main() -> None:
         expect(
             dialog.get_by_role('heading', name='维护海南人像供应价格')
         ).to_be_visible()
+        assert_dialog_has_no_outer_overflow(page, dialog, 'Supplier pricing dialog')
         expect(dialog.get_by_label('第 1 档话费')).to_have_value('0.2')
         expect(dialog.get_by_label('第 1 档用量下限（万分钟）')).to_have_value(
             '0'

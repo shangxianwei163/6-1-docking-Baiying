@@ -81,6 +81,12 @@ def main() -> None:
         expect(studio_dialog.get_by_text(studio['name'], exact=True)).to_be_visible()
         expect(studio_dialog.get_by_text('可用余额', exact=True)).to_be_visible()
         expect(studio_dialog.get_by_text('ERP / CRM 回传端点', exact=True)).to_be_visible()
+        assert_dialog_has_no_overflow(studio_dialog, 'Studio detail dialog')
+        page.set_viewport_size({'width': 1024, 'height': 640})
+        assert_dialog_has_no_overflow(
+            studio_dialog, 'Studio detail dialog at short viewport'
+        )
+        page.set_viewport_size({'width': 1600, 'height': 1000})
         studio_dialog.locator('[data-slot="dialog-close"]').click()
 
         page.get_by_role('button', name=re.compile(r'^新增影楼$')).click()
@@ -91,6 +97,12 @@ def main() -> None:
                 '联系人手机号只写入加密字段，列表仅返回脱敏值。', exact=True
             )
         ).to_be_visible()
+        assert_dialog_has_no_overflow(create_dialog, 'Studio editor dialog')
+        page.set_viewport_size({'width': 1024, 'height': 640})
+        assert_dialog_has_no_overflow(
+            create_dialog, 'Studio editor dialog at short viewport'
+        )
+        page.set_viewport_size({'width': 1600, 'height': 1000})
         create_dialog.locator('[data-slot="dialog-close"]').click()
         page.screenshot(path=str(STUDIO_SCREENSHOT), full_page=True)
 
@@ -156,6 +168,14 @@ def main() -> None:
         pricing_row.get_by_role('button', name='单独调价').click()
         studio_pricing_dialog = page.get_by_role('dialog')
         expect(studio_pricing_dialog).to_contain_text(first_pricing['name'])
+        assert_dialog_has_no_overflow(
+            studio_pricing_dialog, 'Studio pricing dialog'
+        )
+        page.set_viewport_size({'width': 1024, 'height': 640})
+        assert_dialog_has_no_overflow(
+            studio_pricing_dialog, 'Studio pricing dialog at short viewport'
+        )
+        page.set_viewport_size({'width': 1600, 'height': 1000})
         studio_pricing_dialog.get_by_role('button', name='预览发布影响').click()
         preview_dialog = page.get_by_role('dialog')
         expect(preview_dialog.get_by_text('确认价格版本影响', exact=True)).to_be_visible()
@@ -163,6 +183,12 @@ def main() -> None:
         expect(
             preview_dialog.get_by_text(first_pricing['name'], exact=True)
         ).to_be_visible()
+        assert_dialog_has_no_overflow(preview_dialog, 'Price preview dialog')
+        page.set_viewport_size({'width': 1024, 'height': 640})
+        assert_dialog_has_no_overflow(
+            preview_dialog, 'Price preview dialog at short viewport'
+        )
+        page.set_viewport_size({'width': 1600, 'height': 1000})
         page.screenshot(path=str(PRICING_SCREENSHOT), full_page=True)
         preview_dialog.get_by_role('button', name='返回修改').click()
         expect(page.get_by_text('确认价格版本影响', exact=True)).not_to_be_visible()

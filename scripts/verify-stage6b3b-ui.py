@@ -4,6 +4,8 @@ import re
 
 from playwright.sync_api import Route, expect, sync_playwright
 
+from dialog_assertions import assert_dialog_has_no_outer_overflow
+
 
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
 APP_URL = 'http://localhost:4173/'
@@ -300,6 +302,12 @@ def main() -> None:
 
         action_dialog = page.get_by_role('dialog').filter(has_text='暂停呼叫任务')
         expect(action_dialog.get_by_role('button', name='确认暂停')).to_be_enabled()
+        assert_dialog_has_no_outer_overflow(page, action_dialog, 'Task action dialog')
+        page.set_viewport_size({'width': 1024, 'height': 640})
+        assert_dialog_has_no_outer_overflow(
+            page, action_dialog, 'Task action dialog at short viewport'
+        )
+        page.set_viewport_size({'width': 1600, 'height': 1000})
         action_dialog.get_by_placeholder('例如：影楼临时暂停本次营销活动').fill(
             '浏览器验收暂停，不触发真实外呼'
         )
@@ -316,6 +324,14 @@ def main() -> None:
         outbox_row.get_by_role('button', name='处置').click()
         recovery_dialog = page.get_by_role('dialog').filter(has_text='编排队列重试已耗尽')
         expect(recovery_dialog.get_by_text('[已脱敏]', exact=True)).to_be_visible()
+        assert_dialog_has_no_outer_overflow(
+            page, recovery_dialog, 'Recovery detail dialog'
+        )
+        page.set_viewport_size({'width': 1024, 'height': 640})
+        assert_dialog_has_no_outer_overflow(
+            page, recovery_dialog, 'Recovery detail dialog at short viewport'
+        )
+        page.set_viewport_size({'width': 1600, 'height': 1000})
         recovery_dialog.get_by_placeholder('例如：已修复回调字段兼容问题，批准重放原事件').fill(
             '根因已修复，批准恢复原队列事件'
         )
@@ -327,6 +343,9 @@ def main() -> None:
         callback_row = page.locator('tr', has_text='回调字段校验连续失败')
         callback_row.get_by_role('button', name='处置').click()
         ignore_dialog = page.get_by_role('dialog').filter(has_text='回调字段校验连续失败')
+        assert_dialog_has_no_outer_overflow(
+            page, ignore_dialog, 'Recovery ignore dialog'
+        )
         ignore_dialog.get_by_placeholder('例如：已修复回调字段兼容问题，批准重放原事件').fill(
             '确认该测试回调无需继续处理'
         )

@@ -5,6 +5,8 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 from playwright.sync_api import expect, sync_playwright
 
+from dialog_assertions import assert_dialog_has_no_outer_overflow
+
 
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
 APP_URL = 'http://localhost:4173/'
@@ -63,6 +65,12 @@ def main() -> None:
         expect(dialog.get_by_text('接口调用详情', exact=True)).to_be_visible()
         expect(dialog.get_by_text('已脱敏请求 / 响应快照', exact=True)).to_be_visible()
         expect(dialog.get_by_text(first_log['requestId'], exact=True)).to_be_visible()
+        assert_dialog_has_no_outer_overflow(page, dialog, 'Integration detail dialog')
+        page.set_viewport_size({'width': 1024, 'height': 640})
+        assert_dialog_has_no_outer_overflow(
+            page, dialog, 'Integration detail dialog at short viewport'
+        )
+        page.set_viewport_size({'width': 1600, 'height': 1000})
         page.screenshot(path=str(LOG_SCREENSHOT), full_page=True)
         dialog.get_by_role('button', name='关闭').click()
 
@@ -71,6 +79,17 @@ def main() -> None:
         mobile.goto(APP_URL, wait_until='networkidle')
         expect(mobile.locator('h2').filter(has_text='总览')).to_be_visible()
         expect(mobile.get_by_text('今日外呼任务', exact=True)).to_be_visible()
+        mobile.get_by_role('button', name=re.compile(r'^接口日志')).click()
+        mobile_log_row = (
+            mobile.locator('tbody tr').filter(has_text=first_log['requestId']).first
+        )
+        mobile_log_row.get_by_role('button', name='详情').click()
+        mobile_dialog = mobile.get_by_role('dialog')
+        expect(mobile_dialog.get_by_text('接口调用详情', exact=True)).to_be_visible()
+        assert_dialog_has_no_outer_overflow(
+            mobile, mobile_dialog, 'Integration detail dialog on mobile'
+        )
+        mobile_dialog.get_by_role('button', name='关闭').click()
         document_width = mobile.evaluate('document.documentElement.scrollWidth')
         viewport_width = mobile.evaluate('window.innerWidth')
         if document_width > viewport_width + 1:

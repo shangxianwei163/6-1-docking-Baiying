@@ -5,6 +5,8 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 from playwright.sync_api import expect, sync_playwright
 
+from dialog_assertions import assert_dialog_has_no_outer_overflow
+
 
 SCREENSHOT = Path('/tmp/outbound-platform-stage6-task.png')
 LIST_SCREENSHOT = Path('/tmp/outbound-platform-stage6-list.png')
@@ -86,6 +88,12 @@ def main() -> None:
         expect(
             dialog.get_by_text(completed_call['baiyingCallInstanceId'], exact=True)
         ).to_be_visible()
+        assert_dialog_has_no_outer_overflow(page, dialog, 'Task detail dialog')
+        page.set_viewport_size({'width': 1024, 'height': 640})
+        assert_dialog_has_no_outer_overflow(
+            page, dialog, 'Task detail dialog at short viewport'
+        )
+        page.set_viewport_size({'width': 1600, 'height': 1000})
 
         page.screenshot(path=str(SCREENSHOT), full_page=True)
         dialog.locator('[data-slot="dialog-close"]').click()
