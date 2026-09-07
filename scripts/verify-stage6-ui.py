@@ -71,6 +71,12 @@ def main() -> None:
         page.get_by_role('button', name=re.compile(r'^呼叫任务')).click()
         expect(page.get_by_text('PostgreSQL 实时数据')).to_be_visible()
         expect(
+            page.get_by_role('columnheader', name='任务名称', exact=True)
+        ).to_be_visible()
+        expect(
+            page.get_by_role('columnheader', name='话术 / 线路', exact=True)
+        ).to_be_visible()
+        expect(
             page.get_by_role('cell', name=delivery_pending_task['taskNo'])
         ).to_be_visible()
         expect(page.get_by_role('cell', name=calling_task['taskNo'])).to_be_visible()
@@ -84,6 +90,21 @@ def main() -> None:
         ).to_be_visible()
         expect(
             delivery_pending_row.get_by_text('等待业务回传', exact=True)
+        ).to_be_visible()
+        expect(
+            delivery_pending_row.get_by_text(
+                delivery_pending_task['taskName'], exact=True
+            )
+        ).to_be_visible()
+        expect(
+            delivery_pending_row.get_by_text(
+                delivery_pending_task['script']['name'], exact=True
+            )
+        ).to_be_visible()
+        expect(
+            delivery_pending_row.get_by_text(
+                delivery_pending_task['line']['name'], exact=True
+            )
         ).to_be_visible()
         calling_row = page.locator('tr', has_text=calling_task['taskNo'])
         expect(calling_row.get_by_text('呼叫中', exact=True)).to_be_visible()

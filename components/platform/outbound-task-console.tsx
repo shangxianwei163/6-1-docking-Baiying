@@ -348,7 +348,8 @@ export function OutboundTaskConsole() {
                 <th>任务 / 创建时间</th>
                 <th>影楼 / 来源</th>
                 <th>执行状态</th>
-                <th>任务内容</th>
+                <th>任务名称</th>
+                <th>话术 / 线路</th>
                 <th>呼叫进度</th>
                 <th>计费 / 余额</th>
                 <th>百应任务</th>
@@ -359,7 +360,7 @@ export function OutboundTaskConsole() {
               {loading && !page.tasks.length
                 ? Array.from({ length: 4 }, (_, index) => (
                     <tr className="real-task-skeleton" key={index}>
-                      {Array.from({ length: 8 }, (__, cell) => (
+                      {Array.from({ length: 9 }, (__, cell) => (
                         <td aria-label="正在加载" key={cell}>
                           <i />
                         </td>
@@ -461,9 +462,10 @@ function TaskRow({
       </td>
       <td>
         <strong className="real-task-name">{task.taskName}</strong>
-        <span className="real-task-route">
-          {task.script.name} · {task.line.name}
-        </span>
+      </td>
+      <td>
+        <b className="real-task-script">{task.script.name}</b>
+        <span className="real-task-route">{task.line.name}</span>
       </td>
       <td>
         <div className="real-task-progress-copy">
