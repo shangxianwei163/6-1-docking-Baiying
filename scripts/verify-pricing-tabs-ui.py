@@ -13,6 +13,9 @@ MOBILE_SCREENSHOT = Path('/tmp/outbound-platform-pricing-tabs-mobile.png')
 EDITOR_SCREENSHOT = Path('/tmp/outbound-platform-supplier-pricing-editor.png')
 EDITOR_FORM_SCREENSHOT = Path('/tmp/outbound-platform-supplier-pricing-form.png')
 EDITOR_SHORT_SCREENSHOT = Path('/tmp/outbound-platform-supplier-pricing-short.png')
+EDITOR_VALIDATION_SCREENSHOT = Path(
+    '/tmp/outbound-platform-supplier-pricing-validation.png'
+)
 
 
 def install_supplier_pricing_fixture(page, requests: list[dict]) -> None:
@@ -181,6 +184,24 @@ def main() -> None:
             dialog.get_by_role('heading', name='维护海南人像供应价格')
         ).to_be_visible()
         expect(dialog.get_by_label('第 1 档话费')).to_have_value('0.2')
+        dialog.get_by_role('button', name='新增阶梯').click()
+        expect(
+            dialog.get_by_text('第 4 档「分钟下限」填写不正确', exact=True)
+        ).to_be_visible()
+        expect(
+            dialog.get_by_text(
+                '请输入 0 或正整数，例如 50000；不要填写小数或单位。',
+                exact=True,
+            )
+        ).to_be_visible()
+        expect(dialog.get_by_label('第 4 档分钟下限')).to_have_attribute(
+            'aria-invalid', 'true'
+        )
+        expect(dialog.get_by_text(re.compile(r'Invalid string'))).not_to_be_visible()
+        dialog.get_by_role('button', name='预览发布影响').click()
+        expect(dialog.get_by_label('第 4 档分钟下限')).to_be_focused()
+        page.screenshot(path=str(EDITOR_VALIDATION_SCREENSHOT), full_page=True)
+        dialog.get_by_role('button', name='删除第 4 档').click()
         dialog.get_by_label('第 1 档话费').fill('0.21')
         assert_dialog_footer_fully_visible(page, dialog)
         page.screenshot(path=str(EDITOR_FORM_SCREENSHOT), full_page=True)
@@ -251,13 +272,15 @@ def main() -> None:
     print(
         'Pricing tabs UI verification passed '
         '(content separation + internal vertical scrolling + fixed tabs + '
-        'click/keyboard switching + fully visible dialog footer + mobile layout)'
+        'click/keyboard switching + readable localized validation + fully visible '
+        'dialog footer + mobile layout)'
     )
     print(f'Studio screenshot: {STUDIO_SCREENSHOT}')
     print(f'Hainan screenshot: {HAINAN_SCREENSHOT}')
     print(f'Supplier pricing editor screenshot: {EDITOR_SCREENSHOT}')
     print(f'Supplier pricing form screenshot: {EDITOR_FORM_SCREENSHOT}')
     print(f'Supplier pricing short viewport screenshot: {EDITOR_SHORT_SCREENSHOT}')
+    print(f'Supplier pricing validation screenshot: {EDITOR_VALIDATION_SCREENSHOT}')
     print(f'Mobile screenshot: {MOBILE_SCREENSHOT}')
 
 

@@ -41,6 +41,15 @@ type EditableTier = {
   smsRate: string;
 };
 
+type SupplierPricingField = keyof EditableTier | 'effectiveMonth' | 'reason';
+
+type ValidationFeedback = {
+  title: string;
+  detail: string;
+  tierIndex?: number;
+  field?: SupplierPricingField;
+};
+
 export function SupplierPricingEditor({
   currentTiers,
   scheduledTiers,
@@ -82,6 +91,22 @@ export function SupplierPricingEditor({
     () => publishSupplierPricingInputSchema.safeParse(candidate),
     [candidate],
   );
+  const validationFeedback = useMemo(
+    () =>
+      validation.success
+        ? null
+        : supplierPricingValidationFeedback(validation.error.issues[0]),
+    [validation],
+  );
+
+  const validationProps = (field: SupplierPricingField, tierIndex?: number) =>
+    validationFeedback?.field === field &&
+    validationFeedback.tierIndex === tierIndex
+      ? {
+          'aria-describedby': 'supplier-pricing-validation',
+          'aria-invalid': true as const,
+        }
+      : {};
 
   const beginEditing = () => {
     const baseline = scheduledTiers.length ? scheduledTiers : currentTiers;
@@ -142,7 +167,14 @@ export function SupplierPricingEditor({
 
   const requestPreview = async () => {
     if (!validation.success) {
-      setError(validation.error.issues[0]?.message ?? '请检查阶梯配置');
+      setError('');
+      requestAnimationFrame(() => {
+        const invalidField = document.querySelector<HTMLInputElement>(
+          '.supplier-pricing-dialog input[aria-invalid="true"]',
+        );
+        invalidField?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        invalidField?.focus({ preventScroll: true });
+      });
       return;
     }
     setPreviewing(true);
@@ -223,6 +255,7 @@ export function SupplierPricingEditor({
                   <span>生效月份</span>
                   <input
                     aria-label="供应价格生效月份"
+                    {...validationProps('effectiveMonth')}
                     type="month"
                     min={nextShanghaiMonth()}
                     value={effectiveMonth}
@@ -237,6 +270,7 @@ export function SupplierPricingEditor({
                   <span>发布原因</span>
                   <input
                     aria-label="供应价格发布原因"
+                    {...validationProps('reason')}
                     maxLength={500}
                     value={reason}
                     onChange={(event) => {
@@ -270,6 +304,7 @@ export function SupplierPricingEditor({
                         <span>阶梯名称</span>
                         <input
                           aria-label={`第 ${index + 1} 档名称`}
+                          {...validationProps('name', index)}
                           value={tier.name}
                           onChange={(event) =>
                             updateTier(index, 'name', event.target.value)
@@ -280,6 +315,7 @@ export function SupplierPricingEditor({
                         <span>阶梯编码</span>
                         <input
                           aria-label={`第 ${index + 1} 档编码`}
+                          {...validationProps('tierCode', index)}
                           value={tier.tierCode}
                           onChange={(event) =>
                             updateTier(index, 'tierCode', event.target.value)
@@ -290,6 +326,7 @@ export function SupplierPricingEditor({
                         <span>分钟下限（含）</span>
                         <input
                           aria-label={`第 ${index + 1} 档分钟下限`}
+                          {...validationProps('minMonthlyMinutes', index)}
                           inputMode="numeric"
                           value={tier.minMonthlyMinutes}
                           onChange={(event) =>
@@ -305,6 +342,7 @@ export function SupplierPricingEditor({
                         <span>分钟上限（不含）</span>
                         <input
                           aria-label={`第 ${index + 1} 档分钟上限`}
+                          {...validationProps('maxMonthlyMinutes', index)}
                           inputMode="numeric"
                           placeholder={
                             index === tiers.length - 1 ? '不设上限' : ''
@@ -323,6 +361,7 @@ export function SupplierPricingEditor({
                         <span>话费（元/分钟）</span>
                         <input
                           aria-label={`第 ${index + 1} 档话费`}
+                          {...validationProps('voiceRate', index)}
                           inputMode="decimal"
                           value={tier.voiceRate}
                           onChange={(event) =>
@@ -334,6 +373,7 @@ export function SupplierPricingEditor({
                         <span>短信（元/条）</span>
                         <input
                           aria-label={`第 ${index + 1} 档短信费`}
+                          {...validationProps('smsRate', index)}
                           inputMode="decimal"
                           value={tier.smsRate}
                           onChange={(event) =>
@@ -354,10 +394,19 @@ export function SupplierPricingEditor({
                   ))}
                 </div>
               </section>
-              {!validation.success ? (
-                <output className="supplier-pricing-validation">
-                  <AlertTriangle aria-hidden="true" size={13} />
-                  {validation.error.issues[0]?.message ?? '请检查阶梯配置'}
+              {validationFeedback ? (
+                <output
+                  id="supplier-pricing-validation"
+                  className="supplier-pricing-validation"
+                  aria-live="polite"
+                >
+                  <span className="supplier-pricing-validation-icon">
+                    <AlertTriangle aria-hidden="true" size={14} />
+                  </span>
+                  <span>
+                    <b>{validationFeedback.title}</b>
+                    <small>{validationFeedback.detail}</small>
+                  </span>
                 </output>
               ) : null}
             </div>
@@ -494,6 +543,66 @@ function toEditableTier(tier: OperatorSupplierPricingTier): EditableTier {
     maxMonthlyMinutes: tier.maxMonthlyMinutes ?? '',
     voiceRate: trimRate(tier.voiceRate),
     smsRate: trimRate(tier.smsRate),
+  };
+}
+
+function supplierPricingValidationFeedback(
+  issue: { path: readonly PropertyKey[]; message: string } | undefined,
+): ValidationFeedback {
+  if (!issue) {
+    return {
+      title: '价格配置尚未完成',
+      detail: '请检查所有必填项后再预览发布影响。',
+    };
+  }
+
+  const [section, tierIndex, rawField] = issue.path;
+  const field = typeof rawField === 'string' ? rawField : undefined;
+  if (section === 'tiers' && typeof tierIndex === 'number' && field) {
+    const fieldNames: Partial<Record<SupplierPricingField, string>> = {
+      tierCode: '阶梯编码',
+      name: '阶梯名称',
+      minMonthlyMinutes: '分钟下限',
+      maxMonthlyMinutes: '分钟上限',
+      voiceRate: '话费',
+      smsRate: '短信费',
+    };
+    const details: Partial<Record<SupplierPricingField, string>> = {
+      tierCode: issue.message,
+      name: issue.message,
+      minMonthlyMinutes: '请输入 0 或正整数，例如 50000；不要填写小数或单位。',
+      maxMonthlyMinutes:
+        '请输入 0 或正整数；如果这是最后一档，请将分钟上限留空。',
+      voiceRate: '请输入大于 0 的金额，例如 0.16。',
+      smsRate: '请输入 0 或正数金额，例如 0.06。',
+    };
+    const typedField = field as SupplierPricingField;
+    return {
+      title: `第 ${tierIndex + 1} 档「${fieldNames[typedField] ?? field}」填写不正确`,
+      detail: details[typedField] ?? issue.message,
+      tierIndex,
+      field: typedField,
+    };
+  }
+
+  if (section === 'effectiveFrom') {
+    return {
+      title: '请选择生效月份',
+      detail: '供应价格新版本只能从未来自然月开始生效。',
+      field: 'effectiveMonth',
+    };
+  }
+  if (section === 'reason') {
+    return {
+      title: '发布原因填写不完整',
+      detail: issue.message,
+      field: 'reason',
+    };
+  }
+
+  return {
+    title: '价格阶梯配置不完整',
+    detail: issue.message,
   };
 }
 

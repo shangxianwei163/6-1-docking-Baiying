@@ -329,15 +329,24 @@ export const supplierPricingTierDraftSchema = z
     tierCode: z
       .string()
       .trim()
-      .min(2)
-      .max(64)
+      .min(2, '阶梯编码至少需要 2 个字符')
+      .max(64, '阶梯编码不能超过 64 个字符')
       .regex(
         /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
         '阶梯编码只能使用小写字母、数字和连字符',
       ),
-    name: z.string().trim().min(1).max(128),
-    minMonthlyMinutes: z.string().regex(/^\d+$/),
-    maxMonthlyMinutes: z.string().regex(/^\d+$/).nullable(),
+    name: z
+      .string()
+      .trim()
+      .min(1, '请输入阶梯名称')
+      .max(128, '阶梯名称不能超过 128 个字符'),
+    minMonthlyMinutes: z
+      .string()
+      .regex(/^\d+$/, '请输入 0 或正整数，不要包含小数或单位'),
+    maxMonthlyMinutes: z
+      .string()
+      .regex(/^\d+$/, '请输入 0 或正整数；仅最后一档可以留空')
+      .nullable(),
     voiceRate: positiveAmountSchema,
     smsRate: nonNegativeAmountSchema,
   })
@@ -346,8 +355,15 @@ export const supplierPricingTierDraftSchema = z
 export const publishSupplierPricingInputSchema = z
   .object({
     effectiveFrom: z.iso.datetime({ offset: true }),
-    reason: z.string().trim().min(2).max(500),
-    tiers: z.array(supplierPricingTierDraftSchema).min(1).max(12),
+    reason: z
+      .string()
+      .trim()
+      .min(2, '发布原因至少需要填写 2 个字符')
+      .max(500, '发布原因不能超过 500 个字符'),
+    tiers: z
+      .array(supplierPricingTierDraftSchema)
+      .min(1, '至少需要配置 1 档价格')
+      .max(12, '最多可以配置 12 档价格'),
   })
   .strict()
   .superRefine((input, context) => {
