@@ -499,21 +499,7 @@
   color: #d9ebe2;
 }
 .finance-tab-panel { min-width: 0; }
-.finance-page-intro {
-  align-items: center;
-  margin-bottom: 9px;
-}
-.finance-page-intro > div > span { font-size: 7px; }
-.finance-page-intro h2 {
-  margin-top: 3px;
-  font-size: 26px;
-  line-height: 1.08;
-}
-.finance-page-intro p {
-  margin-top: 3px;
-  line-height: 1.4;
-}
-.ledger-arrival-principle {
+.finance-policy-principle {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -525,19 +511,19 @@
   padding: 8px 12px;
   color: #397057;
 }
-.ledger-arrival-principle > svg { flex: none; }
-.ledger-arrival-principle > div {
+.finance-policy-principle > svg { flex: none; }
+.finance-policy-principle > div {
   display: flex;
   min-width: 0;
   align-items: baseline;
   gap: 10px;
 }
-.ledger-arrival-principle b {
+.finance-policy-principle b {
   flex: none;
   color: #315e4a;
   font-size: 9px;
 }
-.ledger-arrival-principle p {
+.finance-policy-principle p {
   overflow: hidden;
   color: #7a8981;
   font-size: 8px;
@@ -545,7 +531,10 @@
   white-space: nowrap;
 }
 .finance-ledger-panel .ops-table-wrap {
-  min-height: clamp(300px, 38vh, 420px);
+  min-height: clamp(360px, 45vh, 480px);
+}
+.ops-approval-panel .ops-table-wrap {
+  min-height: clamp(320px, 36vh, 400px);
 }
 .ops-fixed-form-dialog.ops-dialog {
   width: min(650px, calc(100vw - 28px));
@@ -633,9 +622,9 @@
 @media (max-width: 680px) {
   .finance-scope-tabs { grid-template-columns: 1fr; }
   .finance-scope-tabs > button { grid-template-columns: 32px minmax(0, 1fr) auto; }
-  .ledger-arrival-principle { align-items: flex-start; }
-  .ledger-arrival-principle > div { display: block; }
-  .ledger-arrival-principle p { margin-top: 3px; white-space: normal; }
+  .finance-policy-principle { align-items: flex-start; }
+  .finance-policy-principle > div { display: block; }
+  .finance-policy-principle p { margin-top: 3px; white-space: normal; }
   .ops-studio-pricing-form { grid-template-columns: 1fr; }
   .ops-studio-pricing-current { grid-template-columns: 30px minmax(0, 1fr); }
   .ops-studio-pricing-current p { grid-column: 1 / -1; }
@@ -649,6 +638,7 @@
 }
 @media (max-height: 680px) and (min-width: 681px) {
   .finance-ledger-panel .ops-table-wrap { min-height: 240px; }
+  .ops-approval-panel .ops-table-wrap { min-height: 210px; }
   .ops-fixed-form-dialog > [data-slot="dialog-header"] { padding: 14px 18px; }
   .ops-fixed-form-dialog .ops-form-grid { gap: 8px; padding: 12px 15px; }
   .ops-fixed-form-dialog .ops-field textarea { max-height: 58px; }

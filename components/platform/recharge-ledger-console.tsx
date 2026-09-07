@@ -173,7 +173,7 @@ export function RechargeLedgerConsole() {
 
   return (
     <>
-      <header className="ops-page-intro finance-page-intro">
+      <header className="ops-page-intro">
         <div>
           <span>ACCOUNT LEDGER / IMMUTABLE</span>
           <h2>充值记录</h2>
@@ -285,7 +285,7 @@ export function RechargeLedgerConsole() {
             />
           </section>
 
-          <aside className="ledger-arrival-principle" aria-label="到账原则">
+          <aside className="finance-policy-principle" aria-label="到账原则">
             <FileCheck2 aria-hidden="true" size={16} />
             <div>
               <b>到账原则：先核验，后入账</b>
@@ -525,21 +525,17 @@ export function RechargeLedgerConsole() {
           aria-labelledby="finance-tab-adjustments"
           tabIndex={0}
         >
+          <aside className="finance-policy-principle" aria-label="退款与调整">
+            <ShieldCheck aria-hidden="true" size={16} />
+            <div>
+              <b>退款与调整：申请与复核严格分离</b>
+              <p>退款、补账和冲减仅在另一管理员批准后生成唯一账本流水。</p>
+            </div>
+          </aside>
           <AccountAdjustmentConsole
             studios={studios}
             onLedgerChanged={refresh}
           />
-          <Panel title="退款与调整">
-            <div className="ops-policy-note">
-              <ShieldCheck aria-hidden="true" size={17} />
-              <div>
-                <b>申请与复核严格分离</b>
-                <p>
-                  退款、补账和冲减只有在另一管理员批准后才生成唯一账本流水。
-                </p>
-              </div>
-            </div>
-          </Panel>
         </section>
       )}
 

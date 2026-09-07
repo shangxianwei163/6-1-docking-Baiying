@@ -10,6 +10,7 @@ CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
 APP_URL = 'http://localhost:4173/'
 API_BASE_URL = 'http://127.0.0.1:8788'
 APPROVAL_SCREENSHOT = Path('/tmp/outbound-platform-stage6b2-approval.png')
+ADJUSTMENT_PAGE_SCREENSHOT = Path('/tmp/outbound-platform-stage6b2-adjustments.png')
 ADJUSTMENT_CREATE_SCREENSHOT = Path(
     '/tmp/outbound-platform-stage6b2-adjustment-create.png'
 )
@@ -143,6 +144,22 @@ def main() -> None:
         expect(page.locator('#finance-panel-ledger')).not_to_be_attached()
         expect(page.locator('#finance-panel-adjustments')).to_be_visible()
         expect(page.get_by_text('双人分离，批准后才记账', exact=True)).to_be_visible()
+        page.set_viewport_size({'width': 1327, 'height': 964})
+        policy_box = page.locator('.finance-policy-principle').bounding_box()
+        approval_panel_box = page.locator('.ops-approval-panel').bounding_box()
+        approval_table_box = page.locator(
+            '.ops-approval-panel .ops-table-wrap'
+        ).bounding_box()
+        if not policy_box or not approval_panel_box:
+            raise AssertionError('Adjustment policy or approval panel is missing')
+        if policy_box['y'] + policy_box['height'] > approval_panel_box['y']:
+            raise AssertionError('Adjustment policy must appear above the approval panel')
+        if not approval_table_box or approval_table_box['height'] < 340:
+            raise AssertionError(
+                f'Approval table area is too short: {approval_table_box}'
+            )
+        page.screenshot(path=str(ADJUSTMENT_PAGE_SCREENSHOT), full_page=True)
+        page.set_viewport_size({'width': 1600, 'height': 1000})
         adjustment_row = page.locator('tr', has_text='AR-20260906-90001')
         expect(adjustment_row.get_by_text(studio['name'], exact=True)).to_be_visible()
         expect(adjustment_row.get_by_text('可由你复核', exact=True)).to_be_visible()
@@ -231,6 +248,7 @@ def main() -> None:
         'Stage 6B-2 UI verification passed '
         '(read-only approval fixture + real audit + mobile layout)'
     )
+    print(f'Adjustment page screenshot: {ADJUSTMENT_PAGE_SCREENSHOT}')
     print(f'Approval screenshot: {APPROVAL_SCREENSHOT}')
     print(f'Adjustment create screenshot: {ADJUSTMENT_CREATE_SCREENSHOT}')
     print(f'Audit screenshot: {AUDIT_SCREENSHOT}')

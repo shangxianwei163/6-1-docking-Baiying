@@ -104,19 +104,16 @@ def main() -> None:
         expect(page.locator('#finance-panel-ledger')).to_be_visible()
         expect(page.locator('#finance-panel-adjustments')).not_to_be_attached()
         page.set_viewport_size({'width': 1327, 'height': 964})
-        intro_box = page.locator('.finance-page-intro').bounding_box()
-        principle_box = page.locator('.ledger-arrival-principle').bounding_box()
+        principle_box = page.locator('.finance-policy-principle').bounding_box()
         ledger_panel_box = page.locator('.finance-ledger-panel').bounding_box()
         ledger_table_box = page.locator(
             '.finance-ledger-panel .ops-table-wrap'
         ).bounding_box()
-        if not intro_box or intro_box['height'] > 74:
-            raise AssertionError(f'Finance page intro is not compact: {intro_box}')
         if not principle_box or not ledger_panel_box:
             raise AssertionError('Ledger principle or ledger panel is missing')
         if principle_box['y'] + principle_box['height'] > ledger_panel_box['y']:
             raise AssertionError('Arrival principle must appear above the ledger panel')
-        if not ledger_table_box or ledger_table_box['height'] < 360:
+        if not ledger_table_box or ledger_table_box['height'] < 425:
             raise AssertionError(f'Ledger table area is too short: {ledger_table_box}')
         if ledger_items:
             first_entry = ledger_items[0]
