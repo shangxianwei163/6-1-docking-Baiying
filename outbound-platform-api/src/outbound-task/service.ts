@@ -1295,7 +1295,7 @@ export function displayStatusFor(
   ) {
     return '执行完成';
   }
-  if (status === 'CALLING' || status === 'PAUSED') return '呼叫中';
+  if (status === 'CALLING' || status === 'PAUSED') return '执行中';
   if (status.endsWith('_FAILED')) return '执行失败';
   if (status === 'CANCELLED' || status === 'TERMINATED') return '已终止';
   return '执行中';

@@ -39,7 +39,7 @@ def find_fixtures() -> tuple[dict, dict, dict]:
         (
             task
             for task in tasks
-            if task['statuses']['display'] in ('执行中', '呼叫中')
+            if task['statuses']['display'] == '执行中'
         ),
         None,
     )
@@ -73,6 +73,8 @@ def main() -> None:
 
         completed_row = page.locator('tr', has_text=completed_task['taskNo'])
         expect(completed_row.get_by_text('执行完成', exact=True)).to_be_visible()
+        running_row = page.locator('tr', has_text=running_task['taskNo'])
+        expect(running_row.get_by_text('执行中', exact=True)).to_be_visible()
         expected_charge = f"¥{float(completed_task['billing']['customerCharge']):,.2f}"
         expect(completed_row.get_by_text(expected_charge, exact=True)).to_be_visible()
         completed_row.get_by_role('button', name='查看详情').click()
@@ -99,6 +101,10 @@ def main() -> None:
         dialog.locator('[data-slot="dialog-close"]').click()
 
         task_tabs = page.locator('.real-task-tabs')
+        task_tabs.get_by_role('button', name=re.compile(r'^执行中')).click()
+        expect(page.get_by_role('cell', name=running_task['taskNo'])).to_be_visible()
+        expect(page.get_by_role('cell', name=completed_task['taskNo'])).not_to_be_visible()
+
         task_tabs.get_by_role('button', name=re.compile(r'^执行完成')).click()
         expect(page.get_by_role('cell', name=completed_task['taskNo'])).to_be_visible()
         expect(page.get_by_role('cell', name=running_task['taskNo'])).not_to_be_visible()

@@ -8,8 +8,8 @@ import {
 describe('outbound task helpers', () => {
   it('maps execution states to the stable external display states', () => {
     expect(displayStatusFor('ACCEPTED')).toBe('执行中');
-    expect(displayStatusFor('CALLING')).toBe('呼叫中');
-    expect(displayStatusFor('PAUSED')).toBe('呼叫中');
+    expect(displayStatusFor('CALLING')).toBe('执行中');
+    expect(displayStatusFor('PAUSED')).toBe('执行中');
     expect(displayStatusFor('CALL_COMPLETED')).toBe('执行完成');
     expect(displayStatusFor('RECONCILING')).toBe('执行完成');
     expect(displayStatusFor('COMPLETED')).toBe('执行完成');
