@@ -250,6 +250,14 @@ export class PostgresOperationsConsoleService implements OperationsConsoleServic
         status: 'OVERDUE',
         updatedAt: now,
       });
+      const endpointSources = await saveEndpointDrafts(
+        tx,
+        studioId,
+        input.endpoints,
+        actorId,
+        now,
+        this.createId,
+      );
       await tx.insert(auditLogs).values({
         id: this.createId(),
         requestId,
@@ -262,6 +270,7 @@ export class PostgresOperationsConsoleService implements OperationsConsoleServic
           mcCode: input.mcCode,
           name: input.name,
           contactPhoneConfigured: Boolean(input.contactPhone),
+          endpointSources,
         },
         occurredAt: now,
       });
@@ -300,6 +309,14 @@ export class PostgresOperationsConsoleService implements OperationsConsoleServic
           updatedAt: now,
         })
         .where(eq(studios.id, studioId));
+      const endpointSources = await saveEndpointDrafts(
+        tx,
+        studioId,
+        input.endpoints,
+        actorId,
+        now,
+        this.createId,
+      );
       await tx.insert(auditLogs).values({
         id: this.createId(),
         requestId,
@@ -312,6 +329,7 @@ export class PostgresOperationsConsoleService implements OperationsConsoleServic
           previousMcCode: input.mcCode ? existing.mcCode : undefined,
           nextMcCode: input.mcCode,
           contactPhoneChanged: input.contactPhone !== undefined,
+          endpointSources,
         },
         occurredAt: now,
       });
@@ -1374,6 +1392,69 @@ async function assertMcCodeAvailable(
       409,
     );
   }
+}
+
+async function saveEndpointDrafts(
+  tx: Transaction,
+  studioId: string,
+  endpoints:
+    | Array<{
+        sourceSystem: 'ERP' | 'CRM';
+        resultUrl: string;
+        recordingUrl: string;
+      }>
+    | undefined,
+  actorId: string,
+  now: Date,
+  createId: () => string,
+) {
+  const changedSources: Array<'ERP' | 'CRM'> = [];
+  for (const endpoint of endpoints ?? []) {
+    const [latest] = await tx
+      .select()
+      .from(integrationEndpoints)
+      .where(
+        and(
+          eq(integrationEndpoints.studioId, studioId),
+          eq(integrationEndpoints.sourceSystem, endpoint.sourceSystem),
+        ),
+      )
+      .orderBy(desc(integrationEndpoints.version))
+      .limit(1);
+    if (
+      latest &&
+      latest.resultUrl === endpoint.resultUrl &&
+      latest.recordingUrl === endpoint.recordingUrl &&
+      (latest.status === 'DRAFT' || latest.status === 'ACTIVE')
+    ) {
+      continue;
+    }
+    await tx
+      .update(integrationEndpoints)
+      .set({ status: 'RETIRED', retiredAt: now })
+      .where(
+        and(
+          eq(integrationEndpoints.studioId, studioId),
+          eq(integrationEndpoints.sourceSystem, endpoint.sourceSystem),
+          eq(integrationEndpoints.status, 'DRAFT'),
+        ),
+      );
+    await tx.insert(integrationEndpoints).values({
+      id: createId(),
+      studioId,
+      sourceSystem: endpoint.sourceSystem,
+      version: (latest?.version ?? 0) + 1,
+      resultUrl: endpoint.resultUrl,
+      recordingUrl: endpoint.recordingUrl,
+      signingSecretRef: null,
+      status: 'DRAFT',
+      effectiveAt: null,
+      createdBy: actorId,
+      createdAt: now,
+    });
+    changedSources.push(endpoint.sourceSystem);
+  }
+  return changedSources;
 }
 
 function contactPhoneValues(

@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import type {
   OperatorAccountStatus,
+  OperatorEndpointDraftInput,
   OperatorStudio,
   OperatorStudioPage,
   OperatorStudioStatus,
@@ -64,6 +65,10 @@ type StudioForm = {
   mcCode: string;
   contactName: string;
   contactPhone: string;
+  erpResultUrl: string;
+  erpRecordingUrl: string;
+  crmResultUrl: string;
+  crmRecordingUrl: string;
 };
 
 type EditorState =
@@ -77,6 +82,10 @@ const emptyForm: StudioForm = {
   mcCode: '',
   contactName: '',
   contactPhone: '',
+  erpResultUrl: '',
+  erpRecordingUrl: '',
+  crmResultUrl: '',
+  crmRecordingUrl: '',
 };
 
 const accountFilters: Array<{
@@ -169,11 +178,17 @@ export function StudioOperationsConsole() {
   };
 
   const openEdit = (studio: OperatorStudio) => {
+    const erpEndpoint = latestEndpoint(studio, 'ERP');
+    const crmEndpoint = latestEndpoint(studio, 'CRM');
     setForm({
       name: studio.name,
       mcCode: studio.mcCode,
       contactName: studio.contactName ?? '',
       contactPhone: '',
+      erpResultUrl: erpEndpoint?.resultUrl ?? '',
+      erpRecordingUrl: erpEndpoint?.recordingUrl ?? '',
+      crmResultUrl: crmEndpoint?.resultUrl ?? '',
+      crmRecordingUrl: crmEndpoint?.recordingUrl ?? '',
     });
     setSaveError('');
     setEditor({ kind: 'edit', studio });
@@ -194,15 +209,20 @@ export function StudioOperationsConsole() {
     setSaving(true);
     setSaveError('');
     try {
+      const endpoints = endpointDraftsFromForm(
+        form,
+        editor.kind === 'edit' ? editor.studio : null,
+      );
       if (editor.kind === 'create') {
         const created = await createOperatorStudio({
           name: form.name,
           mcCode: form.mcCode,
           contactName: form.contactName || null,
           contactPhone: form.contactPhone || null,
+          ...(endpoints.length ? { endpoints } : {}),
         });
         setFeedback(
-          `影楼 ${created.businessCode} 已创建；充值和发布价格后才能受理任务。`,
+          `影楼 ${created.businessCode} 已创建${endpoints.length ? `；${endpoints.length} 组回传地址已保存为草稿` : ''}；充值和发布价格后才能受理任务。`,
         );
       } else {
         const updated = await updateOperatorStudio(editor.studio.id, {
@@ -210,8 +230,11 @@ export function StudioOperationsConsole() {
           mcCode: form.mcCode,
           contactName: form.contactName || null,
           ...(form.contactPhone ? { contactPhone: form.contactPhone } : {}),
+          ...(endpoints.length ? { endpoints } : {}),
         });
-        setFeedback(`${updated.name} 的资料已保存并写入审计日志。`);
+        setFeedback(
+          `${updated.name} 的资料已保存${endpoints.length ? `；${endpoints.length} 组回传地址已生成新草稿版本` : ''}，并写入审计日志。`,
+        );
       }
       setEditor(null);
       refresh();
@@ -726,7 +749,9 @@ function StudioEditor({
         if (!open && !saving) onClose();
       }}
     >
-      <DialogContent className="ops-dialog ops-editor-dialog">
+      <DialogContent
+        className={`ops-dialog ops-editor-dialog${isStatus ? '' : ' ops-studio-editor-dialog'}`}
+      >
         <DialogHeader>
           <span className="ops-dialog-kicker">AUDITED CHANGE</span>
           <DialogTitle>
@@ -800,15 +825,77 @@ function StudioEditor({
                 }
               />
             </label>
-            {editor?.kind === 'create' ? (
-              <div className="ops-form-note">
-                <ShieldCheck aria-hidden="true" size={14} />
-                <span>
-                  影楼编号自动生成；初始余额为
-                  0，账户状态为欠费，且不会自动生成回调端点。
-                </span>
+            <div className="ops-endpoint-form-heading ops-field-wide">
+              <KeyRound aria-hidden="true" size={14} />
+              <div>
+                <b>ERP 回传端点</b>
+                <span>结果和录音地址需要成对填写</span>
               </div>
-            ) : null}
+            </div>
+            <label className="ops-field">
+              <span>ERP 结果回传地址</span>
+              <input
+                type="url"
+                value={form.erpResultUrl}
+                onChange={(event) =>
+                  onFormChange({ ...form, erpResultUrl: event.target.value })
+                }
+                placeholder="https://erp.example.com/callback"
+              />
+            </label>
+            <label className="ops-field">
+              <span>ERP 录音回传地址</span>
+              <input
+                type="url"
+                value={form.erpRecordingUrl}
+                onChange={(event) =>
+                  onFormChange({
+                    ...form,
+                    erpRecordingUrl: event.target.value,
+                  })
+                }
+                placeholder="https://erp.example.com/recording-callback"
+              />
+            </label>
+            <div className="ops-endpoint-form-heading ops-field-wide">
+              <KeyRound aria-hidden="true" size={14} />
+              <div>
+                <b>CRM 回传端点</b>
+                <span>结果和录音地址需要成对填写</span>
+              </div>
+            </div>
+            <label className="ops-field">
+              <span>CRM 结果回传地址</span>
+              <input
+                type="url"
+                value={form.crmResultUrl}
+                onChange={(event) =>
+                  onFormChange({ ...form, crmResultUrl: event.target.value })
+                }
+                placeholder="https://crm.example.com/callback"
+              />
+            </label>
+            <label className="ops-field">
+              <span>CRM 录音回传地址</span>
+              <input
+                type="url"
+                value={form.crmRecordingUrl}
+                onChange={(event) =>
+                  onFormChange({
+                    ...form,
+                    crmRecordingUrl: event.target.value,
+                  })
+                }
+                placeholder="https://crm.example.com/recording-callback"
+              />
+            </label>
+            <div className="ops-form-note">
+              <ShieldCheck aria-hidden="true" size={14} />
+              <span>
+                回传地址仅保存为草稿版本；配置 HMAC/KMS
+                密钥并启用前不会用于真实回传。影楼编号自动生成，联系人手机号加密保存。
+              </span>
+            </div>
           </div>
         )}
         {error ? (
@@ -993,6 +1080,68 @@ function formatDateTime(value: string | null) {
         hour12: false,
       }).format(date);
 }
+
+function latestEndpoint(studio: OperatorStudio, sourceSystem: 'ERP' | 'CRM') {
+  return studio.endpoints
+    .filter((endpoint) => endpoint.sourceSystem === sourceSystem)
+    .sort((left, right) => right.version - left.version)[0];
+}
+
+function endpointDraftsFromForm(
+  form: StudioForm,
+  studio: OperatorStudio | null,
+): OperatorEndpointDraftInput[] {
+  const values = [
+    {
+      sourceSystem: 'ERP' as const,
+      resultUrl: form.erpResultUrl.trim(),
+      recordingUrl: form.erpRecordingUrl.trim(),
+    },
+    {
+      sourceSystem: 'CRM' as const,
+      resultUrl: form.crmResultUrl.trim(),
+      recordingUrl: form.crmRecordingUrl.trim(),
+    },
+  ];
+  return values.flatMap((endpoint) => {
+    const current = studio
+      ? latestEndpoint(studio, endpoint.sourceSystem)
+      : undefined;
+    if (Boolean(endpoint.resultUrl) !== Boolean(endpoint.recordingUrl)) {
+      throw new Error(
+        `${endpoint.sourceSystem} 的结果回传地址和录音回传地址需要同时填写`,
+      );
+    }
+    if (!endpoint.resultUrl) {
+      if (current) {
+        throw new Error(
+          `${endpoint.sourceSystem} 已有回传端点，不能直接清空；当前页面仅支持新增或修改地址`,
+        );
+      }
+      return [];
+    }
+    for (const [label, value] of [
+      ['结果回传地址', endpoint.resultUrl],
+      ['录音回传地址', endpoint.recordingUrl],
+    ] as const) {
+      try {
+        if (new URL(value).protocol !== 'https:') throw new Error();
+      } catch {
+        throw new Error(
+          `${endpoint.sourceSystem} ${label}必须是完整的 HTTPS 地址`,
+        );
+      }
+    }
+    if (
+      current?.resultUrl === endpoint.resultUrl &&
+      current.recordingUrl === endpoint.recordingUrl
+    ) {
+      return [];
+    }
+    return [endpoint];
+  });
+}
+
 function apiErrorMessage(error: unknown) {
   if (error instanceof PlatformApiError)
     return `${error.message}${error.requestId ? `（请求 ${error.requestId}）` : ''}`;

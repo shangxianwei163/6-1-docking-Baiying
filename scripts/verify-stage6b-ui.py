@@ -10,6 +10,7 @@ CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
 APP_URL = 'http://localhost:4173/'
 API_BASE_URL = 'http://127.0.0.1:8788'
 STUDIO_SCREENSHOT = Path('/tmp/outbound-platform-stage6b-studios.png')
+STUDIO_EDITOR_SCREENSHOT = Path('/tmp/outbound-platform-stage6b-studio-editor.png')
 LEDGER_PAGE_SCREENSHOT = Path('/tmp/outbound-platform-stage6b-ledger-page.png')
 LEDGER_SCREENSHOT = Path('/tmp/outbound-platform-stage6b-ledger.png')
 PRICING_SCREENSHOT = Path('/tmp/outbound-platform-stage6b-pricing.png')
@@ -97,13 +98,48 @@ def main() -> None:
                 '联系人手机号只写入加密字段，列表仅返回脱敏值。', exact=True
             )
         ).to_be_visible()
+        for label in [
+            'ERP 结果回传地址',
+            'ERP 录音回传地址',
+            'CRM 结果回传地址',
+            'CRM 录音回传地址',
+        ]:
+            expect(create_dialog.get_by_label(label, exact=True)).to_be_visible()
         assert_dialog_has_no_overflow(create_dialog, 'Studio editor dialog')
         page.set_viewport_size({'width': 1024, 'height': 640})
         assert_dialog_has_no_overflow(
             create_dialog, 'Studio editor dialog at short viewport'
         )
+        page.set_viewport_size({'width': 390, 'height': 844})
+        assert_dialog_has_no_overflow(
+            create_dialog, 'Studio editor dialog at mobile viewport'
+        )
         page.set_viewport_size({'width': 1600, 'height': 1000})
         create_dialog.locator('[data-slot="dialog-close"]').click()
+
+        studio_row.get_by_role('button', name=f"编辑 {studio['name']}").click()
+        edit_dialog = page.get_by_role('dialog')
+        expect(edit_dialog.get_by_text('编辑影楼资料', exact=True)).to_be_visible()
+        for source, result_label, recording_label in [
+            ('ERP', 'ERP 结果回传地址', 'ERP 录音回传地址'),
+            ('CRM', 'CRM 结果回传地址', 'CRM 录音回传地址'),
+        ]:
+            endpoints = [
+                endpoint
+                for endpoint in studio['endpoints']
+                if endpoint['sourceSystem'] == source
+            ]
+            if endpoints:
+                latest = max(endpoints, key=lambda endpoint: endpoint['version'])
+                expect(edit_dialog.get_by_label(result_label, exact=True)).to_have_value(
+                    latest['resultUrl']
+                )
+                expect(
+                    edit_dialog.get_by_label(recording_label, exact=True)
+                ).to_have_value(latest['recordingUrl'])
+        assert_dialog_has_no_overflow(edit_dialog, 'Studio edit dialog')
+        page.screenshot(path=str(STUDIO_EDITOR_SCREENSHOT), full_page=True)
+        edit_dialog.locator('[data-slot="dialog-close"]').click()
         page.screenshot(path=str(STUDIO_SCREENSHOT), full_page=True)
 
         page.get_by_role('button', name=re.compile(r'^充值记录')).click()
@@ -199,6 +235,7 @@ def main() -> None:
         raise AssertionError(f'Browser page errors: {page_errors}')
     print('Stage 6B UI verification passed (read-only + pricing preview)')
     print(f'Studio screenshot: {STUDIO_SCREENSHOT}')
+    print(f'Studio editor screenshot: {STUDIO_EDITOR_SCREENSHOT}')
     print(f'Ledger page screenshot: {LEDGER_PAGE_SCREENSHOT}')
     print(f'Ledger screenshot: {LEDGER_SCREENSHOT}')
     print(f'Pricing screenshot: {PRICING_SCREENSHOT}')

@@ -10,6 +10,7 @@ import { createDatabase, type Database } from './client.js';
 import {
   accountLedger,
   auditLogs,
+  integrationEndpoints,
   studioAccounts,
   studioPricingVersions,
   studios,
@@ -45,6 +46,18 @@ try {
       mcCode: `MC-STAGE6B-${Date.now()}`,
       contactName: '验收联系人',
       contactPhone: '13800138000',
+      endpoints: [
+        {
+          sourceSystem: 'ERP',
+          resultUrl: 'https://erp.stage6b.example.com/result',
+          recordingUrl: 'https://erp.stage6b.example.com/recording',
+        },
+        {
+          sourceSystem: 'CRM',
+          resultUrl: 'https://crm.stage6b.example.com/result',
+          recordingUrl: 'https://crm.stage6b.example.com/recording',
+        },
+      ],
     },
     'stage6b-verifier',
     createRequestId,
@@ -53,17 +66,47 @@ try {
   assert.match(created.businessCode, /^YL-\d{6}-\d{4,}$/);
   assert.equal(created.contactPhoneMasked, '138****8000');
   assert.equal(created.account.status, 'OVERDUE');
+  assert.equal(created.endpoints.length, 2);
+  assert.ok(
+    created.endpoints.every(
+      (endpoint) =>
+        endpoint.version === 1 &&
+        endpoint.status === 'DRAFT' &&
+        endpoint.secretConfigured === false,
+    ),
+  );
 
   const updateRequestId = randomUUID();
   requestIds.push(updateRequestId);
   const updated = await service.updateStudio(
     created.id,
-    { name: '阶段六账务验收影楼（已更新）', contactName: '新联系人' },
+    {
+      name: '阶段六账务验收影楼（已更新）',
+      contactName: '新联系人',
+      endpoints: [
+        {
+          sourceSystem: 'ERP',
+          resultUrl: 'https://erp-v2.stage6b.example.com/result',
+          recordingUrl: 'https://erp-v2.stage6b.example.com/recording',
+        },
+      ],
+    },
     'stage6b-verifier',
     updateRequestId,
   );
   assert.equal(updated.name, '阶段六账务验收影楼（已更新）');
   assert.equal(updated.contactName, '新联系人');
+  const erpVersions = updated.endpoints.filter(
+    (endpoint) => endpoint.sourceSystem === 'ERP',
+  );
+  assert.equal(erpVersions.length, 2);
+  assert.equal(erpVersions[0]?.version, 2);
+  assert.equal(erpVersions[0]?.status, 'DRAFT');
+  assert.equal(
+    erpVersions[0]?.resultUrl,
+    'https://erp-v2.stage6b.example.com/result',
+  );
+  assert.equal(erpVersions[1]?.status, 'RETIRED');
 
   for (const status of ['DISABLED', 'ACTIVE'] as const) {
     const requestId = randomUUID();
@@ -222,6 +265,7 @@ try {
         status: 'passed',
         checks: {
           studioLifecycle: true,
+          endpointDraftVersioning: true,
           encryptedContactAndMaskedRead: true,
           idempotentTopUpWithEvidence: true,
           idempotencyPayloadConflict: true,
@@ -243,6 +287,9 @@ try {
       await tx
         .delete(studioPricingVersions)
         .where(eq(studioPricingVersions.studioId, studioId!));
+      await tx
+        .delete(integrationEndpoints)
+        .where(eq(integrationEndpoints.studioId, studioId!));
       if (requestIds.length) {
         await tx
           .delete(auditLogs)

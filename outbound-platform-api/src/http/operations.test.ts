@@ -105,11 +105,29 @@ describe('operator configuration and billing HTTP API', () => {
         mcCode: 'MC-STAGE6-001',
         contactName: '测试联系人',
         contactPhone: '13800138000',
+        endpoints: [
+          {
+            sourceSystem: 'ERP',
+            resultUrl: 'https://erp.example.com/result',
+            recordingUrl: 'https://erp.example.com/recording',
+          },
+          {
+            sourceSystem: 'CRM',
+            resultUrl: 'https://crm.example.com/result',
+            recordingUrl: 'https://crm.example.com/recording',
+          },
+        ],
       }),
     });
     expect(created.status).toBe(201);
     expect(createStudio).toHaveBeenCalledWith(
-      expect.objectContaining({ mcCode: 'MC-STAGE6-001' }),
+      expect.objectContaining({
+        mcCode: 'MC-STAGE6-001',
+        endpoints: expect.arrayContaining([
+          expect.objectContaining({ sourceSystem: 'ERP' }),
+          expect.objectContaining({ sourceSystem: 'CRM' }),
+        ]),
+      }),
       'platform-admin',
       'request-operations-001',
     );
@@ -117,15 +135,51 @@ describe('operator configuration and billing HTTP API', () => {
     const updated = await app.request(`/api/v1/studios/${studioId}`, {
       method: 'PATCH',
       headers: jsonHeaders,
-      body: JSON.stringify({ name: '阶段六测试影楼（更新）' }),
+      body: JSON.stringify({
+        name: '阶段六测试影楼（更新）',
+        endpoints: [
+          {
+            sourceSystem: 'ERP',
+            resultUrl: 'https://erp-v2.example.com/result',
+            recordingUrl: 'https://erp-v2.example.com/recording',
+          },
+        ],
+      }),
     });
     expect(updated.status).toBe(200);
     expect(updateStudio).toHaveBeenCalledWith(
       studioId,
-      { name: '阶段六测试影楼（更新）' },
+      {
+        name: '阶段六测试影楼（更新）',
+        endpoints: [
+          {
+            sourceSystem: 'ERP',
+            resultUrl: 'https://erp-v2.example.com/result',
+            recordingUrl: 'https://erp-v2.example.com/recording',
+          },
+        ],
+      },
       'platform-admin',
       'request-operations-001',
     );
+
+    const insecureEndpoint = await app.request('/api/v1/studios', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        name: '不安全端点影楼',
+        mcCode: 'MC-INSECURE-001',
+        endpoints: [
+          {
+            sourceSystem: 'ERP',
+            resultUrl: 'http://erp.example.com/result',
+            recordingUrl: 'https://erp.example.com/recording',
+          },
+        ],
+      }),
+    });
+    expect(insecureEndpoint.status).toBe(400);
+    expect(createStudio).toHaveBeenCalledTimes(1);
 
     const disabled = await app.request(`/api/v1/studios/${studioId}/status`, {
       method: 'POST',

@@ -43,6 +43,38 @@ export const operatorEndpointSchema = z.object({
   createdAt: z.iso.datetime({ offset: true }),
 });
 
+const operatorEndpointUrlSchema = z
+  .url()
+  .refine((value) => new URL(value).protocol === 'https:', {
+    message: '回传地址必须使用 HTTPS',
+  });
+
+export const operatorEndpointDraftInputSchema = z
+  .object({
+    sourceSystem: sourceSystemSchema,
+    resultUrl: operatorEndpointUrlSchema,
+    recordingUrl: operatorEndpointUrlSchema,
+  })
+  .strict();
+
+const operatorEndpointDraftsInputSchema = z
+  .array(operatorEndpointDraftInputSchema)
+  .min(1)
+  .max(2)
+  .superRefine((endpoints, context) => {
+    const sources = new Set<string>();
+    endpoints.forEach((endpoint, index) => {
+      if (sources.has(endpoint.sourceSystem)) {
+        context.addIssue({
+          code: 'custom',
+          path: [index, 'sourceSystem'],
+          message: '同一来源只能提交一组回传地址',
+        });
+      }
+      sources.add(endpoint.sourceSystem);
+    });
+  });
+
 export const operatorPricingVersionSchema = z.object({
   id: z.uuid(),
   studioId: z.uuid(),
@@ -111,6 +143,7 @@ export const createOperatorStudioInputSchema = z
       .regex(/^\+?[1-9]\d{6,14}$/, '联系人手机号格式不正确')
       .nullable()
       .optional(),
+    endpoints: operatorEndpointDraftsInputSchema.optional(),
   })
   .strict();
 
@@ -125,6 +158,7 @@ export const updateOperatorStudioInputSchema = z
       .regex(/^\+?[1-9]\d{6,14}$/, '联系人手机号格式不正确')
       .nullable()
       .optional(),
+    endpoints: operatorEndpointDraftsInputSchema.optional(),
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0, '至少提交一个变更字段');
@@ -797,6 +831,9 @@ export const operatorDeadLetterActionResultSchema = z.object({
 });
 
 export type OperatorStudio = z.infer<typeof operatorStudioSchema>;
+export type OperatorEndpointDraftInput = z.infer<
+  typeof operatorEndpointDraftInputSchema
+>;
 export type OperatorStudioPage = z.infer<typeof operatorStudioPageSchema>;
 export type CreateOperatorStudioInput = z.infer<
   typeof createOperatorStudioInputSchema
