@@ -638,6 +638,11 @@
   .real-task-date-field .unified-date-trigger { width: 100%; }
 }
 
+/* External integration reference: grouped catalog, consistent with the original Baiying callback document. */
+.api-catalog-group{display:grid;gap:8px}.api-catalog-group+.api-catalog-group{margin-top:10px;padding-top:14px;border-top:1px solid #dfe7e2}.api-catalog-group>h3{display:flex;align-items:center;justify-content:space-between;padding:0 2px;color:#46655a;font-size:9px;font-weight:700;letter-spacing:.06em}.api-catalog-group>h3 small{display:grid;min-width:18px;height:18px;place-items:center;border-radius:99px;background:#e7efea;color:#6d8177;font-size:8px;letter-spacing:0}.api-catalog-card{gap:5px;padding:11px 12px}.api-catalog-card>small{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2}.api-catalog-card>span b[data-method=GET],.api-method[data-method=GET],.api-endpoint>span[data-method=GET]{background:#32739a}.api-state.is-pending{background:#fff0d8;color:#9a6516!important}.api-direction{display:inline-flex;margin-left:6px;border:1px solid #d9e4dd;border-radius:3px;padding:3px 7px;color:#60766c!important;font-size:8px!important;letter-spacing:.03em!important}.api-contract-source{color:#87968f!important;font-size:9px!important;letter-spacing:0!important;white-space:nowrap}.api-reference{scroll-behavior:smooth}.api-reference-hero{position:relative}.api-reference-hero:after{position:absolute;right:28px;bottom:0;left:28px;height:2px;background:linear-gradient(90deg,#3d9b70,transparent);content:""}.api-parameter-table td:last-child{min-width:260px}.api-code-block{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}.api-docs-public .api-catalog{max-width:none}
+@media(max-width:900px){.api-catalog-group{grid-template-columns:repeat(2,minmax(0,1fr))}.api-catalog-group>h3{grid-column:1/-1}.api-catalog{max-height:420px}}
+@media(max-width:560px){.api-catalog-group{grid-template-columns:1fr}.api-direction{margin-top:6px;margin-left:0}.api-contract-source{display:none}.api-parameter-table table{min-width:640px}}
+
 /* Dialog shells stay inside the viewport. Dense records scroll only inside their
    dedicated content region, never on the dialog frame itself. */
 .studio-dialog-panel,
