@@ -91,15 +91,25 @@ def assert_hainan_scope(page, studio_tab, hainan_tab) -> None:
     expect(
         page.get_by_role('columnheader', name='月度用量范围（万分钟）')
     ).to_be_visible()
-    expect(page.get_by_text('0（含）— 1（不含）', exact=True).first).to_be_visible()
-    expect(page.get_by_text('1（含）— 5（不含）', exact=True).first).to_be_visible()
-    expect(page.get_by_text('≥ 5', exact=True).first).to_be_visible()
-    expect(panel.get_by_text('启用中', exact=True)).to_have_count(3)
-    expect(panel.get_by_text('待启用', exact=True)).to_have_count(4)
+    expect(panel.get_by_text('0（含）— 1（不含）', exact=True)).to_have_count(1)
+    expect(panel.get_by_text('1（含）— 5（不含）', exact=True)).to_have_count(1)
+    expect(panel.get_by_text('≥ 5', exact=True)).to_have_count(1)
+    expect(panel.get_by_text('5（含）— 6（不含）', exact=True)).to_have_count(1)
+    expect(panel.get_by_text('≥ 6', exact=True)).to_have_count(1)
+    tier_rows = panel.locator('.ops-tier-table tbody tr')
+    expect(tier_rows).to_have_count(4)
+    expect(panel.locator('.ops-tier-table .status-green')).to_have_count(3)
+    expect(panel.locator('.ops-tier-table .status-blue')).to_have_count(4)
     expect(panel.get_by_text('系统初始化导入', exact=True)).to_have_count(3)
     expect(panel.get_by_text('平台管理员', exact=True)).to_have_count(4)
     expect(panel.get_by_text('历史配置迁移', exact=True)).to_have_count(3)
     expect(panel.get_by_text('运营后台发布', exact=True)).to_have_count(4)
+    range_cells = tier_rows.locator('td:nth-child(3)').all_inner_texts()
+    voice_cells = tier_rows.locator('td:nth-child(4)').all_inner_texts()
+    if len(range_cells) != len(set(range_cells)):
+        raise AssertionError(f'Duplicate supplier range values rendered: {range_cells}')
+    if len(voice_cells) != len(set(voice_cells)):
+        raise AssertionError(f'Duplicate supplier voice rates rendered: {voice_cells}')
 
 
 def assert_internal_scroll(page, panel_id: str) -> None:
@@ -363,9 +373,10 @@ def main() -> None:
     print(
         'Pricing tabs UI verification passed '
         '(content separation + internal vertical scrolling + fixed tabs + '
-        'click/keyboard switching + active/scheduled supplier rows + readable '
-        'publisher labels + ten-thousand-minute display/input conversion + localized '
-        'validation + fully visible dialog footer + mobile layout)'
+        'click/keyboard switching + merged version comparisons without repeated '
+        'range/rate values + readable publisher labels + ten-thousand-minute '
+        'display/input conversion + localized validation + fully visible dialog '
+        'footer + mobile layout)'
     )
     print(f'Studio screenshot: {STUDIO_SCREENSHOT}')
     print(f'Hainan screenshot: {HAINAN_SCREENSHOT}')

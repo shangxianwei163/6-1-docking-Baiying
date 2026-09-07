@@ -229,26 +229,103 @@
 .supplier-pricing-maintenance{align-items:center}.supplier-pricing-maintenance>div{min-width:0;flex:1}.supplier-maintain-button{display:inline-flex;flex:none;align-items:center;gap:6px;white-space:nowrap}.supplier-pricing-scheduled{display:flex;align-items:flex-start;gap:8px;border-bottom:1px solid #dce8e1;background:#fff8e8;padding:10px 15px;color:#805f25}.supplier-pricing-scheduled>svg{flex:none}.supplier-pricing-scheduled b,.supplier-pricing-scheduled span{display:block}.supplier-pricing-scheduled b{font-size:9px}.supplier-pricing-scheduled span{margin-top:3px;font-size:8px;line-height:1.5}.supplier-pricing-dialog.ops-dialog{width:min(1040px,calc(100vw - 28px));max-width:1040px;overflow:hidden}.supplier-pricing-editor-body,.supplier-pricing-preview{max-height:calc(100dvh - 220px);overflow-y:auto;padding:16px 18px;scrollbar-color:#afc2b8 transparent;scrollbar-width:thin}.supplier-pricing-guardrail,.supplier-pricing-preview-seal{display:flex;align-items:flex-start;gap:9px;border:1px solid #d7e5dc;border-left:3px solid #3e8b67;border-radius:7px;background:#eff7f2;padding:10px 12px;color:#386750}.supplier-pricing-guardrail svg,.supplier-pricing-preview-seal svg{flex:none}.supplier-pricing-guardrail b,.supplier-pricing-preview-seal b{font-size:10px}.supplier-pricing-guardrail p,.supplier-pricing-preview-seal p{margin-top:4px;color:#6d8076;font-size:8px;line-height:1.55}.supplier-pricing-meta-fields{display:grid;grid-template-columns:220px minmax(0,1fr);gap:10px;margin-top:12px}.supplier-pricing-meta-fields label,.supplier-tier-editor-list label{display:grid;min-width:0;gap:5px}.supplier-pricing-meta-fields label>span,.supplier-tier-editor-list label>span{color:#6f7d76;font-size:8px}.supplier-pricing-meta-fields input,.supplier-tier-editor-list input{width:100%;height:34px;border:1px solid #d3ddd7;border-radius:5px;background:#fff;padding:0 9px;color:#29483d;font-size:9px;outline:none}.supplier-pricing-meta-fields input:focus,.supplier-tier-editor-list input:focus{border-color:#5d9b7c;box-shadow:0 0 0 2px #e4f0e9}.supplier-tier-editor{margin-top:12px;overflow:hidden;border:1px solid #dce5df;border-radius:8px;background:#fff}.supplier-tier-editor>header{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid #e3eae6;background:#f7faf8;padding:10px 12px}.supplier-tier-editor>header b,.supplier-tier-editor>header span{display:block}.supplier-tier-editor>header b{color:#315649;font-size:10px}.supplier-tier-editor>header span{margin-top:3px;color:#849089;font-size:8px}.supplier-tier-editor>header button{display:inline-flex;align-items:center;gap:4px;border:1px solid #bdd4c7;border-radius:5px;background:#edf7f1;padding:6px 8px;color:#286d50;font-size:8px;font-weight:700}.supplier-tier-editor-list{display:grid;overflow-x:auto}.supplier-tier-editor-list article{display:grid;min-width:900px;grid-template-columns:26px 1.15fr 1fr .86fr .86fr .86fr .78fr 28px;align-items:end;gap:8px;border-top:1px solid #edf1ee;padding:10px 11px}.supplier-tier-editor-list article:first-child{border-top:0}.supplier-tier-index{display:grid;width:22px;height:22px;place-items:center;align-self:center;border-radius:50%;background:#e5f1e9;color:#2d7456;font-size:8px;font-weight:800}.supplier-tier-remove{display:grid;width:28px;height:34px;place-items:center;border:1px solid #ead2cf;border-radius:5px;background:#fff7f6;color:#aa5049}.supplier-tier-remove:disabled{cursor:not-allowed;opacity:.35}.supplier-pricing-validation{display:flex;align-items:center;gap:6px;margin-top:10px;border-radius:6px;background:#fff8e8;padding:8px 10px;color:#8b6323;font-size:8px}.supplier-pricing-error{margin:0 18px 14px}.supplier-pricing-preview-table{margin-top:12px;border:1px solid #dfe7e2;border-radius:7px}.supplier-pricing-preview-table .data-table{min-width:680px}.supplier-pricing-dialog [data-slot=dialog-footer] .primary-button,.supplier-pricing-dialog [data-slot=dialog-footer] .ops-icon-button{display:inline-flex;align-items:center;justify-content:center;gap:5px}
 .table-empty-cell{height:96px;color:#7a8981;text-align:center}
 .ops-tier-table {
-  min-width: 1050px;
+  min-width: 1000px;
+}
+.ops-tier-table th,
+.ops-tier-table td {
+  padding: 10px 12px;
 }
 .ops-tier-table tr.is-scheduled td {
   background: #f7fbfd;
 }
+.ops-tier-table tr.has-scheduled td {
+  background: #fbfdfc;
+}
 .ops-tier-table tr.is-scheduled:hover td {
   background: #f1f8fb;
 }
+.ops-tier-table tr.has-scheduled:hover td {
+  background: #f6faf8;
+}
+.supplier-status-stack,
+.supplier-version-stack,
 .supplier-publisher {
   display: grid;
-  min-width: 110px;
+  align-content: start;
+  gap: 5px;
+}
+.supplier-status-stack {
+  justify-items: start;
+}
+.supplier-comparison-value {
+  display: grid;
   gap: 3px;
+  min-width: 96px;
+}
+.supplier-comparison-value > b {
+  color: #42594f;
+  font-size: 9px;
+  font-weight: 550;
+}
+.supplier-comparison-value > b.is-emphasized,
+.supplier-comparison-value > span > b.is-emphasized {
+  color: #244f3e;
+  font-weight: 750;
+}
+.supplier-comparison-value > small {
+  width: max-content;
+  border-radius: 99px;
+  background: #edf3ef;
+  padding: 2px 5px;
+  color: #73847b;
+  font-size: 7px;
+}
+.supplier-comparison-value.is-changed {
+  display: grid;
+  min-width: 155px;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+.supplier-comparison-value.is-changed > span {
+  display: grid;
+  gap: 2px;
+}
+.supplier-comparison-value.is-changed small,
+.supplier-version-stack small,
+.supplier-publisher small {
+  color: #829088;
+  font-size: 7px;
+}
+.supplier-comparison-value.is-changed i {
+  color: #4c9473;
+  font-size: 11px;
+  font-style: normal;
+}
+.supplier-comparison-value.is-changed > span:last-child b {
+  color: #216c4d;
+}
+.supplier-version-stack > span {
+  display: grid;
+  gap: 2px;
+  color: #4f655b;
+  font-size: 8.5px;
+}
+.supplier-publisher {
+  min-width: 118px;
+}
+.supplier-publisher > span {
+  display: grid;
+  gap: 2px;
 }
 .supplier-publisher b {
   color: #2f5144;
   font-size: 9px;
 }
-.supplier-publisher small {
+.supplier-publisher em {
   color: #89968f;
   font-size: 7.5px;
+  font-style: normal;
 }
 .supplier-pricing-validation {
   align-items: flex-start;

@@ -19,6 +19,7 @@ import {
   Store,
 } from 'lucide-react';
 import type {
+  OperatorSupplierPricingTier,
   PricingOverview,
   PricingPreview,
   PublishPricingInput,
@@ -201,16 +202,10 @@ export function PricingOperationsConsole() {
     });
   };
 
-  const supplierTierRows = [
-    ...overview.supplierTiers.map((tier) => ({
-      tier,
-      status: 'ACTIVE' as const,
-    })),
-    ...overview.scheduledSupplierTiers.map((tier) => ({
-      tier,
-      status: 'SCHEDULED' as const,
-    })),
-  ];
+  const supplierTierRows = mergeSupplierTierVersions(
+    overview.supplierTiers,
+    overview.scheduledSupplierTiers,
+  );
 
   return (
     <section className="pricing-operations-page">
@@ -751,38 +746,101 @@ export function PricingOperationsConsole() {
               </thead>
               <tbody>
                 {supplierTierRows.length ? (
-                  supplierTierRows.map(({ tier, status }) => {
-                    const publisher = supplierPublisher(tier.publishedBy);
+                  supplierTierRows.map(({ tierCode, current, scheduled }) => {
+                    const tier = scheduled ?? current!;
                     return (
                       <tr
-                        key={tier.id}
-                        className={status === 'SCHEDULED' ? 'is-scheduled' : ''}
+                        key={tierCode}
+                        className={
+                          scheduled
+                            ? current
+                              ? 'has-scheduled'
+                              : 'is-scheduled'
+                            : ''
+                        }
                       >
                         <td>
                           <b>{tier.name}</b>
-                          <span className="table-meta">{tier.tierCode}</span>
+                          <span className="table-meta">{tierCode}</span>
                         </td>
                         <td>
-                          <Status tone={status === 'ACTIVE' ? 'green' : 'blue'}>
-                            {status === 'ACTIVE' ? '启用中' : '待启用'}
-                          </Status>
-                        </td>
-                        <td>
-                          {formatTierRange(
-                            tier.minMonthlyMinutes,
-                            tier.maxMonthlyMinutes,
-                          )}
-                        </td>
-                        <td>
-                          <b>{formatRate(tier.voiceRate)} / 分钟</b>
-                        </td>
-                        <td>{formatRate(tier.smsRate)} / 条</td>
-                        <td>{formatDateTime(tier.effectiveFrom)}</td>
-                        <td aria-label={`发布人：${publisher.label}`}>
-                          <span className="supplier-publisher">
-                            <b>{publisher.label}</b>
-                            <small>{publisher.detail}</small>
+                          <span className="supplier-status-stack">
+                            {current ? (
+                              <Status tone="green">启用中</Status>
+                            ) : null}
+                            {scheduled ? (
+                              <Status tone="blue">待启用</Status>
+                            ) : null}
                           </span>
+                        </td>
+                        <td>
+                          <SupplierTierComparisonValue
+                            currentValue={
+                              current
+                                ? formatTierRange(
+                                    current.minMonthlyMinutes,
+                                    current.maxMonthlyMinutes,
+                                  )
+                                : null
+                            }
+                            scheduledValue={
+                              scheduled
+                                ? formatTierRange(
+                                    scheduled.minMonthlyMinutes,
+                                    scheduled.maxMonthlyMinutes,
+                                  )
+                                : null
+                            }
+                          />
+                        </td>
+                        <td>
+                          <SupplierTierComparisonValue
+                            currentValue={
+                              current
+                                ? `${formatRate(current.voiceRate)} / 分钟`
+                                : null
+                            }
+                            scheduledValue={
+                              scheduled
+                                ? `${formatRate(scheduled.voiceRate)} / 分钟`
+                                : null
+                            }
+                            emphasized
+                          />
+                        </td>
+                        <td>
+                          <SupplierTierComparisonValue
+                            currentValue={
+                              current
+                                ? `${formatRate(current.smsRate)} / 条`
+                                : null
+                            }
+                            scheduledValue={
+                              scheduled
+                                ? `${formatRate(scheduled.smsRate)} / 条`
+                                : null
+                            }
+                          />
+                        </td>
+                        <td>
+                          <SupplierVersionStack
+                            current={
+                              current
+                                ? formatDateTime(current.effectiveFrom)
+                                : null
+                            }
+                            scheduled={
+                              scheduled
+                                ? formatDateTime(scheduled.effectiveFrom)
+                                : null
+                            }
+                          />
+                        </td>
+                        <td>
+                          <SupplierPublisherStack
+                            current={current?.publishedBy ?? null}
+                            scheduled={scheduled?.publishedBy ?? null}
+                          />
                         </td>
                       </tr>
                     );
@@ -1599,6 +1657,130 @@ function formatDateTime(value: string) {
 }
 function formatTierRange(minimum: string, maximum: string | null) {
   return formatTenThousandMinuteRange(minimum, maximum);
+}
+function mergeSupplierTierVersions(
+  currentTiers: OperatorSupplierPricingTier[],
+  scheduledTiers: OperatorSupplierPricingTier[],
+) {
+  const rows = new Map<
+    string,
+    {
+      tierCode: string;
+      current: OperatorSupplierPricingTier | null;
+      scheduled: OperatorSupplierPricingTier | null;
+    }
+  >();
+  currentTiers.forEach((tier) => {
+    rows.set(tier.tierCode, {
+      tierCode: tier.tierCode,
+      current: tier,
+      scheduled: null,
+    });
+  });
+  scheduledTiers.forEach((tier) => {
+    const existing = rows.get(tier.tierCode);
+    rows.set(tier.tierCode, {
+      tierCode: tier.tierCode,
+      current: existing?.current ?? null,
+      scheduled: tier,
+    });
+  });
+  return [...rows.values()];
+}
+function SupplierTierComparisonValue({
+  currentValue,
+  scheduledValue,
+  emphasized = false,
+}: {
+  currentValue: string | null;
+  scheduledValue: string | null;
+  emphasized?: boolean;
+}) {
+  if (currentValue && scheduledValue && currentValue !== scheduledValue) {
+    return (
+      <span className="supplier-comparison-value is-changed">
+        <span>
+          <small>当前</small>
+          <b className={emphasized ? 'is-emphasized' : ''}>{currentValue}</b>
+        </span>
+        <i aria-hidden="true">→</i>
+        <span>
+          <small>待启用</small>
+          <b className={emphasized ? 'is-emphasized' : ''}>{scheduledValue}</b>
+        </span>
+      </span>
+    );
+  }
+
+  const value = scheduledValue ?? currentValue ?? '—';
+  return (
+    <span className="supplier-comparison-value">
+      <b className={emphasized ? 'is-emphasized' : ''}>{value}</b>
+      <small>
+        {currentValue && scheduledValue
+          ? '预约沿用'
+          : scheduledValue
+            ? '新增'
+            : '当前版本'}
+      </small>
+    </span>
+  );
+}
+function SupplierVersionStack({
+  current,
+  scheduled,
+}: {
+  current: string | null;
+  scheduled: string | null;
+}) {
+  return (
+    <span className="supplier-version-stack">
+      {current ? (
+        <span>
+          <small>启用</small>
+          {current}
+        </span>
+      ) : null}
+      {scheduled ? (
+        <span>
+          <small>待启用</small>
+          {scheduled}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+function SupplierPublisherStack({
+  current,
+  scheduled,
+}: {
+  current: string | null;
+  scheduled: string | null;
+}) {
+  return (
+    <span className="supplier-publisher">
+      {current ? <SupplierPublisher value={current} status="启用" /> : null}
+      {scheduled ? (
+        <SupplierPublisher value={scheduled} status="待启用" />
+      ) : null}
+    </span>
+  );
+}
+function SupplierPublisher({
+  value,
+  status,
+}: {
+  value: string;
+  status: string;
+}) {
+  const publisher = supplierPublisher(value);
+  return (
+    <span>
+      <small>{status}</small>
+      <b>{publisher.label}</b>
+      <em>{publisher.detail}</em>
+    </span>
+  );
 }
 function supplierPublisher(value: string) {
   if (value === 'phase1-static-import') {
