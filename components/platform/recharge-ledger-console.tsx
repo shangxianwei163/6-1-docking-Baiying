@@ -173,7 +173,7 @@ export function RechargeLedgerConsole() {
 
   return (
     <>
-      <header className="ops-page-intro">
+      <header className="ops-page-intro finance-page-intro">
         <div>
           <span>ACCOUNT LEDGER / IMMUTABLE</span>
           <h2>充值记录</h2>
@@ -285,10 +285,18 @@ export function RechargeLedgerConsole() {
             />
           </section>
 
+          <aside className="ledger-arrival-principle" aria-label="到账原则">
+            <FileCheck2 aria-hidden="true" size={16} />
+            <div>
+              <b>到账原则：先核验，后入账</b>
+              <p>账户行锁内一次完成余额更新、账本写入和审计留痕。</p>
+            </div>
+          </aside>
+
           <Panel
             title="真实账户流水"
             meta={loading ? '正在读取账本…' : `共 ${page.total} 笔`}
-            className="ops-panel"
+            className="ops-panel finance-ledger-panel"
           >
             <div className="ops-toolbar">
               <label className="search-box ops-search">
@@ -507,16 +515,6 @@ export function RechargeLedgerConsole() {
                 </button>
               </div>
             </footer>
-          </Panel>
-
-          <Panel title="到账原则">
-            <div className="ops-policy-note">
-              <FileCheck2 aria-hidden="true" size={17} />
-              <div>
-                <b>先核验，后入账</b>
-                <p>充值接口在账户行锁内同时更新余额、写入账本和审计记录。</p>
-              </div>
-            </div>
           </Panel>
         </section>
       ) : (
