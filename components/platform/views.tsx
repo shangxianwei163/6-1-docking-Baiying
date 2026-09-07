@@ -40,6 +40,7 @@ import {
   type BaiyingScript,
   type BaiyingScriptStatus,
   type DataCategory,
+  type LineSyncInfo,
   type PlannedTask,
   type PlannedTaskStatus,
   type SourceDataCategory,
@@ -222,7 +223,13 @@ export function ScriptListView() {
       .then(({ lines }) => {
         if (cancelled) return;
         setLineOptions(lines);
-        setLineId((current) => current || lines[0]?.userPhoneId || '');
+        setLineId(
+          (current) =>
+            current ||
+            lines.find((line) => line.isActive)?.userPhoneId ||
+            lines[0]?.userPhoneId ||
+            '',
+        );
       })
       .catch((requestError: unknown) => {
         if (!cancelled)
@@ -343,14 +350,14 @@ export function ScriptListView() {
     bindingScript &&
     selectedCategories.length &&
     selectedStudio &&
-    selectedLine,
+    selectedLine?.isActive,
   );
   const saveBinding = async () => {
     if (
       !bindingScript ||
       !selectedCategories.length ||
       !selectedStudio ||
-      !selectedLine
+      !selectedLine?.isActive
     )
       return;
     setSavingBinding(true);
@@ -705,7 +712,8 @@ export function ScriptListView() {
                       ...lineOptions.map((line) => ({
                         value: line.userPhoneId,
                         label: line.phoneName || line.phone,
-                        description: `#${line.userPhoneId}`,
+                        description: `${line.isActive ? '百应可用' : '已停用，仅保留历史绑定'} · #${line.userPhoneId}`,
+                        disabled: !line.isActive,
                       })),
                     ]}
                     onValueChange={setLineId}
@@ -720,7 +728,7 @@ export function ScriptListView() {
                     <Check size={12} />
                     影楼
                   </li>
-                  <li className={selectedLine ? 'is-ready' : ''}>
+                  <li className={selectedLine?.isActive ? 'is-ready' : ''}>
                     <Check size={12} />
                     线路
                   </li>
@@ -1445,6 +1453,12 @@ function workflowTypeLabel(value: string) {
   return value === 'OUT_TRIGGER' ? '外呼触发' : value || '接口未返回';
 }
 
+function formatLineSyncTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('zh-CN', { hour12: false });
+}
+
 export function ApiInterfaceView() {
   return <ApiDocumentation />;
 }
@@ -1461,6 +1475,7 @@ export function LineManagementView() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [sync, setSync] = useState<LineSyncInfo | null>(null);
   const [bindingLine, setBindingLine] = useState<BaiyingLine | null>(null);
   const [selectedStudioIds, setSelectedStudioIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -1472,6 +1487,7 @@ export function LineManagementView() {
       .then((result) => {
         if (!cancelled) {
           setLines(result.lines);
+          setSync(result.sync);
           setError('');
         }
       })
@@ -1491,8 +1507,12 @@ export function LineManagementView() {
     };
   }, [submittedQuery, refreshKey]);
 
+  const activeLines = lines.filter((line) => line.isActive);
+  const inactiveLines = lines.filter((line) => !line.isActive);
   const boundStudioIds = new Set(
-    lines.flatMap((line) => line.studios.map((studio) => studio.studioId)),
+    activeLines.flatMap((line) =>
+      line.studios.map((studio) => studio.studioId),
+    ),
   );
   const openBinding = (line: BaiyingLine) => {
     setBindingLine(line);
@@ -1554,7 +1574,7 @@ export function LineManagementView() {
       <PageIntro
         eyebrow="BAIYING PHONE LINES"
         title="线路管理"
-        summary="实时读取百应“获得公司的外呼线路列表”接口，卡片内容均来自接口；平台仅维护线路与影楼的多选绑定。"
+        summary="优先实时同步百应外呼线路；同步异常时自动展示上次成功缓存，历史线路及其业务绑定会完整保留。"
         action={
           <button
             className="primary-button planned-refresh-button"
@@ -1571,13 +1591,19 @@ export function LineManagementView() {
         aria-label="线路资源概览"
       >
         <div>
-          <span>接口返回线路</span>
-          <b>{loading && !lines.length ? '—' : lines.length}</b>
-          <small>当前查询结果</small>
+          <span>
+            {sync?.status === 'STALE' ? '缓存可用线路' : '百应可用线路'}
+          </span>
+          <b>{loading && !lines.length ? '—' : activeLines.length}</b>
+          <small>
+            {sync?.status === 'STALE'
+              ? '上次成功同步时可用'
+              : '本次同步仍可使用'}
+          </small>
         </div>
         <div>
           <span>已绑定线路</span>
-          <b>{lines.filter((line) => line.studios.length).length}</b>
+          <b>{activeLines.filter((line) => line.studios.length).length}</b>
           <small>至少绑定 1 家影楼</small>
         </div>
         <div>
@@ -1586,14 +1612,18 @@ export function LineManagementView() {
           <small>去重后的影楼数量</small>
         </div>
         <div>
-          <span>未绑定线路</span>
-          <b>{lines.filter((line) => !line.studios.length).length}</b>
-          <small>等待配置影楼</small>
+          <span>历史线路</span>
+          <b>{inactiveLines.length}</b>
+          <small>未在百应本次结果中</small>
         </div>
       </section>
       <Panel
         title="百应外呼线路"
-        meta={loading ? '正在同步接口…' : `共 ${lines.length} 条`}
+        meta={
+          loading
+            ? '正在同步接口…'
+            : `共 ${lines.length} 条 · ${activeLines.length} 条可用`
+        }
         className="planned-card-panel"
       >
         <form className="planned-toolbar" onSubmit={search}>
@@ -1609,11 +1639,15 @@ export function LineManagementView() {
             查询
           </button>
         </form>
-        <div className="planned-api-note">
-          <span>百应实时数据</span>
+        <div
+          className={`planned-api-note ${sync?.status === 'STALE' ? 'is-stale' : ''}`}
+          role={sync?.status === 'STALE' ? 'status' : undefined}
+        >
+          <span>{sync?.status === 'STALE' ? '缓存数据' : '百应实时数据'}</span>
           <p>
-            线路字段来自 phone-list
-            接口；影楼绑定由本平台保存，一条线路可以绑定多家影楼。
+            {sync?.status === 'STALE'
+              ? `${sync.message ?? '实时同步失败，当前展示缓存'}${sync.lastSuccessfulAt ? `；缓存同步于 ${formatLineSyncTime(sync.lastSuccessfulAt)}` : ''}；错误代码 ${sync.errorCode ?? 'LINE_SYNC_UNAVAILABLE'}。`
+              : `线路字段来自 phone-list 接口；影楼绑定由本平台保存，一条线路可以绑定多家影楼。${sync?.lastSuccessfulAt ? ` 本次同步于 ${formatLineSyncTime(sync.lastSuccessfulAt)}。` : ''}`}
           </p>
         </div>
         {error ? (
@@ -1639,13 +1673,21 @@ export function LineManagementView() {
           <div className="planned-card-grid line-card-grid">
             {lines.map((line) => (
               <article
-                className="planned-card line-card"
+                className={`planned-card line-card ${line.isActive ? '' : 'is-inactive'}`}
                 key={line.userPhoneId}
               >
                 <header>
                   <div>
-                    <span className="planned-status planned-status-green">
-                      接口返回
+                    <span
+                      className={`planned-status ${line.isActive ? 'planned-status-green' : 'planned-status-amber'}`}
+                    >
+                      {line.isActive
+                        ? sync?.status === 'STALE'
+                          ? '上次可用'
+                          : '百应可用'
+                        : sync?.status === 'STALE'
+                          ? '历史停用'
+                          : '本次未返回'}
                     </span>
                     <small>线路 ID</small>
                   </div>
@@ -1701,11 +1743,22 @@ export function LineManagementView() {
                     <small>
                       {line.studios
                         .map((studio) => studio.studioName)
-                        .join('、') || '点击配置线路适用的影楼'}
+                        .join('、') ||
+                        (line.isActive
+                          ? '点击配置线路适用的影楼'
+                          : '历史线路不可新增绑定')}
                     </small>
                   </div>
-                  <button type="button" onClick={() => openBinding(line)}>
-                    {line.studios.length ? '修改绑定' : '绑定影楼'}{' '}
+                  <button
+                    type="button"
+                    onClick={() => openBinding(line)}
+                    disabled={!line.isActive}
+                  >
+                    {!line.isActive
+                      ? '历史保留'
+                      : line.studios.length
+                        ? '修改绑定'
+                        : '绑定影楼'}{' '}
                     <ChevronRight size={13} />
                   </button>
                 </div>
@@ -1721,7 +1774,9 @@ export function LineManagementView() {
         )}
         <footer className="planned-pagination">
           <span>
-            查询参数由平台过滤，线路数据实时来自百应 phone-list 接口。
+            {sync?.status === 'STALE'
+              ? '百应当前不可用，页面使用本地缓存；点击“同步百应线路”可重新尝试。'
+              : '查询参数由平台过滤；未在本次结果中的线路会转为历史状态，不会删除已有绑定。'}
           </span>
         </footer>
       </Panel>

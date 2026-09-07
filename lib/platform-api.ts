@@ -198,7 +198,17 @@ export type BaiyingLine = {
   nonlocalSellingRate: number;
   lineAmount: number;
   billPeriod: number;
+  isActive: boolean;
+  syncedAt: string;
   studios: LineStudioBinding[];
+};
+
+export type LineSyncInfo = {
+  status: 'LIVE' | 'STALE';
+  attemptedAt: string;
+  lastSuccessfulAt: string | null;
+  errorCode: 'LINE_SYNC_CONFLICT' | 'LINE_SYNC_UNAVAILABLE' | null;
+  message: string | null;
 };
 
 export type BaiyingApiSection<T> =
@@ -381,7 +391,9 @@ export function loadLines(query = '') {
   const search = new URLSearchParams();
   if (query.trim()) search.set('query', query.trim());
   const suffix = search.size ? `?${search}` : '';
-  return request<{ lines: BaiyingLine[] }>(`/api/v1/lines${suffix}`);
+  return request<{ lines: BaiyingLine[]; sync: LineSyncInfo }>(
+    `/api/v1/lines${suffix}`,
+  );
 }
 
 export function loadManagedLines() {

@@ -53,7 +53,13 @@ import type {
   BaiyingRobotClient,
   BaiyingWorkflowClient,
 } from '../baiying/client.js';
-import type { LineRepository } from '../line/repository.js';
+import {
+  LineBindingConflictError,
+  LineSyncFailure,
+  type LineRepository,
+  type LineSyncErrorCode,
+  type ManagedLine,
+} from '../line/repository.js';
 import type { PlannedTaskRepository } from '../planned-task/repository.js';
 import {
   ScriptBindingConflictError,
@@ -957,8 +963,54 @@ export function createApp(dependencies: AppDependencies) {
     const query = z
       .object({ query: z.string().trim().max(200).optional() })
       .parse(context.req.query());
-    const lines = await lineClient.listPhones(companyId);
-    const managedLines = await lineRepository.replaceManagedLines(lines);
+    const attemptedAt = clock().toISOString();
+    let managedLines: ManagedLine[];
+    let sync:
+      | {
+          status: 'LIVE';
+          attemptedAt: string;
+          lastSuccessfulAt: string;
+          errorCode: null;
+          message: null;
+        }
+      | {
+          status: 'STALE';
+          attemptedAt: string;
+          lastSuccessfulAt: string | null;
+          errorCode: LineSyncErrorCode;
+          message: string;
+        };
+
+    try {
+      const lines = await lineClient.listPhones(companyId);
+      managedLines = await lineRepository.synchronizeManagedLines(lines);
+      sync = {
+        status: 'LIVE',
+        attemptedAt,
+        lastSuccessfulAt: attemptedAt,
+        errorCode: null,
+        message: null,
+      };
+    } catch (error) {
+      const errorCode =
+        error instanceof LineSyncFailure ? error.code : 'LINE_SYNC_UNAVAILABLE';
+      const cachedLines = await lineRepository.listManagedLines();
+      if (!cachedLines.length) {
+        throw new LineSyncFailure(
+          errorCode,
+          '百应线路同步失败，且暂无可用缓存，请稍后重试',
+          { cause: error },
+        );
+      }
+      managedLines = cachedLines;
+      sync = {
+        status: 'STALE',
+        attemptedAt,
+        lastSuccessfulAt: latestLineSyncAt(cachedLines),
+        errorCode,
+        message: '实时同步失败，当前展示上次成功缓存',
+      };
+    }
     const needle = query.query?.toLocaleLowerCase('zh-CN');
     const filtered = needle
       ? managedLines.filter((line) =>
@@ -978,6 +1030,7 @@ export function createApp(dependencies: AppDependencies) {
     }
     return context.json(
       success(context.get('requestId'), {
+        sync,
         lines: filtered.map((line) => ({
           ...line,
           studios: studiosByLine.get(line.userPhoneId) ?? [],
@@ -1388,6 +1441,30 @@ export function createApp(dependencies: AppDependencies) {
         409,
       );
     }
+    if (error instanceof LineSyncFailure) {
+      return context.json(
+        {
+          error: {
+            code: error.code,
+            message: error.message,
+            requestId,
+          },
+        },
+        503,
+      );
+    }
+    if (error instanceof LineBindingConflictError) {
+      return context.json(
+        {
+          error: {
+            code: 'LINE_BINDING_CONFLICT',
+            message: error.message,
+            requestId,
+          },
+        },
+        409,
+      );
+    }
     if (error instanceof UnauthorizedError) {
       return context.json(
         { error: { code: 'UNAUTHORIZED', message: error.message, requestId } },
@@ -1693,6 +1770,14 @@ function managedLineRepository(dependencies: AppDependencies) {
 
 function success<T>(requestId: string, data: T) {
   return { requestId, data };
+}
+
+function latestLineSyncAt(lines: ManagedLine[]): string | null {
+  let latest: string | null = null;
+  for (const line of lines) {
+    if (!latest || line.syncedAt > latest) latest = line.syncedAt;
+  }
+  return latest;
 }
 
 async function settleSection<T>(promise: Promise<T>) {

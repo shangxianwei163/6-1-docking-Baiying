@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BaiyingLineClient, BaiyingRobotClient, BaiyingWorkflowClient } from '../baiying/client.js';
-import type { LineRepository } from '../line/repository.js';
+import { LineSyncFailure, type LineRepository } from '../line/repository.js';
 import type { MappingRepository } from '../mapping/repository.js';
 import type { PlannedTaskRepository, SourceDataCategory } from '../planned-task/repository.js';
 import type { ScriptRepository } from '../script/repository.js';
@@ -129,21 +129,23 @@ function createLineDependencies() {
     updatedBy: actorId,
     updatedAt: binding.updatedAt,
   })));
-  const replaceManagedLines = vi.fn<LineRepository['replaceManagedLines']>(async (lines) => lines.map((line) => ({
+  const synchronizeManagedLines = vi.fn<LineRepository['synchronizeManagedLines']>(async (lines) => lines.map((line) => ({
     ...line,
+    isActive: true,
     syncedAt: '2026-09-04T02:00:00.000Z',
   })));
   const listManagedLines = vi.fn<LineRepository['listManagedLines']>(async () => [{
     ...sourceLine,
+    isActive: true,
     syncedAt: '2026-09-04T02:00:00.000Z',
   }]);
   const lineRepository: LineRepository = {
-    replaceManagedLines,
+    synchronizeManagedLines,
     listManagedLines,
     listBindings: vi.fn(async () => [binding]),
     saveBindings,
   };
-  return { lineClient, lineRepository, listPhones, replaceManagedLines, listManagedLines, saveBindings };
+  return { lineClient, lineRepository, listPhones, synchronizeManagedLines, listManagedLines, saveBindings };
 }
 
 describe('mapping API', () => {
@@ -518,12 +520,91 @@ describe('mapping API', () => {
     expect(response.status).toBe(200);
     const payload = await response.json();
     expect(payload.data.lines[0]).toMatchObject({
-      userPhoneId: '1788320', phoneName: '华东测试线路', studios: [{ studioName: '紫藤影像' }],
+      userPhoneId: '1788320', phoneName: '华东测试线路', isActive: true, studios: [{ studioName: '紫藤影像' }],
     });
+    expect(payload.data.sync).toMatchObject({ status: 'LIVE', errorCode: null });
     expect(lines.listPhones).toHaveBeenCalledWith('263120');
-    expect(lines.replaceManagedLines).toHaveBeenCalledWith(expect.arrayContaining([
+    expect(lines.synchronizeManagedLines).toHaveBeenCalledWith(expect.arrayContaining([
       expect.objectContaining({ userPhoneId: '1788320' }),
     ]));
+  });
+
+  it('returns cached phone lines with stale metadata when Baiying is unavailable', async () => {
+    const lines = createLineDependencies();
+    lines.listPhones.mockRejectedValueOnce(new Error('upstream timeout'));
+    const app = createApp({
+      mappingRepository: createRepository().repository,
+      ...lines,
+      baiyingCompanyId: '263120',
+      consoleOrigin: 'http://localhost:4173',
+      workerSharedSecret: 'a-worker-secret-longer-than-24-characters',
+      clock: () => new Date('2026-09-07T02:00:00.000Z'),
+      createId: () => fixedId,
+    });
+
+    const response = await app.request('/api/v1/lines');
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: {
+        sync: {
+          status: 'STALE',
+          attemptedAt: '2026-09-07T02:00:00.000Z',
+          lastSuccessfulAt: '2026-09-04T02:00:00.000Z',
+          errorCode: 'LINE_SYNC_UNAVAILABLE',
+        },
+        lines: [{ userPhoneId: '1788320', isActive: true }],
+      },
+    });
+    expect(lines.listManagedLines).toHaveBeenCalledOnce();
+    expect(lines.synchronizeManagedLines).not.toHaveBeenCalled();
+  });
+
+  it('reports a safe conflict code while serving cached phone lines', async () => {
+    const lines = createLineDependencies();
+    lines.synchronizeManagedLines.mockRejectedValueOnce(new LineSyncFailure(
+      'LINE_SYNC_CONFLICT',
+      '线路同步与现有业务数据冲突，请联系管理员处理',
+    ));
+    const app = createApp({
+      mappingRepository: createRepository().repository,
+      ...lines,
+      baiyingCompanyId: '263120',
+      consoleOrigin: 'http://localhost:4173',
+      workerSharedSecret: 'a-worker-secret-longer-than-24-characters',
+      createId: () => fixedId,
+    });
+
+    const response = await app.request('/api/v1/lines');
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: {
+        sync: { status: 'STALE', errorCode: 'LINE_SYNC_CONFLICT' },
+        lines: [{ userPhoneId: '1788320' }],
+      },
+    });
+  });
+
+  it('returns an explicit synchronization error when no cached line exists', async () => {
+    const lines = createLineDependencies();
+    lines.listPhones.mockRejectedValueOnce(new Error('upstream timeout'));
+    lines.listManagedLines.mockResolvedValueOnce([]);
+    const app = createApp({
+      mappingRepository: createRepository().repository,
+      ...lines,
+      baiyingCompanyId: '263120',
+      consoleOrigin: 'http://localhost:4173',
+      workerSharedSecret: 'a-worker-secret-longer-than-24-characters',
+      createId: () => fixedId,
+    });
+
+    const response = await app.request('/api/v1/lines');
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: 'LINE_SYNC_UNAVAILABLE',
+        message: '百应线路同步失败，且暂无可用缓存，请稍后重试',
+      },
+    });
   });
 
   it('returns platform-managed lines without calling Baiying again', async () => {

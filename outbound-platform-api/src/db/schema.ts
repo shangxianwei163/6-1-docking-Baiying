@@ -503,6 +503,7 @@ export const baiyingPhoneLines = pgTable('baiying_phone_line', {
   nonlocalSellingRate: doublePrecision('nonlocal_selling_rate').notNull(),
   lineAmount: doublePrecision('line_amount').notNull(),
   billPeriod: integer('bill_period').notNull(),
+  isActive: boolean('is_active').notNull().default(true),
   syncedAt: timestamp('synced_at', { withTimezone: true })
     .notNull()
     .defaultNow(),

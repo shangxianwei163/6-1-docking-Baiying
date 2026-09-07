@@ -62,12 +62,18 @@ export class PostgresScriptRepository implements ScriptRepository {
           userPhoneId: baiyingPhoneLines.userPhoneId,
           phone: baiyingPhoneLines.phone,
           phoneName: baiyingPhoneLines.phoneName,
+          isActive: baiyingPhoneLines.isActive,
         })
         .from(baiyingPhoneLines)
         .where(eq(baiyingPhoneLines.userPhoneId, input.lineId))
         .limit(1);
       if (!line) {
         throw new ScriptBindingConflictError(`线路 ${input.lineId} 尚未同步`);
+      }
+      if (!line.isActive) {
+        throw new ScriptBindingConflictError(
+          `线路 ${input.lineId} 已停用，请选择百应当前可用线路`,
+        );
       }
       const [lineStudioBinding] = await tx
         .select({ userPhoneId: baiyingLineStudioBindings.userPhoneId })

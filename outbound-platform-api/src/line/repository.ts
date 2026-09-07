@@ -19,12 +19,35 @@ export type ManagedLine = {
   nonlocalSellingRate: number;
   lineAmount: number;
   billPeriod: number;
+  isActive: boolean;
   syncedAt: string;
 };
 
+export type LineSyncErrorCode = 'LINE_SYNC_CONFLICT' | 'LINE_SYNC_UNAVAILABLE';
+
+export class LineSyncFailure extends Error {
+  readonly name = 'LineSyncFailure';
+
+  constructor(
+    readonly code: LineSyncErrorCode,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+  }
+}
+
+export class LineBindingConflictError extends Error {}
+
 export interface LineRepository {
-  replaceManagedLines(lines: Omit<ManagedLine, 'syncedAt'>[]): Promise<ManagedLine[]>;
+  synchronizeManagedLines(
+    lines: Omit<ManagedLine, 'isActive' | 'syncedAt'>[],
+  ): Promise<ManagedLine[]>;
   listManagedLines(): Promise<ManagedLine[]>;
   listBindings(userPhoneIds: string[]): Promise<LineStudioBinding[]>;
-  saveBindings(input: LineStudioBindingInput, actorId: string, requestId: string): Promise<LineStudioBinding[]>;
+  saveBindings(
+    input: LineStudioBindingInput,
+    actorId: string,
+    requestId: string,
+  ): Promise<LineStudioBinding[]>;
 }
