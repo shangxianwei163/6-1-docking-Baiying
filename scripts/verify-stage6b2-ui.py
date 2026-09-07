@@ -10,7 +10,29 @@ CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
 APP_URL = 'http://localhost:4173/'
 API_BASE_URL = 'http://127.0.0.1:8788'
 APPROVAL_SCREENSHOT = Path('/tmp/outbound-platform-stage6b2-approval.png')
+ADJUSTMENT_CREATE_SCREENSHOT = Path(
+    '/tmp/outbound-platform-stage6b2-adjustment-create.png'
+)
 AUDIT_SCREENSHOT = Path('/tmp/outbound-platform-stage6b2-audit.png')
+
+
+def assert_dialog_has_no_overflow(dialog, label: str) -> None:
+    metrics = dialog.evaluate(
+        '''element => ({
+            clientWidth: element.clientWidth,
+            scrollWidth: element.scrollWidth,
+            clientHeight: element.clientHeight,
+            scrollHeight: element.scrollHeight,
+            overflowX: getComputedStyle(element).overflowX,
+            overflowY: getComputedStyle(element).overflowY,
+        })'''
+    )
+    if metrics['overflowX'] != 'hidden' or metrics['overflowY'] != 'hidden':
+        raise AssertionError(f'{label} allows scrolling: {metrics}')
+    if metrics['scrollWidth'] > metrics['clientWidth'] + 1:
+        raise AssertionError(f'{label} clips horizontally: {metrics}')
+    if metrics['scrollHeight'] > metrics['clientHeight'] + 1:
+        raise AssertionError(f'{label} clips vertically: {metrics}')
 
 
 def api_json(path: str) -> dict:
@@ -110,7 +132,16 @@ def main() -> None:
         page.goto(APP_URL, wait_until='networkidle')
 
         page.get_by_role('button', name=re.compile(r'^充值记录')).click()
-        expect(page.get_by_text('退款与人工调整审批', exact=True)).to_be_visible()
+        ledger_tab = page.get_by_role('tab', name=re.compile(r'^真实账户流水'))
+        adjustment_tab = page.get_by_role(
+            'tab', name=re.compile(r'^退款与人工调整审批')
+        )
+        expect(ledger_tab).to_have_attribute('aria-selected', 'true')
+        adjustment_tab.click()
+        expect(adjustment_tab).to_have_attribute('aria-selected', 'true')
+        expect(ledger_tab).to_have_attribute('aria-selected', 'false')
+        expect(page.locator('#finance-panel-ledger')).not_to_be_attached()
+        expect(page.locator('#finance-panel-adjustments')).to_be_visible()
         expect(page.get_by_text('双人分离，批准后才记账', exact=True)).to_be_visible()
         adjustment_row = page.locator('tr', has_text='AR-20260906-90001')
         expect(adjustment_row.get_by_text(studio['name'], exact=True)).to_be_visible()
@@ -139,6 +170,13 @@ def main() -> None:
             )
         ).to_be_visible()
         expect(create_dialog.get_by_role('button', name='提交给他人复核')).to_be_disabled()
+        assert_dialog_has_no_overflow(create_dialog, 'Adjustment request dialog')
+        page.set_viewport_size({'width': 1024, 'height': 640})
+        assert_dialog_has_no_overflow(
+            create_dialog, 'Adjustment request dialog at short viewport'
+        )
+        page.set_viewport_size({'width': 1600, 'height': 1000})
+        page.screenshot(path=str(ADJUSTMENT_CREATE_SCREENSHOT), full_page=True)
         create_dialog.get_by_role('button', name='取消').click()
 
         page.get_by_role('button', name=re.compile(r'^操作日志')).click()
@@ -169,8 +207,16 @@ def main() -> None:
         install_adjustment_fixture(mobile, studio)
         mobile.goto(APP_URL, wait_until='networkidle')
         mobile.get_by_role('button', name=re.compile(r'^充值记录')).click()
-        expect(mobile.get_by_text('退款与人工调整审批', exact=True)).to_be_visible()
+        mobile.get_by_role(
+            'tab', name=re.compile(r'^退款与人工调整审批')
+        ).click()
         expect(mobile.get_by_text('双人分离，批准后才记账', exact=True)).to_be_visible()
+        mobile.get_by_role('button', name='发起退款 / 调整').click()
+        mobile_create_dialog = mobile.get_by_role('dialog')
+        assert_dialog_has_no_overflow(
+            mobile_create_dialog, 'Adjustment request dialog on mobile'
+        )
+        mobile_create_dialog.get_by_role('button', name='取消').click()
         document_width = mobile.evaluate('document.documentElement.scrollWidth')
         viewport_width = mobile.evaluate('window.innerWidth')
         if document_width > viewport_width + 1:
@@ -186,6 +232,7 @@ def main() -> None:
         '(read-only approval fixture + real audit + mobile layout)'
     )
     print(f'Approval screenshot: {APPROVAL_SCREENSHOT}')
+    print(f'Adjustment create screenshot: {ADJUSTMENT_CREATE_SCREENSHOT}')
     print(f'Audit screenshot: {AUDIT_SCREENSHOT}')
 
 

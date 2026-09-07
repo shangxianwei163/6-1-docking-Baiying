@@ -542,7 +542,7 @@ function CreateAdjustmentDialog({
         if (!next && !saving) onClose();
       }}
     >
-      <DialogContent className="ops-dialog ops-editor-dialog">
+      <DialogContent className="ops-dialog ops-editor-dialog ops-fixed-form-dialog adjustment-create-dialog">
         <DialogHeader>
           <span className="ops-dialog-kicker">MAKER / CHECKER REQUEST</span>
           <DialogTitle>发起退款或人工调整</DialogTitle>

@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { type KeyboardEvent, useEffect, useState } from 'react';
 import {
   AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
   CheckCircle2,
+  ClipboardCheck,
   CircleDollarSign,
   FileCheck2,
   LoaderCircle,
@@ -73,7 +74,10 @@ const channelOptions: Array<{
   { value: 'OTHER', label: '其他渠道' },
 ];
 
+type FinanceScope = 'LEDGER' | 'ADJUSTMENTS';
+
 export function RechargeLedgerConsole() {
+  const [scope, setScope] = useState<FinanceScope>('LEDGER');
   const [studios, setStudios] = useState<OperatorStudio[]>([]);
   const [keywordDraft, setKeywordDraft] = useState('');
   const [keyword, setKeyword] = useState('');
@@ -144,6 +148,28 @@ export function RechargeLedgerConsole() {
 
   const refresh = () => setRefreshToken((current) => current + 1);
   const selectedStudio = studios.find((studio) => studio.id === studioId);
+  const handleScopeKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    let nextScope: FinanceScope | null = null;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      nextScope = scope === 'LEDGER' ? 'ADJUSTMENTS' : 'LEDGER';
+    } else if (event.key === 'Home') {
+      nextScope = 'LEDGER';
+    } else if (event.key === 'End') {
+      nextScope = 'ADJUSTMENTS';
+    }
+    if (!nextScope) return;
+    event.preventDefault();
+    setScope(nextScope);
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById(
+          nextScope === 'LEDGER'
+            ? 'finance-tab-ledger'
+            : 'finance-tab-adjustments',
+        )
+        ?.focus();
+    });
+  };
 
   return (
     <>
@@ -155,296 +181,369 @@ export function RechargeLedgerConsole() {
             每笔余额变更来自不可变账本；线下充值携带渠道、凭证编号与文件名元数据，并支持幂等重放。
           </p>
         </div>
-        <button
-          type="button"
-          className="primary-button"
-          onClick={() => setDialogOpen(true)}
-        >
-          <Plus aria-hidden="true" size={14} />
-          登记线下充值
-        </button>
-      </header>
-
-      {feedback ? (
-        <output className="ops-feedback is-success">
-          <CheckCircle2 aria-hidden="true" size={16} />
-          <span>{feedback}</span>
-          <button type="button" onClick={() => setFeedback('')}>
-            关闭
-          </button>
-        </output>
-      ) : null}
-
-      <section className="ops-metric-grid" aria-label="账务汇总">
-        <MetricCard
-          icon={ArrowUpRight}
-          label="当前筛选充值"
-          value={formatMoney(page.totalTopUp)}
-          note="TOP_UP 账本正向金额"
-        />
-        <MetricCard
-          icon={ArrowDownRight}
-          label="当前筛选通话扣费"
-          value={formatMoney(page.totalCharge)}
-          note="CALL_CHARGE + OVERAGE"
-        />
-        <MetricCard
-          icon={WalletCards}
-          label="账本流水"
-          value={`${page.total} 笔`}
-          note={selectedStudio ? selectedStudio.name : '全部影楼'}
-        />
-        <MetricCard
-          icon={ShieldCheck}
-          label="凭证规则"
-          value="元数据留痕"
-          note="文件内容待 OSS 阶段归档"
-        />
-      </section>
-
-      <Panel
-        title="真实账户流水"
-        meta={loading ? '正在读取账本…' : `共 ${page.total} 笔`}
-        className="ops-panel"
-      >
-        <div className="ops-toolbar">
-          <label className="search-box ops-search">
-            <Search aria-hidden="true" size={15} />
-            <input
-              value={keywordDraft}
-              onChange={(event) => setKeywordDraft(event.target.value)}
-              placeholder="搜索影楼、业务键、任务编号、操作人或备注"
-            />
-          </label>
-          <UnifiedSelect
-            ariaLabel="账本影楼"
-            value={studioId}
-            className="filter-button"
-            popupLabel="按影楼筛选"
-            options={[
-              { value: 'ALL', label: '全部影楼' },
-              ...studios.map((studio) => ({
-                value: studio.id,
-                label: `${studio.businessCode} · ${studio.name}`,
-              })),
-            ]}
-            onValueChange={(value) => {
-              setStudioId(value);
-              setPageNum(0);
-            }}
-          />
-          <UnifiedSelect
-            ariaLabel="账本流水类型"
-            value={entryType}
-            className="filter-button"
-            popupLabel="按流水类型筛选"
-            options={[
-              { value: 'ALL', label: '全部流水类型' },
-              ...Object.entries(ledgerMeta).map(([value, meta]) => ({
-                value,
-                label: meta.label,
-              })),
-            ]}
-            onValueChange={(value) => {
-              setEntryType(value as LedgerEntryType | 'ALL');
-              setPageNum(0);
-            }}
-          />
-          <UnifiedSelect
-            ariaLabel="账本每页数量"
-            value={String(pageSize)}
-            className="filter-button"
-            popupLabel="每页展示数量"
-            options={[
-              { value: '20', label: '20 条 / 页' },
-              { value: '50', label: '50 条 / 页' },
-              { value: '100', label: '100 条 / 页' },
-            ]}
-            onValueChange={(value) => {
-              setPageSize(Number(value));
-              setPageNum(0);
-            }}
-          />
+        {scope === 'LEDGER' ? (
           <button
             type="button"
-            className="ops-icon-button"
-            disabled={loading}
-            onClick={refresh}
+            className="primary-button"
+            onClick={() => setDialogOpen(true)}
           >
-            <RefreshCw
-              aria-hidden="true"
-              className={loading ? 'is-spinning' : ''}
-              size={14}
-            />
-            刷新
+            <Plus aria-hidden="true" size={14} />
+            登记线下充值
           </button>
-        </div>
-
-        {error ? (
-          <div className="ops-feedback is-error" role="alert">
-            <AlertTriangle aria-hidden="true" size={16} />
-            <div>
-              <b>账户账本读取失败</b>
-              <span>{error}</span>
-            </div>
-            <button type="button" onClick={refresh}>
-              重试
-            </button>
-          </div>
         ) : null}
+      </header>
 
-        <div className="table-wrap ops-table-wrap" aria-busy={loading}>
-          <table className="data-table ops-ledger-table">
-            <caption className="sr-only">真实账户账本流水</caption>
-            <thead>
-              <tr>
-                <th>流水 / 时间</th>
-                <th>影楼</th>
-                <th>类型</th>
-                <th>发生金额</th>
-                <th>变更后余额</th>
-                <th>任务 / 业务键</th>
-                <th>渠道 / 凭证</th>
-                <th>操作与备注</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && !page.items.length
-                ? Array.from({ length: 4 }, (_, index) => (
-                    <SkeletonRow key={index} />
-                  ))
-                : page.items.map((entry) => {
-                    const meta = ledgerMeta[entry.type];
-                    const positive = Number(entry.amount) >= 0;
-                    return (
-                      <tr key={entry.ledgerId}>
-                        <td>
-                          <code className="ops-ledger-id">
-                            {entry.ledgerId.slice(0, 8)}
-                          </code>
-                          <span className="table-meta">
-                            {formatDateTime(entry.occurredAt)}
-                          </span>
-                        </td>
-                        <td>
-                          <b>{entry.studioName}</b>
-                          <span className="table-meta">
-                            {entry.studioBusinessCode}
-                          </span>
-                        </td>
-                        <td>
-                          <Status tone={meta.tone}>{meta.label}</Status>
-                        </td>
-                        <td>
-                          <b
-                            className={
-                              positive
-                                ? 'ops-amount-positive'
-                                : 'ops-amount-negative'
-                            }
-                          >
-                            {positive ? '+' : ''}
-                            {formatMoney(entry.amount)}
-                          </b>
-                        </td>
-                        <td>
-                          <b>{formatMoney(entry.balanceAfter)}</b>
-                          <span className="table-meta">
-                            可用 {formatMoney(entry.availableBalanceAfter)}
-                          </span>
-                        </td>
-                        <td>
-                          <code>{entry.taskNo ?? '非任务流水'}</code>
-                          <span
-                            className="table-meta ops-business-key"
-                            title={entry.businessKey}
-                          >
-                            {entry.businessKey}
-                          </span>
-                        </td>
-                        <td>
-                          {entry.evidence ? (
-                            <>
-                              <b>{channelLabel(entry.evidence.channel)}</b>
-                              <span className="table-meta">
-                                {entry.evidence.receiptReference}
-                              </span>
-                              <span className="table-meta">
-                                {entry.evidence.receiptFileName ?? '无文件名'}
-                              </span>
-                            </>
-                          ) : (
-                            <span className="ops-muted">系统业务流水</span>
-                          )}
-                        </td>
-                        <td>
-                          <b>{entry.operatorId ?? '系统 Worker'}</b>
-                          <span
-                            className="table-meta ops-reason"
-                            title={entry.reason ?? ''}
-                          >
-                            {entry.reason ?? '—'}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-            </tbody>
-          </table>
-          {!loading && !error && !page.items.length ? (
-            <div className="ops-empty">
-              <CircleDollarSign aria-hidden="true" size={24} />
-              <b>没有符合条件的账本流水</b>
-              <p>登记首笔充值或调整筛选条件。</p>
-            </div>
-          ) : null}
-        </div>
-        <footer className="ops-pagination">
+      <div
+        className="finance-scope-tabs"
+        role="tablist"
+        aria-label="充值与资金审批分类"
+      >
+        <button
+          id="finance-tab-ledger"
+          type="button"
+          role="tab"
+          aria-selected={scope === 'LEDGER'}
+          aria-controls="finance-panel-ledger"
+          tabIndex={scope === 'LEDGER' ? 0 : -1}
+          className={scope === 'LEDGER' ? 'is-active' : ''}
+          onClick={() => setScope('LEDGER')}
+          onKeyDown={handleScopeKeyDown}
+        >
           <span>
-            第 {page.total ? page.pageNum + 1 : 0} / {page.pages} 页 · 当前{' '}
-            {page.items.length} 笔
+            <WalletCards aria-hidden="true" size={17} />
           </span>
-          <div>
-            <button
-              type="button"
-              disabled={loading || pageNum === 0}
-              onClick={() => setPageNum((current) => Math.max(0, current - 1))}
-            >
-              上一页
-            </button>
-            <button
-              type="button"
-              disabled={loading || pageNum + 1 >= page.pages}
-              onClick={() => setPageNum((current) => current + 1)}
-            >
-              下一页
-            </button>
-          </div>
-        </footer>
-      </Panel>
-
-      <AccountAdjustmentConsole studios={studios} onLedgerChanged={refresh} />
-
-      <div className="ops-note-grid">
-        <Panel title="到账原则">
-          <div className="ops-policy-note">
-            <FileCheck2 aria-hidden="true" size={17} />
-            <div>
-              <b>先核验，后入账</b>
-              <p>充值接口在账户行锁内同时更新余额、写入账本和审计记录。</p>
-            </div>
-          </div>
-        </Panel>
-        <Panel title="退款与调整">
-          <div className="ops-policy-note">
-            <ShieldCheck aria-hidden="true" size={17} />
-            <div>
-              <b>申请与复核严格分离</b>
-              <p>退款、补账和冲减只有在另一管理员批准后才生成唯一账本流水。</p>
-            </div>
-          </div>
-        </Panel>
+          <span>
+            <b>真实账户流水</b>
+            <small>不可变账户账本 · 充值与扣费</small>
+          </span>
+          <em>{page.total} 笔流水</em>
+        </button>
+        <button
+          id="finance-tab-adjustments"
+          type="button"
+          role="tab"
+          aria-selected={scope === 'ADJUSTMENTS'}
+          aria-controls="finance-panel-adjustments"
+          tabIndex={scope === 'ADJUSTMENTS' ? 0 : -1}
+          className={scope === 'ADJUSTMENTS' ? 'is-active' : ''}
+          onClick={() => setScope('ADJUSTMENTS')}
+          onKeyDown={handleScopeKeyDown}
+        >
+          <span>
+            <ClipboardCheck aria-hidden="true" size={17} />
+          </span>
+          <span>
+            <b>退款与人工调整审批</b>
+            <small>双人复核 · 批准后写入账本</small>
+          </span>
+          <em>申请与复核</em>
+        </button>
       </div>
+
+      {scope === 'LEDGER' ? (
+        <section
+          id="finance-panel-ledger"
+          className="finance-tab-panel"
+          role="tabpanel"
+          aria-labelledby="finance-tab-ledger"
+          tabIndex={0}
+        >
+          {feedback ? (
+            <output className="ops-feedback is-success">
+              <CheckCircle2 aria-hidden="true" size={16} />
+              <span>{feedback}</span>
+              <button type="button" onClick={() => setFeedback('')}>
+                关闭
+              </button>
+            </output>
+          ) : null}
+
+          <section className="ops-metric-grid" aria-label="账务汇总">
+            <MetricCard
+              icon={ArrowUpRight}
+              label="当前筛选充值"
+              value={formatMoney(page.totalTopUp)}
+              note="TOP_UP 账本正向金额"
+            />
+            <MetricCard
+              icon={ArrowDownRight}
+              label="当前筛选通话扣费"
+              value={formatMoney(page.totalCharge)}
+              note="CALL_CHARGE + OVERAGE"
+            />
+            <MetricCard
+              icon={WalletCards}
+              label="账本流水"
+              value={`${page.total} 笔`}
+              note={selectedStudio ? selectedStudio.name : '全部影楼'}
+            />
+            <MetricCard
+              icon={ShieldCheck}
+              label="凭证规则"
+              value="元数据留痕"
+              note="文件内容待 OSS 阶段归档"
+            />
+          </section>
+
+          <Panel
+            title="真实账户流水"
+            meta={loading ? '正在读取账本…' : `共 ${page.total} 笔`}
+            className="ops-panel"
+          >
+            <div className="ops-toolbar">
+              <label className="search-box ops-search">
+                <Search aria-hidden="true" size={15} />
+                <input
+                  value={keywordDraft}
+                  onChange={(event) => setKeywordDraft(event.target.value)}
+                  placeholder="搜索影楼、业务键、任务编号、操作人或备注"
+                />
+              </label>
+              <UnifiedSelect
+                ariaLabel="账本影楼"
+                value={studioId}
+                className="filter-button"
+                popupLabel="按影楼筛选"
+                options={[
+                  { value: 'ALL', label: '全部影楼' },
+                  ...studios.map((studio) => ({
+                    value: studio.id,
+                    label: `${studio.businessCode} · ${studio.name}`,
+                  })),
+                ]}
+                onValueChange={(value) => {
+                  setStudioId(value);
+                  setPageNum(0);
+                }}
+              />
+              <UnifiedSelect
+                ariaLabel="账本流水类型"
+                value={entryType}
+                className="filter-button"
+                popupLabel="按流水类型筛选"
+                options={[
+                  { value: 'ALL', label: '全部流水类型' },
+                  ...Object.entries(ledgerMeta).map(([value, meta]) => ({
+                    value,
+                    label: meta.label,
+                  })),
+                ]}
+                onValueChange={(value) => {
+                  setEntryType(value as LedgerEntryType | 'ALL');
+                  setPageNum(0);
+                }}
+              />
+              <UnifiedSelect
+                ariaLabel="账本每页数量"
+                value={String(pageSize)}
+                className="filter-button"
+                popupLabel="每页展示数量"
+                options={[
+                  { value: '20', label: '20 条 / 页' },
+                  { value: '50', label: '50 条 / 页' },
+                  { value: '100', label: '100 条 / 页' },
+                ]}
+                onValueChange={(value) => {
+                  setPageSize(Number(value));
+                  setPageNum(0);
+                }}
+              />
+              <button
+                type="button"
+                className="ops-icon-button"
+                disabled={loading}
+                onClick={refresh}
+              >
+                <RefreshCw
+                  aria-hidden="true"
+                  className={loading ? 'is-spinning' : ''}
+                  size={14}
+                />
+                刷新
+              </button>
+            </div>
+
+            {error ? (
+              <div className="ops-feedback is-error" role="alert">
+                <AlertTriangle aria-hidden="true" size={16} />
+                <div>
+                  <b>账户账本读取失败</b>
+                  <span>{error}</span>
+                </div>
+                <button type="button" onClick={refresh}>
+                  重试
+                </button>
+              </div>
+            ) : null}
+
+            <div className="table-wrap ops-table-wrap" aria-busy={loading}>
+              <table className="data-table ops-ledger-table">
+                <caption className="sr-only">真实账户账本流水</caption>
+                <thead>
+                  <tr>
+                    <th>流水 / 时间</th>
+                    <th>影楼</th>
+                    <th>类型</th>
+                    <th>发生金额</th>
+                    <th>变更后余额</th>
+                    <th>任务 / 业务键</th>
+                    <th>渠道 / 凭证</th>
+                    <th>操作与备注</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading && !page.items.length
+                    ? Array.from({ length: 4 }, (_, index) => (
+                        <SkeletonRow key={index} />
+                      ))
+                    : page.items.map((entry) => {
+                        const meta = ledgerMeta[entry.type];
+                        const positive = Number(entry.amount) >= 0;
+                        return (
+                          <tr key={entry.ledgerId}>
+                            <td>
+                              <code className="ops-ledger-id">
+                                {entry.ledgerId.slice(0, 8)}
+                              </code>
+                              <span className="table-meta">
+                                {formatDateTime(entry.occurredAt)}
+                              </span>
+                            </td>
+                            <td>
+                              <b>{entry.studioName}</b>
+                              <span className="table-meta">
+                                {entry.studioBusinessCode}
+                              </span>
+                            </td>
+                            <td>
+                              <Status tone={meta.tone}>{meta.label}</Status>
+                            </td>
+                            <td>
+                              <b
+                                className={
+                                  positive
+                                    ? 'ops-amount-positive'
+                                    : 'ops-amount-negative'
+                                }
+                              >
+                                {positive ? '+' : ''}
+                                {formatMoney(entry.amount)}
+                              </b>
+                            </td>
+                            <td>
+                              <b>{formatMoney(entry.balanceAfter)}</b>
+                              <span className="table-meta">
+                                可用 {formatMoney(entry.availableBalanceAfter)}
+                              </span>
+                            </td>
+                            <td>
+                              <code>{entry.taskNo ?? '非任务流水'}</code>
+                              <span
+                                className="table-meta ops-business-key"
+                                title={entry.businessKey}
+                              >
+                                {entry.businessKey}
+                              </span>
+                            </td>
+                            <td>
+                              {entry.evidence ? (
+                                <>
+                                  <b>{channelLabel(entry.evidence.channel)}</b>
+                                  <span className="table-meta">
+                                    {entry.evidence.receiptReference}
+                                  </span>
+                                  <span className="table-meta">
+                                    {entry.evidence.receiptFileName ??
+                                      '无文件名'}
+                                  </span>
+                                </>
+                              ) : (
+                                <span className="ops-muted">系统业务流水</span>
+                              )}
+                            </td>
+                            <td>
+                              <b>{entry.operatorId ?? '系统 Worker'}</b>
+                              <span
+                                className="table-meta ops-reason"
+                                title={entry.reason ?? ''}
+                              >
+                                {entry.reason ?? '—'}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                </tbody>
+              </table>
+              {!loading && !error && !page.items.length ? (
+                <div className="ops-empty">
+                  <CircleDollarSign aria-hidden="true" size={24} />
+                  <b>没有符合条件的账本流水</b>
+                  <p>登记首笔充值或调整筛选条件。</p>
+                </div>
+              ) : null}
+            </div>
+            <footer className="ops-pagination">
+              <span>
+                第 {page.total ? page.pageNum + 1 : 0} / {page.pages} 页 · 当前{' '}
+                {page.items.length} 笔
+              </span>
+              <div>
+                <button
+                  type="button"
+                  disabled={loading || pageNum === 0}
+                  onClick={() =>
+                    setPageNum((current) => Math.max(0, current - 1))
+                  }
+                >
+                  上一页
+                </button>
+                <button
+                  type="button"
+                  disabled={loading || pageNum + 1 >= page.pages}
+                  onClick={() => setPageNum((current) => current + 1)}
+                >
+                  下一页
+                </button>
+              </div>
+            </footer>
+          </Panel>
+
+          <Panel title="到账原则">
+            <div className="ops-policy-note">
+              <FileCheck2 aria-hidden="true" size={17} />
+              <div>
+                <b>先核验，后入账</b>
+                <p>充值接口在账户行锁内同时更新余额、写入账本和审计记录。</p>
+              </div>
+            </div>
+          </Panel>
+        </section>
+      ) : (
+        <section
+          id="finance-panel-adjustments"
+          className="finance-tab-panel"
+          role="tabpanel"
+          aria-labelledby="finance-tab-adjustments"
+          tabIndex={0}
+        >
+          <AccountAdjustmentConsole
+            studios={studios}
+            onLedgerChanged={refresh}
+          />
+          <Panel title="退款与调整">
+            <div className="ops-policy-note">
+              <ShieldCheck aria-hidden="true" size={17} />
+              <div>
+                <b>申请与复核严格分离</b>
+                <p>
+                  退款、补账和冲减只有在另一管理员批准后才生成唯一账本流水。
+                </p>
+              </div>
+            </div>
+          </Panel>
+        </section>
+      )}
 
       <TopUpDialog
         open={dialogOpen}
@@ -533,7 +632,7 @@ function TopUpDialog({
         if (!next && !saving) onClose();
       }}
     >
-      <DialogContent className="ops-dialog ops-editor-dialog">
+      <DialogContent className="ops-dialog ops-editor-dialog ops-fixed-form-dialog top-up-dialog">
         <DialogHeader>
           <span className="ops-dialog-kicker">IDEMPOTENT TOP-UP</span>
           <DialogTitle>登记线下充值</DialogTitle>

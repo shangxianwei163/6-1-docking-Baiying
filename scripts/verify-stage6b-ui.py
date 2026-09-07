@@ -14,6 +14,25 @@ LEDGER_SCREENSHOT = Path('/tmp/outbound-platform-stage6b-ledger.png')
 PRICING_SCREENSHOT = Path('/tmp/outbound-platform-stage6b-pricing.png')
 
 
+def assert_dialog_has_no_overflow(dialog, label: str) -> None:
+    metrics = dialog.evaluate(
+        '''element => ({
+            clientWidth: element.clientWidth,
+            scrollWidth: element.scrollWidth,
+            clientHeight: element.clientHeight,
+            scrollHeight: element.scrollHeight,
+            overflowX: getComputedStyle(element).overflowX,
+            overflowY: getComputedStyle(element).overflowY,
+        })'''
+    )
+    if metrics['overflowX'] != 'hidden' or metrics['overflowY'] != 'hidden':
+        raise AssertionError(f'{label} allows scrolling: {metrics}')
+    if metrics['scrollWidth'] > metrics['clientWidth'] + 1:
+        raise AssertionError(f'{label} clips horizontally: {metrics}')
+    if metrics['scrollHeight'] > metrics['clientHeight'] + 1:
+        raise AssertionError(f'{label} clips vertically: {metrics}')
+
+
 def api_json(path: str) -> dict:
     opener = build_opener(ProxyHandler({}))
     request = Request(
@@ -75,7 +94,14 @@ def main() -> None:
         page.screenshot(path=str(STUDIO_SCREENSHOT), full_page=True)
 
         page.get_by_role('button', name=re.compile(r'^充值记录')).click()
-        expect(page.get_by_text('真实账户流水', exact=True)).to_be_visible()
+        ledger_tab = page.get_by_role('tab', name=re.compile(r'^真实账户流水'))
+        adjustment_tab = page.get_by_role(
+            'tab', name=re.compile(r'^退款与人工调整审批')
+        )
+        expect(ledger_tab).to_have_attribute('aria-selected', 'true')
+        expect(adjustment_tab).to_have_attribute('aria-selected', 'false')
+        expect(page.locator('#finance-panel-ledger')).to_be_visible()
+        expect(page.locator('#finance-panel-adjustments')).not_to_be_attached()
         if ledger_items:
             first_entry = ledger_items[0]
             ledger_row = page.locator('tr', has_text=first_entry['businessKey'])
@@ -92,6 +118,10 @@ def main() -> None:
                 re.compile(r'当前只保存凭证编号和文件名元数据')
             )
         ).to_be_visible()
+        assert_dialog_has_no_overflow(top_up_dialog, 'Top-up dialog')
+        page.set_viewport_size({'width': 1024, 'height': 640})
+        assert_dialog_has_no_overflow(top_up_dialog, 'Top-up dialog at short viewport')
+        page.set_viewport_size({'width': 1600, 'height': 1000})
         page.screenshot(path=str(LEDGER_SCREENSHOT), full_page=True)
         top_up_dialog.get_by_role('button', name='取消').click()
         expect(top_up_dialog).not_to_be_visible()
@@ -104,16 +134,14 @@ def main() -> None:
             pricing_row.get_by_text(first_pricing['name'], exact=True)
         ).to_be_visible()
         first_tier = pricing['supplierTiers'][0]
+        page.get_by_role('tab', name=re.compile(r'^海南人像话费')).click()
         expect(page.get_by_text(first_tier['tierCode'], exact=True)).to_be_visible()
+        page.get_by_role('tab', name=re.compile(r'^影楼话费')).click()
 
         pricing_row.get_by_role('button', name='单独调价').click()
-        expect(page.get_by_role('tab', name=re.compile(r'^单影楼价格'))).to_have_attribute(
-            'aria-selected', 'true'
-        )
-        expect(page.get_by_role('button', name='单影楼价格目标')).to_contain_text(
-            first_pricing['name']
-        )
-        page.get_by_role('button', name='预览发布影响').click()
+        studio_pricing_dialog = page.get_by_role('dialog')
+        expect(studio_pricing_dialog).to_contain_text(first_pricing['name'])
+        studio_pricing_dialog.get_by_role('button', name='预览发布影响').click()
         preview_dialog = page.get_by_role('dialog')
         expect(preview_dialog.get_by_text('确认价格版本影响', exact=True)).to_be_visible()
         expect(preview_dialog.get_by_text(re.compile(r'1 家影楼'))).to_be_visible()
@@ -122,7 +150,8 @@ def main() -> None:
         ).to_be_visible()
         page.screenshot(path=str(PRICING_SCREENSHOT), full_page=True)
         preview_dialog.get_by_role('button', name='返回修改').click()
-        expect(preview_dialog).not_to_be_visible()
+        expect(page.get_by_text('确认价格版本影响', exact=True)).not_to_be_visible()
+        expect(page.get_by_role('dialog')).to_contain_text(first_pricing['name'])
         browser.close()
 
     if page_errors:

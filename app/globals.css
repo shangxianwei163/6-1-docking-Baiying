@@ -434,6 +434,79 @@
 
 /* Shared date controls and per-studio pricing editor. */
 .unified-month-grid { min-width: 0; margin: 0; border: 0; }
+.finance-scope-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 11px;
+}
+.finance-scope-tabs > button {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #d7e2db;
+  border-radius: 8px;
+  background: #f2f6f3;
+  padding: 10px 12px;
+  color: #66786f;
+  text-align: left;
+  transition: border-color .16s ease, background .16s ease, color .16s ease;
+}
+.finance-scope-tabs > button > span:first-child {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid #cfe0d6;
+  border-radius: 7px;
+  background: #e7f2eb;
+  color: #31795a;
+}
+.finance-scope-tabs b,
+.finance-scope-tabs small { display: block; }
+.finance-scope-tabs b { font-size: 11px; }
+.finance-scope-tabs small { margin-top: 3px; color: #87948d; font-size: 8px; }
+.finance-scope-tabs em {
+  border-radius: 99px;
+  background: #e7eeea;
+  padding: 5px 8px;
+  color: #6f7f77;
+  font-size: 8px;
+  font-style: normal;
+  white-space: nowrap;
+}
+.finance-scope-tabs > button:hover,
+.finance-scope-tabs > button:focus-visible {
+  border-color: #8ab59e;
+  outline: none;
+}
+.finance-scope-tabs > button.is-active {
+  border-color: #236c51;
+  background: linear-gradient(110deg, #174d3d, #27664f);
+  color: #fff;
+  box-shadow: 0 16px 30px -27px #0c3d2f;
+}
+.finance-scope-tabs > button.is-active > span:first-child {
+  border-color: rgba(164, 220, 191, .35);
+  background: rgba(255, 255, 255, .08);
+  color: #83d1a8;
+}
+.finance-scope-tabs > button.is-active small { color: #b9d4c8; }
+.finance-scope-tabs > button.is-active em {
+  background: rgba(255, 255, 255, .12);
+  color: #d9ebe2;
+}
+.finance-tab-panel { min-width: 0; }
+.ops-fixed-form-dialog.ops-dialog {
+  width: min(650px, calc(100vw - 28px));
+  max-width: 650px;
+  max-height: none;
+  gap: 0;
+  overflow: hidden;
+}
+.ops-fixed-form-dialog > [data-slot="dialog-footer"] { margin: 0 !important; }
 .ops-single-studio-guide {
   display: flex;
   align-items: flex-start;
@@ -510,6 +583,8 @@
 }
 .real-task-date-field .unified-date-trigger { width: 132px; height: 34px; }
 @media (max-width: 680px) {
+  .finance-scope-tabs { grid-template-columns: 1fr; }
+  .finance-scope-tabs > button { grid-template-columns: 32px minmax(0, 1fr) auto; }
   .ops-studio-pricing-form { grid-template-columns: 1fr; }
   .ops-studio-pricing-current { grid-template-columns: 30px minmax(0, 1fr); }
   .ops-studio-pricing-current p { grid-column: 1 / -1; }
@@ -520,6 +595,12 @@
   .ops-studio-pricing-dialog [data-slot="dialog-footer"] button { justify-content: center; }
   .ops-settlement-controls .unified-date-trigger,
   .real-task-date-field .unified-date-trigger { width: 100%; }
+}
+@media (max-height: 680px) and (min-width: 681px) {
+  .ops-fixed-form-dialog > [data-slot="dialog-header"] { padding: 14px 18px; }
+  .ops-fixed-form-dialog .ops-form-grid { gap: 8px; padding: 12px 15px; }
+  .ops-fixed-form-dialog .ops-field textarea { max-height: 58px; }
+  .ops-fixed-form-dialog > [data-slot="dialog-footer"] { padding: 9px 15px; }
 }
 
 /* Stage 6B-2: maker/checker finance approvals and immutable audit evidence. */
