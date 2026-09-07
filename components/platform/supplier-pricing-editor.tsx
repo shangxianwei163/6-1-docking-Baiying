@@ -24,6 +24,11 @@ import {
   publishSupplierPricing,
 } from '@/lib/platform-api';
 import {
+  formatTenThousandMinuteRange,
+  minutesToTenThousands,
+  tenThousandsToMinutes,
+} from '@/lib/pricing-units';
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -79,8 +84,10 @@ export function SupplierPricingEditor({
       tiers: tiers.map((tier) => ({
         tierCode: tier.tierCode,
         name: tier.name,
-        minMonthlyMinutes: tier.minMonthlyMinutes,
-        maxMonthlyMinutes: tier.maxMonthlyMinutes.trim() || null,
+        minMonthlyMinutes: tenThousandsToMinutes(tier.minMonthlyMinutes),
+        maxMonthlyMinutes: tier.maxMonthlyMinutes.trim()
+          ? tenThousandsToMinutes(tier.maxMonthlyMinutes)
+          : null,
         voiceRate: tier.voiceRate,
         smsRate: tier.smsRate,
       })),
@@ -289,7 +296,9 @@ export function SupplierPricingEditor({
                 <header>
                   <div>
                     <b>价格阶梯</b>
-                    <span>{tiers.length} 档 · 月度分钟范围采用左闭右开</span>
+                    <span>
+                      {tiers.length} 档 · 用量单位为万分钟，范围采用左闭右开
+                    </span>
                   </div>
                   <button type="button" onClick={addTier}>
                     <Plus aria-hidden="true" size={12} />
@@ -323,39 +332,46 @@ export function SupplierPricingEditor({
                         />
                       </label>
                       <label>
-                        <span>分钟下限（含）</span>
-                        <input
-                          aria-label={`第 ${index + 1} 档分钟下限`}
-                          {...validationProps('minMonthlyMinutes', index)}
-                          inputMode="numeric"
-                          value={tier.minMonthlyMinutes}
-                          onChange={(event) =>
-                            updateTier(
-                              index,
-                              'minMonthlyMinutes',
-                              event.target.value,
-                            )
-                          }
-                        />
+                        <span>用量下限（含）</span>
+                        <div className="supplier-minute-input">
+                          <input
+                            aria-label={`第 ${index + 1} 档用量下限（万分钟）`}
+                            {...validationProps('minMonthlyMinutes', index)}
+                            inputMode="decimal"
+                            placeholder="例如 1"
+                            value={tier.minMonthlyMinutes}
+                            onChange={(event) =>
+                              updateTier(
+                                index,
+                                'minMonthlyMinutes',
+                                event.target.value,
+                              )
+                            }
+                          />
+                          <em>万分钟</em>
+                        </div>
                       </label>
                       <label>
-                        <span>分钟上限（不含）</span>
-                        <input
-                          aria-label={`第 ${index + 1} 档分钟上限`}
-                          {...validationProps('maxMonthlyMinutes', index)}
-                          inputMode="numeric"
-                          placeholder={
-                            index === tiers.length - 1 ? '不设上限' : ''
-                          }
-                          value={tier.maxMonthlyMinutes}
-                          onChange={(event) =>
-                            updateTier(
-                              index,
-                              'maxMonthlyMinutes',
-                              event.target.value,
-                            )
-                          }
-                        />
+                        <span>用量上限（不含）</span>
+                        <div className="supplier-minute-input">
+                          <input
+                            aria-label={`第 ${index + 1} 档用量上限（万分钟）`}
+                            {...validationProps('maxMonthlyMinutes', index)}
+                            inputMode="decimal"
+                            placeholder={
+                              index === tiers.length - 1 ? '不设上限' : '例如 5'
+                            }
+                            value={tier.maxMonthlyMinutes}
+                            onChange={(event) =>
+                              updateTier(
+                                index,
+                                'maxMonthlyMinutes',
+                                event.target.value,
+                              )
+                            }
+                          />
+                          <em>万分钟</em>
+                        </div>
                       </label>
                       <label>
                         <span>话费（元/分钟）</span>
@@ -506,7 +522,7 @@ function SupplierPricingPreviewView({
           <thead>
             <tr>
               <th>阶梯</th>
-              <th>月度分钟范围</th>
+              <th>月度用量范围（万分钟）</th>
               <th>话费成本</th>
               <th>短信成本</th>
             </tr>
@@ -519,10 +535,10 @@ function SupplierPricingPreviewView({
                   <span className="table-meta">{tier.tierCode}</span>
                 </td>
                 <td>
-                  {tier.minMonthlyMinutes}（含）—{' '}
-                  {tier.maxMonthlyMinutes
-                    ? `${tier.maxMonthlyMinutes}（不含）`
-                    : '无上限'}
+                  {formatTenThousandMinuteRange(
+                    tier.minMonthlyMinutes,
+                    tier.maxMonthlyMinutes,
+                  )}
                 </td>
                 <td>¥{trimRate(tier.voiceRate)} / 分钟</td>
                 <td>¥{trimRate(tier.smsRate)} / 条</td>
@@ -539,8 +555,10 @@ function toEditableTier(tier: OperatorSupplierPricingTier): EditableTier {
   return {
     tierCode: tier.tierCode,
     name: tier.name,
-    minMonthlyMinutes: tier.minMonthlyMinutes,
-    maxMonthlyMinutes: tier.maxMonthlyMinutes ?? '',
+    minMonthlyMinutes: minutesToTenThousands(tier.minMonthlyMinutes),
+    maxMonthlyMinutes: tier.maxMonthlyMinutes
+      ? minutesToTenThousands(tier.maxMonthlyMinutes)
+      : '',
     voiceRate: trimRate(tier.voiceRate),
     smsRate: trimRate(tier.smsRate),
   };
@@ -562,17 +580,18 @@ function supplierPricingValidationFeedback(
     const fieldNames: Partial<Record<SupplierPricingField, string>> = {
       tierCode: '阶梯编码',
       name: '阶梯名称',
-      minMonthlyMinutes: '分钟下限',
-      maxMonthlyMinutes: '分钟上限',
+      minMonthlyMinutes: '用量下限',
+      maxMonthlyMinutes: '用量上限',
       voiceRate: '话费',
       smsRate: '短信费',
     };
     const details: Partial<Record<SupplierPricingField, string>> = {
       tierCode: issue.message,
       name: issue.message,
-      minMonthlyMinutes: '请输入 0 或正整数，例如 50000；不要填写小数或单位。',
+      minMonthlyMinutes:
+        '请输入 0 或正数，最多 4 位小数，例如 5（表示 5 万分钟）。',
       maxMonthlyMinutes:
-        '请输入 0 或正整数；如果这是最后一档，请将分钟上限留空。',
+        '请输入 0 或正数，最多 4 位小数；如果这是最后一档，请留空。',
       voiceRate: '请输入大于 0 的金额，例如 0.16。',
       smsRate: '请输入 0 或正数金额，例如 0.06。',
     };

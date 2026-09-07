@@ -367,6 +367,14 @@ export const publishSupplierPricingInputSchema = z
   })
   .strict()
   .superRefine((input, context) => {
+    const hasInvalidMinuteBoundary = input.tiers.some(
+      (tier) =>
+        !/^\d+$/.test(tier.minMonthlyMinutes) ||
+        (tier.maxMonthlyMinutes !== null &&
+          !/^\d+$/.test(tier.maxMonthlyMinutes)),
+    );
+    if (hasInvalidMinuteBoundary) return;
+
     const codes = new Set<string>();
     input.tiers.forEach((tier, index) => {
       if (codes.has(tier.tierCode)) {

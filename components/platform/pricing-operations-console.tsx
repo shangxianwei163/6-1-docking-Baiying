@@ -33,6 +33,7 @@ import {
   previewPricing,
   publishPricing,
 } from '@/lib/platform-api';
+import { formatTenThousandMinuteRange } from '@/lib/pricing-units';
 import {
   Dialog,
   DialogContent,
@@ -725,7 +726,7 @@ export function PricingOperationsConsole() {
               <thead>
                 <tr>
                   <th>阶梯</th>
-                  <th>月度分钟范围</th>
+                  <th>月度用量范围（万分钟）</th>
                   <th>话费成本</th>
                   <th>短信成本</th>
                   <th>生效时间</th>
@@ -1565,10 +1566,7 @@ function formatDateTime(value: string) {
       }).format(date);
 }
 function formatTierRange(minimum: string, maximum: string | null) {
-  const min = Number(minimum).toLocaleString('zh-CN');
-  return maximum
-    ? `${min}（含）— ${Number(maximum).toLocaleString('zh-CN')}（不含）分钟`
-    : `≥ ${min} 分钟`;
+  return formatTenThousandMinuteRange(minimum, maximum);
 }
 function currentShanghaiMonth() {
   const parts = new Intl.DateTimeFormat('en-US', {

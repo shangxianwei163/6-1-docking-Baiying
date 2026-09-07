@@ -86,6 +86,12 @@ def assert_hainan_scope(page, studio_tab, hainan_tab) -> None:
     expect(page.get_by_text('影楼价格版本', exact=True)).not_to_be_visible()
     expect(page.get_by_text('供应商月度结算', exact=True)).to_be_visible()
     expect(page.get_by_text('海南人像供应成本阶梯', exact=True)).to_be_visible()
+    expect(
+        page.get_by_role('columnheader', name='月度用量范围（万分钟）')
+    ).to_be_visible()
+    expect(page.get_by_text('0（含）— 1（不含）', exact=True)).to_be_visible()
+    expect(page.get_by_text('1（含）— 5（不含）', exact=True)).to_be_visible()
+    expect(page.get_by_text('≥ 5', exact=True)).to_be_visible()
 
 
 def assert_internal_scroll(page, panel_id: str) -> None:
@@ -184,22 +190,33 @@ def main() -> None:
             dialog.get_by_role('heading', name='维护海南人像供应价格')
         ).to_be_visible()
         expect(dialog.get_by_label('第 1 档话费')).to_have_value('0.2')
+        expect(dialog.get_by_label('第 1 档用量下限（万分钟）')).to_have_value(
+            '0'
+        )
+        expect(dialog.get_by_label('第 1 档用量上限（万分钟）')).to_have_value(
+            '1'
+        )
+        expect(dialog.get_by_label('第 2 档用量下限（万分钟）')).to_have_value(
+            '1'
+        )
+        expect(dialog.get_by_label('第 2 档用量上限（万分钟）')).to_have_value(
+            '5'
+        )
         dialog.get_by_role('button', name='新增阶梯').click()
         expect(
-            dialog.get_by_text('第 4 档「分钟下限」填写不正确', exact=True)
+            dialog.get_by_text('第 4 档「用量下限」填写不正确', exact=True)
         ).to_be_visible()
         expect(
             dialog.get_by_text(
-                '请输入 0 或正整数，例如 50000；不要填写小数或单位。',
+                '请输入 0 或正数，最多 4 位小数，例如 5（表示 5 万分钟）。',
                 exact=True,
             )
         ).to_be_visible()
-        expect(dialog.get_by_label('第 4 档分钟下限')).to_have_attribute(
-            'aria-invalid', 'true'
-        )
+        invalid_minimum = dialog.get_by_label('第 4 档用量下限（万分钟）')
+        expect(invalid_minimum).to_have_attribute('aria-invalid', 'true')
         expect(dialog.get_by_text(re.compile(r'Invalid string'))).not_to_be_visible()
         dialog.get_by_role('button', name='预览发布影响').click()
-        expect(dialog.get_by_label('第 4 档分钟下限')).to_be_focused()
+        expect(invalid_minimum).to_be_focused()
         page.screenshot(path=str(EDITOR_VALIDATION_SCREENSHOT), full_page=True)
         dialog.get_by_role('button', name='删除第 4 档').click()
         dialog.get_by_label('第 1 档话费').fill('0.21')
@@ -216,6 +233,10 @@ def main() -> None:
         expect(
             dialog.get_by_role('heading', name='确认供应价格版本')
         ).to_be_visible()
+        expect(
+            dialog.get_by_role('columnheader', name='月度用量范围（万分钟）')
+        ).to_be_visible()
+        expect(dialog.get_by_text('0（含）— 1（不含）', exact=True)).to_be_visible()
         expect(dialog.get_by_text('¥0.21 / 分钟', exact=True)).to_be_visible()
         page.screenshot(path=str(EDITOR_SCREENSHOT), full_page=True)
         dialog.get_by_role('button', name='确认发布新版本').click()
@@ -237,6 +258,20 @@ def main() -> None:
             raise AssertionError('Supplier pricing publication was not a complete tier set')
         if publish_body['tiers'][0]['voiceRate'] != '0.21':
             raise AssertionError('Edited supplier voice rate was not published')
+        expected_ranges = [
+            ('0', '10000'),
+            ('10000', '50000'),
+            ('50000', None),
+        ]
+        actual_ranges = [
+            (tier['minMonthlyMinutes'], tier['maxMonthlyMinutes'])
+            for tier in publish_body['tiers']
+        ]
+        if actual_ranges != expected_ranges:
+            raise AssertionError(
+                'Ten-thousand-minute inputs were not converted back to exact minutes: '
+                f'{actual_ranges}'
+            )
 
         hainan_tab.press('ArrowLeft')
         assert_studio_scope(page, studio_tab, hainan_tab)
@@ -272,8 +307,8 @@ def main() -> None:
     print(
         'Pricing tabs UI verification passed '
         '(content separation + internal vertical scrolling + fixed tabs + '
-        'click/keyboard switching + readable localized validation + fully visible '
-        'dialog footer + mobile layout)'
+        'click/keyboard switching + ten-thousand-minute display/input conversion + '
+        'readable localized validation + fully visible dialog footer + mobile layout)'
     )
     print(f'Studio screenshot: {STUDIO_SCREENSHOT}')
     print(f'Hainan screenshot: {HAINAN_SCREENSHOT}')

@@ -271,6 +271,34 @@
   border-color: #b87913;
   box-shadow: 0 0 0 3px #f8e5bd;
 }
+.supplier-minute-input {
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+}
+.supplier-minute-input input {
+  min-width: 0;
+  border-radius: 5px 0 0 5px;
+}
+.supplier-minute-input em {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  border: 1px solid #d3ddd7;
+  border-left: 0;
+  border-radius: 0 5px 5px 0;
+  background: #f2f7f4;
+  padding: 0 7px;
+  color: #587067;
+  font-size: 7.5px;
+  font-style: normal;
+  white-space: nowrap;
+}
+.supplier-minute-input:has(input[aria-invalid="true"]) em {
+  border-color: #d19a35;
+  background: #fff4d9;
+  color: #8d6219;
+}
 .supplier-pricing-dialog.ops-dialog {
   display: flex;
   max-height: calc(100dvh - 28px);
