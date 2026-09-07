@@ -194,7 +194,7 @@ export function PricingOperationsConsole() {
   };
 
   return (
-    <>
+    <section className="pricing-operations-page">
       <header className="ops-page-intro">
         <div>
           <span>VERSIONED PRICING / NEW TASKS ONLY</span>
@@ -289,6 +289,7 @@ export function PricingOperationsConsole() {
         className="pricing-tab-panel"
         role="tabpanel"
         aria-labelledby="pricing-tab-studio"
+        tabIndex={0}
         hidden={scope !== 'STUDIO'}
       >
 
@@ -635,6 +636,7 @@ export function PricingOperationsConsole() {
         className="pricing-tab-panel"
         role="tabpanel"
         aria-labelledby="pricing-tab-hainan"
+        tabIndex={0}
         hidden={scope !== 'HAINAN'}
       >
         <section
@@ -727,7 +729,7 @@ export function PricingOperationsConsole() {
         }}
         onPublish={() => void confirmPublish()}
       />
-    </>
+    </section>
   );
 }
 

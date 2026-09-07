@@ -41,6 +41,42 @@ def assert_hainan_scope(page, studio_tab, hainan_tab) -> None:
     expect(page.get_by_text('海南人像供应成本阶梯', exact=True)).to_be_visible()
 
 
+def assert_internal_scroll(page, panel_id: str) -> None:
+    panel = page.locator(f'#{panel_id}')
+    metrics = panel.evaluate(
+        '''element => ({
+            clientHeight: element.clientHeight,
+            scrollHeight: element.scrollHeight,
+            overflowY: getComputedStyle(element).overflowY,
+        })'''
+    )
+    if metrics['overflowY'] not in {'auto', 'scroll'}:
+        raise AssertionError(
+            f'{panel_id} is not vertically scrollable: {metrics["overflowY"]}'
+        )
+    if metrics['scrollHeight'] <= metrics['clientHeight'] + 1:
+        raise AssertionError(
+            f'{panel_id} has no internal scroll range: '
+            f'{metrics["scrollHeight"]}px <= {metrics["clientHeight"]}px'
+        )
+
+    tab_list = page.get_by_role('tablist', name='话费设置分类')
+    heading = page.get_by_role('heading', name='话费设置', exact=True)
+    tab_top = tab_list.bounding_box()['y']
+    heading_top = heading.bounding_box()['y']
+    panel.hover()
+    page.mouse.wheel(0, 700)
+    page.wait_for_function(
+        'panelId => document.getElementById(panelId).scrollTop > 0',
+        arg=panel_id,
+    )
+    if abs(tab_list.bounding_box()['y'] - tab_top) > 1:
+        raise AssertionError('Primary pricing tabs moved with the panel content')
+    if abs(heading.bounding_box()['y'] - heading_top) > 1:
+        raise AssertionError('Pricing heading moved with the panel content')
+    panel.evaluate('element => { element.scrollTop = 0; }')
+
+
 def main() -> None:
     page_errors: list[str] = []
 
@@ -49,15 +85,17 @@ def main() -> None:
             executable_path=str(CHROME) if CHROME.exists() else None,
             headless=True,
         )
-        page = browser.new_page(viewport={'width': 1600, 'height': 1000})
+        page = browser.new_page(viewport={'width': 1327, 'height': 964})
         page.on('pageerror', lambda error: page_errors.append(str(error)))
         studio_tab, hainan_tab = open_pricing(page)
 
         assert_studio_scope(page, studio_tab, hainan_tab)
+        assert_internal_scroll(page, 'pricing-panel-studio')
         page.screenshot(path=str(STUDIO_SCREENSHOT), full_page=True)
 
         hainan_tab.click()
         assert_hainan_scope(page, studio_tab, hainan_tab)
+        assert_internal_scroll(page, 'pricing-panel-hainan')
         page.screenshot(path=str(HAINAN_SCREENSHOT), full_page=True)
 
         hainan_tab.press('ArrowLeft')
@@ -93,7 +131,8 @@ def main() -> None:
         raise AssertionError(f'Browser page errors: {page_errors}')
     print(
         'Pricing tabs UI verification passed '
-        '(content separation + click switching + keyboard switching + mobile layout)'
+        '(content separation + internal vertical scrolling + fixed tabs + '
+        'click/keyboard switching + mobile layout)'
     )
     print(f'Studio screenshot: {STUDIO_SCREENSHOT}')
     print(f'Hainan screenshot: {HAINAN_SCREENSHOT}')
