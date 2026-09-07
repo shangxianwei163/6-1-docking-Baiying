@@ -81,6 +81,13 @@ def install_settlement_fixture(page, finalize_requests: list[dict]) -> None:
 def open_settlement(page) -> None:
     page.goto(APP_URL, wait_until='networkidle')
     page.get_by_role('button', name=re.compile(r'^话费设置')).click()
+    studio_tab = page.get_by_role('tab', name=re.compile(r'^影楼话费'))
+    hainan_tab = page.get_by_role('tab', name=re.compile(r'^海南人像话费'))
+    expect(studio_tab).to_have_attribute('aria-selected', 'true')
+    expect(page.get_by_text('发布客户价格版本', exact=True)).to_be_visible()
+    expect(page.get_by_text('供应商月度结算', exact=True)).not_to_be_visible()
+    hainan_tab.click()
+    expect(hainan_tab).to_have_attribute('aria-selected', 'true')
     expect(page.get_by_text('供应商月度结算', exact=True)).to_be_visible()
     month_input = page.get_by_label('供应商结算月份')
     if month_input.input_value() != SETTLEMENT_MONTH:

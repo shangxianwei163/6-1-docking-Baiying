@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { type KeyboardEvent, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   BookCheck,
@@ -47,6 +47,7 @@ import { Panel, Status } from './shared';
 const emptyOverview: PricingOverview = { studios: [], supplierTiers: [] };
 type PriceMode = 'UNIFORM' | 'PER_STUDIO';
 type EffectiveChoice = 'NOW' | 'TOMORROW';
+type PricingScope = 'STUDIO' | 'HAINAN';
 
 export function PricingOperationsConsole() {
   const [overview, setOverview] = useState(emptyOverview);
@@ -54,6 +55,7 @@ export function PricingOperationsConsole() {
   const [error, setError] = useState('');
   const [feedback, setFeedback] = useState('');
   const [refreshToken, setRefreshToken] = useState(0);
+  const [scope, setScope] = useState<PricingScope>('STUDIO');
   const [mode, setMode] = useState<PriceMode>('UNIFORM');
   const [studioId, setStudioId] = useState('');
   const [voiceRate, setVoiceRate] = useState('0.48');
@@ -169,6 +171,28 @@ export function PricingOperationsConsole() {
       ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  const handleScopeKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    let nextScope: PricingScope | null = null;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      nextScope = scope === 'STUDIO' ? 'HAINAN' : 'STUDIO';
+    } else if (event.key === 'Home') {
+      nextScope = 'STUDIO';
+    } else if (event.key === 'End') {
+      nextScope = 'HAINAN';
+    }
+    if (!nextScope) return;
+
+    event.preventDefault();
+    setScope(nextScope);
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById(
+          nextScope === 'STUDIO' ? 'pricing-tab-studio' : 'pricing-tab-hainan',
+        )
+        ?.focus();
+    });
+  };
+
   return (
     <>
       <header className="ops-page-intro">
@@ -176,7 +200,7 @@ export function PricingOperationsConsole() {
           <span>VERSIONED PRICING / NEW TASKS ONLY</span>
           <h2>话费设置</h2>
           <p>
-            客户价格发布为不可变数据库版本；旧任务继续使用创建时快照，预约版本到期后由任务受理自动解析。
+            影楼客户售价与海南人像供应成本分账管理；价格版本保持不可变，旧任务继续使用创建时快照。
           </p>
         </div>
         <button
@@ -190,9 +214,83 @@ export function PricingOperationsConsole() {
             className={loading ? 'is-spinning' : ''}
             size={14}
           />
-          刷新真实价格
+          {scope === 'STUDIO' ? '刷新影楼价格' : '刷新海南人像价格'}
         </button>
       </header>
+
+      <div
+        className="pricing-scope-tabs"
+        role="tablist"
+        aria-label="话费设置分类"
+        aria-orientation="horizontal"
+      >
+        <button
+          id="pricing-tab-studio"
+          type="button"
+          role="tab"
+          aria-selected={scope === 'STUDIO'}
+          aria-controls="pricing-panel-studio"
+          tabIndex={scope === 'STUDIO' ? 0 : -1}
+          className={scope === 'STUDIO' ? 'is-active' : ''}
+          onClick={() => setScope('STUDIO')}
+          onKeyDown={handleScopeKeyDown}
+        >
+          <span className="pricing-scope-icon">
+            <Store aria-hidden="true" size={17} />
+          </span>
+          <span className="pricing-scope-copy">
+            <b>影楼话费</b>
+            <small>客户售价发布 · 影楼价格版本</small>
+          </span>
+          <em>
+            {currentCount}/{overview.studios.length} 家已定价
+          </em>
+        </button>
+        <button
+          id="pricing-tab-hainan"
+          type="button"
+          role="tab"
+          aria-selected={scope === 'HAINAN'}
+          aria-controls="pricing-panel-hainan"
+          tabIndex={scope === 'HAINAN' ? 0 : -1}
+          className={scope === 'HAINAN' ? 'is-active' : ''}
+          onClick={() => setScope('HAINAN')}
+          onKeyDown={handleScopeKeyDown}
+        >
+          <span className="pricing-scope-icon">
+            <CircleDollarSign aria-hidden="true" size={17} />
+          </span>
+          <span className="pricing-scope-copy">
+            <b>海南人像话费</b>
+            <small>供应商成本阶梯 · 月度结算</small>
+          </span>
+          <em>{overview.supplierTiers.length} 档成本</em>
+        </button>
+      </div>
+
+      {error ? (
+        <div className="ops-feedback is-error" role="alert">
+          <AlertTriangle aria-hidden="true" size={16} />
+          <div>
+            <b>价格数据读取失败</b>
+            <span>{error}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setRefreshToken((current) => current + 1)}
+          >
+            重试
+          </button>
+        </div>
+      ) : null}
+
+      <section
+        id="pricing-panel-studio"
+        className="pricing-tab-panel"
+        role="tabpanel"
+        aria-labelledby="pricing-tab-studio"
+        hidden={scope !== 'STUDIO'}
+      >
 
       {feedback ? (
         <output className="ops-feedback is-success">
@@ -204,7 +302,10 @@ export function PricingOperationsConsole() {
         </output>
       ) : null}
 
-      <section className="ops-metric-grid" aria-label="价格版本汇总">
+      <section
+        className="ops-metric-grid pricing-metric-grid"
+        aria-label="影楼话费汇总"
+      >
         <MetricCard
           icon={Store}
           label="定价影楼"
@@ -216,12 +317,6 @@ export function PricingOperationsConsole() {
           label="预约版本"
           value={`${scheduledCount} 个`}
           note="按生效时间解析"
-        />
-        <MetricCard
-          icon={CircleDollarSign}
-          label="供应商阶梯"
-          value={`${overview.supplierTiers.length} 档`}
-          note="海南人像月度成本"
         />
         <MetricCard
           icon={ShieldCheck}
@@ -408,22 +503,6 @@ export function PricingOperationsConsole() {
         </div>
       </Panel>
 
-      {error ? (
-        <div className="ops-feedback is-error" role="alert">
-          <AlertTriangle aria-hidden="true" size={16} />
-          <div>
-            <b>价格数据读取失败</b>
-            <span>{error}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setRefreshToken((current) => current + 1)}
-          >
-            重试
-          </button>
-        </div>
-      ) : null}
-
       <Panel
         title="影楼价格版本"
         meta={
@@ -549,6 +628,39 @@ export function PricingOperationsConsole() {
         </div>
       </Panel>
 
+      </section>
+
+      <section
+        id="pricing-panel-hainan"
+        className="pricing-tab-panel"
+        role="tabpanel"
+        aria-labelledby="pricing-tab-hainan"
+        hidden={scope !== 'HAINAN'}
+      >
+        <section
+          className="ops-metric-grid pricing-metric-grid"
+          aria-label="海南人像话费汇总"
+        >
+          <MetricCard
+            icon={CircleDollarSign}
+            label="供应商阶梯"
+            value={`${overview.supplierTiers.length} 档`}
+            note="海南人像月度成本"
+          />
+          <MetricCard
+            icon={CalendarClock}
+            label="结算周期"
+            value="自然月"
+            note="Asia/Shanghai 口径"
+          />
+          <MetricCard
+            icon={LockKeyhole}
+            label="封账控制"
+            value="核对锁定"
+            note="存在差异时阻断提交"
+          />
+        </section>
+
       <SupplierSettlementConsole />
 
       <Panel
@@ -602,6 +714,8 @@ export function PricingOperationsConsole() {
           </table>
         </div>
       </Panel>
+
+      </section>
 
       <PricingPreviewDialog
         preview={preview}

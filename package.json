@@ -55,6 +55,7 @@
     "stage6b3c:verify:ui": "python3 scripts/verify-stage6b3c-ui.py",
     "stage6b3c:verify": "npm run stage6b3c:verify:source && npm run stage6b3c:verify:api && npm run stage6b3c:verify:ui",
     "stage7b:verify:ui": "python3 scripts/verify-stage7b-ui.py",
+    "pricing:verify:ui": "python3 scripts/verify-pricing-tabs-ui.py",
     "lines:verify:ui": "python3 scripts/verify-line-management-ui.py",
     "stage7:verify:local": "node scripts/verify-stage7-local.mjs",
     "lint": "oxlint",
