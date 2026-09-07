@@ -4,6 +4,7 @@ import {
   isStrictImportSuccess,
   redactProviderPayload,
 } from './service.js';
+import { userFacingTaskFailureMessage } from './postgres-repository.js';
 import { retryDelayForAttempt } from './worker.js';
 
 describe('task orchestration helpers', () => {
@@ -69,5 +70,17 @@ describe('task orchestration helpers', () => {
     expect([1, 2, 3, 4, 5, 8].map(retryDelayForAttempt)).toEqual([
       5_000, 30_000, 120_000, 600_000, 1_800_000, 1_800_000,
     ]);
+  });
+
+  it('returns readable terminal guidance for every provider failure stage', () => {
+    expect(
+      userFacingTaskFailureMessage('BAIYING_CREATE', '接口返回 500'),
+    ).toContain('外呼任务创建失败，任务流程已结束');
+    expect(
+      userFacingTaskFailureMessage('BAIYING_IMPORT', '号码格式不正确'),
+    ).toContain('号码导入百应 AI 外呼任务失败，任务流程已结束');
+    expect(
+      userFacingTaskFailureMessage('BAIYING_START', '线路不可用'),
+    ).toContain('外呼任务启动失败，任务流程已结束');
   });
 });

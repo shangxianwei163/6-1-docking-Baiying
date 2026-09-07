@@ -11,6 +11,8 @@ import {
   isNull,
   lt,
   lte,
+  ne,
+  notInArray,
   or,
   sql,
 } from 'drizzle-orm';
@@ -138,20 +140,20 @@ const runningStatuses: TaskExecutionStatus[] = [
   'IMPORTING',
   'IMPORTED',
   'STARTING',
-  'CALLING',
-  'PAUSED',
-];
-const completedStatuses: TaskExecutionStatus[] = [
   'CALL_COMPLETED',
   'RECONCILING',
-  'COMPLETED',
+];
+const callingStatuses: TaskExecutionStatus[] = [
+  'CALLING',
+  'PAUSED',
+  'CANCELLED',
+  'TERMINATED',
 ];
 const failedStatuses: TaskExecutionStatus[] = [
   'CREATE_FAILED',
   'IMPORT_FAILED',
   'START_FAILED',
 ];
-const terminatedStatuses: TaskExecutionStatus[] = ['CANCELLED', 'TERMINATED'];
 
 export class PostgresOutboundTaskService implements OutboundTaskService {
   constructor(
@@ -511,10 +513,7 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
       baseWhere,
       input.status === 'ALL'
         ? undefined
-        : inArray(
-            platformTasks.executionStatus,
-            statusesForConsoleFilter(input.status),
-          ),
+        : conditionForConsoleFilter(input.status),
     );
     const [totalRow, groupedCounts, rows] = await Promise.all([
       this.db
@@ -525,11 +524,17 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
       this.db
         .select({
           executionStatus: platformTasks.executionStatus,
+          resultDeliveryStatus: platformTasks.resultDeliveryStatus,
+          recordingDeliveryStatus: platformTasks.recordingDeliveryStatus,
           total: sql<number>`count(*)::int`,
         })
         .from(platformTasks)
         .where(baseWhere)
-        .groupBy(platformTasks.executionStatus),
+        .groupBy(
+          platformTasks.executionStatus,
+          platformTasks.resultDeliveryStatus,
+          platformTasks.recordingDeliveryStatus,
+        ),
       this.db
         .select({
           task: platformTasks,
@@ -561,12 +566,16 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
     const statusCounts = {
       all: 0,
       running: 0,
+      calling: 0,
       completed: 0,
       failed: 0,
-      terminated: 0,
     };
     for (const count of groupedCounts) {
-      const key = consoleStatusKey(count.executionStatus);
+      const key = consoleStatusKey(
+        count.executionStatus,
+        count.resultDeliveryStatus,
+        count.recordingDeliveryStatus,
+      );
       statusCounts[key] += count.total;
       statusCounts.all += count.total;
     }
@@ -1152,7 +1161,11 @@ function toTaskDetail(row: TaskReadRow): TaskDetail {
     },
     statuses: {
       execution: task.executionStatus,
-      display: displayStatusFor(task.executionStatus),
+      display: displayStatusFor(
+        task.executionStatus,
+        task.resultDeliveryStatus,
+        task.recordingDeliveryStatus,
+      ),
       resultDelivery: task.resultDeliveryStatus,
       recordingArchive: task.recordingArchiveStatus,
       recordingDelivery: task.recordingDeliveryStatus,
@@ -1263,21 +1276,48 @@ function consoleTaskActions(
   };
 }
 
-function statusesForConsoleFilter(
+function conditionForConsoleFilter(
   filter: Exclude<ConsoleTaskStatusFilter, 'ALL'>,
-): TaskExecutionStatus[] {
-  if (filter === 'RUNNING') return runningStatuses;
-  if (filter === 'COMPLETED') return completedStatuses;
-  if (filter === 'FAILED') return failedStatuses;
-  return terminatedStatuses;
+) {
+  if (filter === 'FAILED') {
+    return inArray(platformTasks.executionStatus, failedStatuses);
+  }
+  if (filter === 'CALLING') {
+    return inArray(platformTasks.executionStatus, callingStatuses);
+  }
+  const deliveryComplete = and(
+    eq(platformTasks.executionStatus, 'COMPLETED'),
+    eq(platformTasks.resultDeliveryStatus, 'SUCCEEDED'),
+    inArray(platformTasks.recordingDeliveryStatus, [
+      'SUCCEEDED',
+      'NOT_APPLICABLE',
+    ]),
+  );
+  if (filter === 'COMPLETED') return deliveryComplete;
+  return or(
+    inArray(platformTasks.executionStatus, runningStatuses),
+    and(
+      eq(platformTasks.executionStatus, 'COMPLETED'),
+      or(
+        ne(platformTasks.resultDeliveryStatus, 'SUCCEEDED'),
+        notInArray(platformTasks.recordingDeliveryStatus, [
+          'SUCCEEDED',
+          'NOT_APPLICABLE',
+        ]),
+      ),
+    ),
+  );
 }
 
 function consoleStatusKey(
   status: TaskExecutionStatus,
+  resultDelivery: TaskDetail['statuses']['resultDelivery'],
+  recordingDelivery: TaskDetail['statuses']['recordingDelivery'],
 ): Exclude<keyof ConsoleTaskPage['statusCounts'], 'all'> {
-  if (completedStatuses.includes(status)) return 'completed';
-  if (failedStatuses.includes(status)) return 'failed';
-  if (terminatedStatuses.includes(status)) return 'terminated';
+  const display = displayStatusFor(status, resultDelivery, recordingDelivery);
+  if (display === '呼叫中') return 'calling';
+  if (display === '执行完成') return 'completed';
+  if (display === '执行失败') return 'failed';
   return 'running';
 }
 
@@ -1287,17 +1327,19 @@ function containsPattern(value: string): string {
 
 export function displayStatusFor(
   status: TaskExecutionStatus,
+  resultDelivery: TaskDetail['statuses']['resultDelivery'] = 'PENDING',
+  recordingDelivery: TaskDetail['statuses']['recordingDelivery'] = 'PENDING',
 ): TaskDisplayStatus {
+  if (failedStatuses.includes(status)) return '执行失败';
+  if (callingStatuses.includes(status)) return '呼叫中';
   if (
-    status === 'CALL_COMPLETED' ||
-    status === 'RECONCILING' ||
-    status === 'COMPLETED'
+    status === 'COMPLETED' &&
+    resultDelivery === 'SUCCEEDED' &&
+    (recordingDelivery === 'SUCCEEDED' ||
+      recordingDelivery === 'NOT_APPLICABLE')
   ) {
     return '执行完成';
   }
-  if (status === 'CALLING' || status === 'PAUSED') return '执行中';
-  if (status.endsWith('_FAILED')) return '执行失败';
-  if (status === 'CANCELLED' || status === 'TERMINATED') return '已终止';
   return '执行中';
 }
 

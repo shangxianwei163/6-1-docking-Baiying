@@ -86,10 +86,10 @@ const page: ConsoleTaskPage = {
   pageSize: 20,
   statusCounts: {
     all: 1,
-    running: 1,
+    running: 0,
+    calling: 1,
     completed: 0,
     failed: 0,
-    terminated: 0,
   },
   tasks: [task],
 };
@@ -122,7 +122,7 @@ describe('operator outbound task HTTP API', () => {
   it('returns a filtered real-task page to an identified operator', async () => {
     const { app, listConsoleTasks } = setup();
     const response = await app.request(
-      '/api/v1/outbound-tasks?keyword=%E6%9C%AC%E5%9C%B0&status=RUNNING&createdFrom=2026-09-05T16%3A00%3A00.000Z&createdBefore=2026-09-06T16%3A00%3A00.000Z&pageNum=0&pageSize=20',
+      '/api/v1/outbound-tasks?keyword=%E6%9C%AC%E5%9C%B0&status=CALLING&createdFrom=2026-09-05T16%3A00%3A00.000Z&createdBefore=2026-09-06T16%3A00%3A00.000Z&pageNum=0&pageSize=20',
       { headers: { 'x-actor-id': 'platform-admin' } },
     );
 
@@ -133,7 +133,7 @@ describe('operator outbound task HTTP API', () => {
     });
     expect(listConsoleTasks).toHaveBeenCalledWith({
       keyword: '本地',
-      status: 'RUNNING',
+      status: 'CALLING',
       createdFrom: new Date('2026-09-05T16:00:00.000Z'),
       createdBefore: new Date('2026-09-06T16:00:00.000Z'),
       pageNum: 0,

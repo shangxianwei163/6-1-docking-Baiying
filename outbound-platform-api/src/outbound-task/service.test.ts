@@ -8,13 +8,19 @@ import {
 describe('outbound task helpers', () => {
   it('maps execution states to the stable external display states', () => {
     expect(displayStatusFor('ACCEPTED')).toBe('执行中');
-    expect(displayStatusFor('CALLING')).toBe('执行中');
-    expect(displayStatusFor('PAUSED')).toBe('执行中');
-    expect(displayStatusFor('CALL_COMPLETED')).toBe('执行完成');
-    expect(displayStatusFor('RECONCILING')).toBe('执行完成');
-    expect(displayStatusFor('COMPLETED')).toBe('执行完成');
+    expect(displayStatusFor('CALLING')).toBe('呼叫中');
+    expect(displayStatusFor('PAUSED')).toBe('呼叫中');
+    expect(displayStatusFor('TERMINATED')).toBe('呼叫中');
+    expect(displayStatusFor('CALL_COMPLETED')).toBe('执行中');
+    expect(displayStatusFor('RECONCILING')).toBe('执行中');
+    expect(displayStatusFor('COMPLETED')).toBe('执行中');
+    expect(displayStatusFor('COMPLETED', 'SUCCEEDED', 'SUCCEEDED')).toBe(
+      '执行完成',
+    );
+    expect(displayStatusFor('COMPLETED', 'SUCCEEDED', 'NOT_APPLICABLE')).toBe(
+      '执行完成',
+    );
     expect(displayStatusFor('IMPORT_FAILED')).toBe('执行失败');
-    expect(displayStatusFor('TERMINATED')).toBe('已终止');
   });
 
   it('describes the original Baiying job status without hiding new values', () => {

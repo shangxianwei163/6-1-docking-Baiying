@@ -101,9 +101,9 @@ export const taskExecutionStatusSchema = z.enum([
 
 export const taskDisplayStatusSchema = z.enum([
   '执行中',
+  '呼叫中',
   '执行完成',
   '执行失败',
-  '已终止',
 ]);
 export const resultDeliveryStatusSchema = z.enum([
   'PENDING',

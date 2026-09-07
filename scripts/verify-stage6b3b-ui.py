@@ -205,10 +205,10 @@ def install_fixtures(page) -> None:
                         'pageSize': 20,
                         'statusCounts': {
                             'all': 1,
-                            'running': 1,
+                            'running': 0,
+                            'calling': 1,
                             'completed': 0,
                             'failed': 0,
-                            'terminated': 0,
                         },
                         'tasks': [task],
                     }

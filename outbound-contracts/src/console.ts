@@ -4,9 +4,9 @@ import { outboundCallPageSchema, taskDetailSchema } from './outbound-task.js';
 export const consoleTaskStatusFilterSchema = z.enum([
   'ALL',
   'RUNNING',
+  'CALLING',
   'COMPLETED',
   'FAILED',
-  'TERMINATED',
 ]);
 
 export const consoleTaskCommandSchema = z.enum([
@@ -64,9 +64,9 @@ export const operatorTaskActionResultSchema = z.object({
 export const consoleTaskStatusCountsSchema = z.object({
   all: z.number().int().nonnegative(),
   running: z.number().int().nonnegative(),
+  calling: z.number().int().nonnegative(),
   completed: z.number().int().nonnegative(),
   failed: z.number().int().nonnegative(),
-  terminated: z.number().int().nonnegative(),
 });
 
 export const consoleTaskPageSchema = z.object({

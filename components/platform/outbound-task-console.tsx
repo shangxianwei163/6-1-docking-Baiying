@@ -56,9 +56,9 @@ const emptyPage: ConsoleTaskPage = {
   statusCounts: {
     all: 0,
     running: 0,
+    calling: 0,
     completed: 0,
     failed: 0,
-    terminated: 0,
   },
   tasks: [],
 };
@@ -70,9 +70,9 @@ const statusOptions: Array<{
 }> = [
   { value: 'ALL', label: '全部', countKey: 'all' },
   { value: 'RUNNING', label: '执行中', countKey: 'running' },
+  { value: 'CALLING', label: '呼叫中', countKey: 'calling' },
   { value: 'COMPLETED', label: '执行完成', countKey: 'completed' },
   { value: 'FAILED', label: '执行失败', countKey: 'failed' },
-  { value: 'TERMINATED', label: '已终止', countKey: 'terminated' },
 ];
 
 const executionLabels: Record<
@@ -456,7 +456,7 @@ function TaskRow({
       <td>
         <Status tone={displayTone}>{task.statuses.display}</Status>
         <span className="real-task-state-detail">
-          {executionLabels[task.statuses.execution]}
+          {taskExecutionDetailLabel(task)}
         </span>
       </td>
       <td>
@@ -613,7 +613,7 @@ function TaskDetailDialog({
           </div>
           {task ? (
             <Status tone={taskDisplayTone(task.statuses.display)}>
-              {executionLabels[task.statuses.execution]}
+              {task.statuses.display}
             </Status>
           ) : null}
         </DialogHeader>
@@ -861,10 +861,7 @@ function TaskSummary({
         </DetailSection>
 
         <DetailSection title="状态与交付" eyebrow="STATE LINES">
-          <DetailPair
-            label="平台执行"
-            value={executionLabels[task.statuses.execution]}
-          />
+          <DetailPair label="平台执行" value={taskExecutionDetailLabel(task)} />
           <DetailPair
             label="结果回传"
             value={deliveryLabel(task.statuses.resultDelivery)}
@@ -1250,9 +1247,22 @@ function taskDisplayTone(
 ): StatusTone {
   if (value === '执行失败') return 'red';
   if (value === '执行完成') return 'green';
-  if (value === '已终止') return 'gray';
   if (value === '呼叫中') return 'blue';
   return 'amber';
+}
+
+function taskExecutionDetailLabel(task: ConsoleTaskRecord): string {
+  if (task.statuses.display === '执行完成') return '全部业务回传成功';
+  if (task.statuses.execution === 'COMPLETED') {
+    if (
+      task.statuses.resultDelivery === 'FAILED' ||
+      task.statuses.recordingDelivery === 'FAILED'
+    ) {
+      return '业务回传失败，等待重试';
+    }
+    return '等待业务回传';
+  }
+  return executionLabels[task.statuses.execution];
 }
 
 function platformRateLabel(

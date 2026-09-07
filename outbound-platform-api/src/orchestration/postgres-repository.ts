@@ -375,7 +375,11 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
 
       const now = this.clock();
       const code = truncate(input.code, 128) ?? 'BAIYING_OPERATION_FAILED';
-      const message = truncate(input.message, 1_000) ?? '百应任务编排失败';
+      const message =
+        truncate(
+          userFacingTaskFailureMessage(input.stage, input.message),
+          1_000,
+        ) ?? '百应任务处理失败，任务流程已结束，请核对配置后重新创建任务';
       const eventId = this.createId();
       const failureEvent = taskStartFailedEventSchema.parse({
         schemaVersion: '1.0',
@@ -526,6 +530,22 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
   private createId(): string {
     return this.options.createId?.() ?? randomUUID();
   }
+}
+
+export function userFacingTaskFailureMessage(
+  stage: 'BAIYING_CREATE' | 'BAIYING_IMPORT' | 'BAIYING_START',
+  detail: string,
+): string {
+  const guidance = {
+    BAIYING_CREATE:
+      '百应 AI 外呼任务创建失败，任务流程已结束。请检查话术、线路和百应账号配置后重新创建任务。',
+    BAIYING_IMPORT:
+      '号码导入百应 AI 外呼任务失败，任务流程已结束。请检查号码格式、名单内容和百应任务状态后重新创建任务。',
+    BAIYING_START:
+      '百应外呼任务启动失败，任务流程已结束。请检查线路可用性、账户状态和任务配置后重新创建任务。',
+  }[stage];
+  const normalizedDetail = detail.trim();
+  return normalizedDetail ? `${guidance} 原因：${normalizedDetail}` : guidance;
 }
 
 async function lockTask(tx: Transaction, taskId: string): Promise<LockedTask> {
