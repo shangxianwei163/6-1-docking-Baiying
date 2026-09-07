@@ -9,6 +9,7 @@ CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
 APP_URL = 'http://localhost:4173/'
 STUDIO_SCREENSHOT = Path('/tmp/outbound-platform-pricing-studio.png')
 HAINAN_SCREENSHOT = Path('/tmp/outbound-platform-pricing-hainan.png')
+HAINAN_TIERS_SCREENSHOT = Path('/tmp/outbound-platform-pricing-hainan-tiers.png')
 MOBILE_SCREENSHOT = Path('/tmp/outbound-platform-pricing-tabs-mobile.png')
 EDITOR_SCREENSHOT = Path('/tmp/outbound-platform-supplier-pricing-editor.png')
 EDITOR_FORM_SCREENSHOT = Path('/tmp/outbound-platform-supplier-pricing-form.png')
@@ -80,6 +81,7 @@ def assert_studio_scope(page, studio_tab, hainan_tab) -> None:
 
 
 def assert_hainan_scope(page, studio_tab, hainan_tab) -> None:
+    panel = page.locator('#pricing-panel-hainan')
     expect(studio_tab).to_have_attribute('aria-selected', 'false')
     expect(hainan_tab).to_have_attribute('aria-selected', 'true')
     expect(page.get_by_text('发布客户价格版本', exact=True)).not_to_be_visible()
@@ -89,9 +91,15 @@ def assert_hainan_scope(page, studio_tab, hainan_tab) -> None:
     expect(
         page.get_by_role('columnheader', name='月度用量范围（万分钟）')
     ).to_be_visible()
-    expect(page.get_by_text('0（含）— 1（不含）', exact=True)).to_be_visible()
-    expect(page.get_by_text('1（含）— 5（不含）', exact=True)).to_be_visible()
-    expect(page.get_by_text('≥ 5', exact=True)).to_be_visible()
+    expect(page.get_by_text('0（含）— 1（不含）', exact=True).first).to_be_visible()
+    expect(page.get_by_text('1（含）— 5（不含）', exact=True).first).to_be_visible()
+    expect(page.get_by_text('≥ 5', exact=True).first).to_be_visible()
+    expect(panel.get_by_text('启用中', exact=True)).to_have_count(3)
+    expect(panel.get_by_text('待启用', exact=True)).to_have_count(4)
+    expect(panel.get_by_text('系统初始化导入', exact=True)).to_have_count(3)
+    expect(panel.get_by_text('平台管理员', exact=True)).to_have_count(4)
+    expect(panel.get_by_text('历史配置迁移', exact=True)).to_have_count(3)
+    expect(panel.get_by_text('运营后台发布', exact=True)).to_have_count(4)
 
 
 def assert_internal_scroll(page, panel_id: str) -> None:
@@ -145,9 +153,18 @@ def assert_dialog_footer_fully_visible(page, dialog) -> None:
             f'Dialog footer is clipped by the dialog: {footer_box=} {dialog_box=}'
         )
     if footer_bottom > viewport['height'] - 4:
+        dialog_styles = dialog.evaluate(
+            '''element => ({
+                top: getComputedStyle(element).top,
+                maxHeight: getComputedStyle(element).maxHeight,
+                transform: getComputedStyle(element).transform,
+                height: getComputedStyle(element).height,
+            })'''
+        )
         raise AssertionError(
             f'Dialog footer escapes the viewport: {footer_bottom}px > '
-            f'{viewport["height"] - 4}px'
+            f'{viewport["height"] - 4}px; {dialog_box=} {footer_box=} '
+            f'{dialog_styles=}'
         )
 
     for label in ['取消', '预览发布影响']:
@@ -159,6 +176,12 @@ def assert_dialog_footer_fully_visible(page, dialog) -> None:
             raise AssertionError(
                 f'Dialog button is clipped inside the footer: {label} {button_box=}'
             )
+
+
+def ten_thousands_to_minutes(value: str) -> str:
+    whole, separator, decimal = value.partition('.')
+    fraction = decimal.ljust(4, '0') if separator else '0000'
+    return str(int(whole) * 10_000 + int(fraction))
 
 
 def main() -> None:
@@ -183,8 +206,14 @@ def main() -> None:
         assert_hainan_scope(page, studio_tab, hainan_tab)
         assert_internal_scroll(page, 'pricing-panel-hainan')
         page.screenshot(path=str(HAINAN_SCREENSHOT), full_page=True)
+        hainan_panel = page.locator('#pricing-panel-hainan')
+        hainan_panel.evaluate('element => { element.scrollTop = element.scrollHeight; }')
+        page.screenshot(path=str(HAINAN_TIERS_SCREENSHOT), full_page=True)
+        hainan_panel.evaluate('element => { element.scrollTop = 0; }')
 
-        page.get_by_role('button', name='维护供应价格').click()
+        page.get_by_role(
+            'button', name=re.compile(r'^(?:维护供应价格|修改预约价格)$')
+        ).click()
         dialog = page.get_by_role('dialog')
         expect(
             dialog.get_by_role('heading', name='维护海南人像供应价格')
@@ -202,9 +231,31 @@ def main() -> None:
         expect(dialog.get_by_label('第 2 档用量上限（万分钟）')).to_have_value(
             '5'
         )
+        baseline_tier_count = dialog.locator(
+            '.supplier-tier-editor-list article'
+        ).count()
+        expected_ranges = []
+        for tier_number in range(1, baseline_tier_count + 1):
+            minimum = dialog.get_by_label(
+                f'第 {tier_number} 档用量下限（万分钟）'
+            ).input_value()
+            maximum = dialog.get_by_label(
+                f'第 {tier_number} 档用量上限（万分钟）'
+            ).input_value()
+            expected_ranges.append(
+                (
+                    ten_thousands_to_minutes(minimum),
+                    ten_thousands_to_minutes(maximum) if maximum else None,
+                )
+            )
+
         dialog.get_by_role('button', name='新增阶梯').click()
+        added_tier_number = baseline_tier_count + 1
         expect(
-            dialog.get_by_text('第 4 档「用量下限」填写不正确', exact=True)
+            dialog.get_by_text(
+                f'第 {added_tier_number} 档「用量下限」填写不正确',
+                exact=True,
+            )
         ).to_be_visible()
         expect(
             dialog.get_by_text(
@@ -212,18 +263,28 @@ def main() -> None:
                 exact=True,
             )
         ).to_be_visible()
-        invalid_minimum = dialog.get_by_label('第 4 档用量下限（万分钟）')
+        invalid_minimum = dialog.get_by_label(
+            f'第 {added_tier_number} 档用量下限（万分钟）'
+        )
         expect(invalid_minimum).to_have_attribute('aria-invalid', 'true')
         expect(dialog.get_by_text(re.compile(r'Invalid string'))).not_to_be_visible()
         dialog.get_by_role('button', name='预览发布影响').click()
         expect(invalid_minimum).to_be_focused()
         page.screenshot(path=str(EDITOR_VALIDATION_SCREENSHOT), full_page=True)
-        dialog.get_by_role('button', name='删除第 4 档').click()
+        dialog.get_by_role(
+            'button', name=f'删除第 {added_tier_number} 档'
+        ).click()
         dialog.get_by_label('第 1 档话费').fill('0.21')
         assert_dialog_footer_fully_visible(page, dialog)
         page.screenshot(path=str(EDITOR_FORM_SCREENSHOT), full_page=True)
 
         page.set_viewport_size({'width': 1024, 'height': 640})
+        page.evaluate(
+            '''() => new Promise(resolve => requestAnimationFrame(
+                () => requestAnimationFrame(resolve)
+            ))'''
+        )
+        page.wait_for_timeout(150)
         assert_dialog_footer_fully_visible(page, dialog)
         page.screenshot(path=str(EDITOR_SHORT_SCREENSHOT), full_page=True)
         page.set_viewport_size({'width': 1327, 'height': 964})
@@ -254,15 +315,10 @@ def main() -> None:
         publish_body = supplier_pricing_requests[1]['body']
         if preview_body != publish_body:
             raise AssertionError('Published supplier pricing differs from preview')
-        if len(publish_body['tiers']) != 3:
+        if len(publish_body['tiers']) != baseline_tier_count:
             raise AssertionError('Supplier pricing publication was not a complete tier set')
         if publish_body['tiers'][0]['voiceRate'] != '0.21':
             raise AssertionError('Edited supplier voice rate was not published')
-        expected_ranges = [
-            ('0', '10000'),
-            ('10000', '50000'),
-            ('50000', None),
-        ]
         actual_ranges = [
             (tier['minMonthlyMinutes'], tier['maxMonthlyMinutes'])
             for tier in publish_body['tiers']
@@ -307,11 +363,13 @@ def main() -> None:
     print(
         'Pricing tabs UI verification passed '
         '(content separation + internal vertical scrolling + fixed tabs + '
-        'click/keyboard switching + ten-thousand-minute display/input conversion + '
-        'readable localized validation + fully visible dialog footer + mobile layout)'
+        'click/keyboard switching + active/scheduled supplier rows + readable '
+        'publisher labels + ten-thousand-minute display/input conversion + localized '
+        'validation + fully visible dialog footer + mobile layout)'
     )
     print(f'Studio screenshot: {STUDIO_SCREENSHOT}')
     print(f'Hainan screenshot: {HAINAN_SCREENSHOT}')
+    print(f'Hainan tier table screenshot: {HAINAN_TIERS_SCREENSHOT}')
     print(f'Supplier pricing editor screenshot: {EDITOR_SCREENSHOT}')
     print(f'Supplier pricing form screenshot: {EDITOR_FORM_SCREENSHOT}')
     print(f'Supplier pricing short viewport screenshot: {EDITOR_SHORT_SCREENSHOT}')

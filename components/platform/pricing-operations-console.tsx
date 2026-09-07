@@ -201,6 +201,17 @@ export function PricingOperationsConsole() {
     });
   };
 
+  const supplierTierRows = [
+    ...overview.supplierTiers.map((tier) => ({
+      tier,
+      status: 'ACTIVE' as const,
+    })),
+    ...overview.scheduledSupplierTiers.map((tier) => ({
+      tier,
+      status: 'SCHEDULED' as const,
+    })),
+  ];
+
   return (
     <section className="pricing-operations-page">
       <header className="ops-page-intro">
@@ -272,7 +283,10 @@ export function PricingOperationsConsole() {
             <b>海南人像话费</b>
             <small>供应商成本阶梯 · 月度结算</small>
           </span>
-          <em>{overview.supplierTiers.length} 档成本</em>
+          <em>
+            {overview.supplierTiers.length} 启用 ·{' '}
+            {overview.scheduledSupplierTiers.length} 待启用
+          </em>
         </button>
       </div>
 
@@ -652,8 +666,8 @@ export function PricingOperationsConsole() {
           <MetricCard
             icon={CircleDollarSign}
             label="供应商阶梯"
-            value={`${overview.supplierTiers.length} 档`}
-            note={`${overview.supplierTierVersionCount} 个价格版本`}
+            value={`${supplierTierRows.length} 档`}
+            note={`${overview.supplierTiers.length} 启用中 · ${overview.scheduledSupplierTiers.length} 待启用`}
           />
           <MetricCard
             icon={CalendarClock}
@@ -713,10 +727,11 @@ export function PricingOperationsConsole() {
                   已预约 {overview.scheduledSupplierTiers.length} 档供应价格
                 </b>
                 <span>
+                  新版本已列入下方列表，将于{' '}
                   {formatDateTime(
                     overview.scheduledSupplierTiers[0]!.effectiveFrom,
                   )}{' '}
-                  起用于新月份；再次发布将替换这组尚未生效的预约。
+                  启用；再次发布将替换这组预约。
                 </span>
               </div>
             </output>
@@ -726,6 +741,7 @@ export function PricingOperationsConsole() {
               <thead>
                 <tr>
                   <th>阶梯</th>
+                  <th>状态</th>
                   <th>月度用量范围（万分钟）</th>
                   <th>话费成本</th>
                   <th>短信成本</th>
@@ -734,30 +750,46 @@ export function PricingOperationsConsole() {
                 </tr>
               </thead>
               <tbody>
-                {overview.supplierTiers.length ? (
-                  overview.supplierTiers.map((tier) => (
-                    <tr key={tier.id}>
-                      <td>
-                        <b>{tier.name}</b>
-                        <span className="table-meta">{tier.tierCode}</span>
-                      </td>
-                      <td>
-                        {formatTierRange(
-                          tier.minMonthlyMinutes,
-                          tier.maxMonthlyMinutes,
-                        )}
-                      </td>
-                      <td>
-                        <b>{formatRate(tier.voiceRate)} / 分钟</b>
-                      </td>
-                      <td>{formatRate(tier.smsRate)} / 条</td>
-                      <td>{formatDateTime(tier.effectiveFrom)}</td>
-                      <td>{tier.publishedBy}</td>
-                    </tr>
-                  ))
+                {supplierTierRows.length ? (
+                  supplierTierRows.map(({ tier, status }) => {
+                    const publisher = supplierPublisher(tier.publishedBy);
+                    return (
+                      <tr
+                        key={tier.id}
+                        className={status === 'SCHEDULED' ? 'is-scheduled' : ''}
+                      >
+                        <td>
+                          <b>{tier.name}</b>
+                          <span className="table-meta">{tier.tierCode}</span>
+                        </td>
+                        <td>
+                          <Status tone={status === 'ACTIVE' ? 'green' : 'blue'}>
+                            {status === 'ACTIVE' ? '启用中' : '待启用'}
+                          </Status>
+                        </td>
+                        <td>
+                          {formatTierRange(
+                            tier.minMonthlyMinutes,
+                            tier.maxMonthlyMinutes,
+                          )}
+                        </td>
+                        <td>
+                          <b>{formatRate(tier.voiceRate)} / 分钟</b>
+                        </td>
+                        <td>{formatRate(tier.smsRate)} / 条</td>
+                        <td>{formatDateTime(tier.effectiveFrom)}</td>
+                        <td aria-label={`发布人：${publisher.label}`}>
+                          <span className="supplier-publisher">
+                            <b>{publisher.label}</b>
+                            <small>{publisher.detail}</small>
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
                 ) : (
                   <tr>
-                    <td colSpan={6} className="table-empty-cell">
+                    <td colSpan={7} className="table-empty-cell">
                       尚未配置供应价格，请点击“维护供应价格”创建首个完整阶梯版本。
                     </td>
                   </tr>
@@ -1567,6 +1599,15 @@ function formatDateTime(value: string) {
 }
 function formatTierRange(minimum: string, maximum: string | null) {
   return formatTenThousandMinuteRange(minimum, maximum);
+}
+function supplierPublisher(value: string) {
+  if (value === 'phase1-static-import') {
+    return { label: '系统初始化导入', detail: '历史配置迁移' };
+  }
+  if (value === 'platform-admin') {
+    return { label: '平台管理员', detail: '运营后台发布' };
+  }
+  return { label: value, detail: '操作账号' };
 }
 function currentShanghaiMonth() {
   const parts = new Intl.DateTimeFormat('en-US', {
