@@ -150,6 +150,14 @@ export class PostgresSupplierMonthlySettlementService implements SupplierMonthly
       }
       const projection = state.projection;
       const tier = projection.tier;
+      if (projection.taskCount === 0 && state.issueCount === 0) {
+        throw new OperationsConsoleFailure(
+          'SETTLEMENT_NOT_REQUIRED',
+          '该月份没有结算任务，无需生成供应商月结单',
+          409,
+          { settlementMonth: month, taskCount: 0 },
+        );
+      }
       if (state.issueCount > 0 || !tier) {
         throw new OperationsConsoleFailure(
           'SETTLEMENT_RECONCILIATION_BLOCKED',

@@ -938,6 +938,12 @@
   background: #fff8ea;
   color: #7c5c2b;
 }
+.ops-settlement-reconciliation.is-empty {
+  border-color: #dce5e0;
+  border-left-color: #879b91;
+  background: #f5f8f6;
+  color: #566b61;
+}
 .ops-settlement-reconciliation ul {
   display: grid;
   gap: 5px;

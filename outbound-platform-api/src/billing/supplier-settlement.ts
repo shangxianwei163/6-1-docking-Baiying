@@ -95,20 +95,22 @@ export function buildSupplierSettlementProjection(input: {
     (total, task) => total + BigInt(task.billingMinutes),
     0n,
   );
-  const matchingTiers = applicableTiers.filter(
-    (tier) =>
-      totalBillingMinutes >= tier.minMonthlyMinutes &&
-      (tier.maxMonthlyMinutes === null ||
-        totalBillingMinutes < tier.maxMonthlyMinutes),
-  );
+  const matchingTiers = tasks.length
+    ? applicableTiers.filter(
+        (tier) =>
+          totalBillingMinutes >= tier.minMonthlyMinutes &&
+          (tier.maxMonthlyMinutes === null ||
+            totalBillingMinutes < tier.maxMonthlyMinutes),
+      )
+    : [];
   const issues: SupplierSettlementIssue[] = [];
-  if (matchingTiers.length === 0) {
+  if (tasks.length > 0 && matchingTiers.length === 0) {
     issues.push({
       code: 'SUPPLIER_TIER_NOT_FOUND',
       taskNo: null,
       message: `月份 ${input.month} 的 ${totalBillingMinutes} 分钟没有可覆盖整月的供应商价格阶梯`,
     });
-  } else if (matchingTiers.length > 1) {
+  } else if (tasks.length > 0 && matchingTiers.length > 1) {
     issues.push({
       code: 'SUPPLIER_TIER_OVERLAP',
       taskNo: null,

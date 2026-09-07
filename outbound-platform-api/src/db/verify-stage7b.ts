@@ -88,6 +88,24 @@ async function main() {
       database.db,
       () => FIXTURE_NOW,
     );
+    const emptyPreview = await settlement.preview('2000-12');
+    assert.equal(emptyPreview.taskCount, 0);
+    assert.equal(emptyPreview.tier, null);
+    assert.equal(emptyPreview.reconciliation.status, 'BALANCED');
+    assert.deepEqual(emptyPreview.reconciliation.issues, []);
+    await assert.rejects(
+      settlement.finalize(
+        '2000-12',
+        {
+          expectedSourceHash: emptyPreview.sourceHash,
+          reason: '空月份无需生成供应商月结单',
+          idempotencyKey: randomUUID(),
+        },
+        'stage7b-finance',
+        randomUUID(),
+      ),
+      hasCode('SETTLEMENT_NOT_REQUIRED'),
+    );
 
     const intake = new PostgresOutboundTaskService(database.db, protector, {
       baiyingCompanyId: 'LOCAL-MOCK',
@@ -424,6 +442,7 @@ async function main() {
             '冻结、释放、实扣、超额与通话明细逐任务守恒核对',
             '账务差异会阻止封账，预览哈希变化会拒绝过期确认',
             '当前月份不能提前封账',
+            '无任务月份无需供应阶梯且不会生成空月结单',
             '并发封账只生成一个不可变结算批次和一份审计记录',
             '任务详情封账前显示暂估值，封账后写入并显示最终成本、收益及批次关联',
             '重复封账幂等返回，封账后迟到任务触发来源漂移告警',

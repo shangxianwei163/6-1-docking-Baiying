@@ -827,8 +827,14 @@ function SupplierSettlementConsole() {
   const monthClosed = summary
     ? new Date(summary.periodEnd).getTime() <= observedAt
     : false;
+  const emptyMonth = Boolean(
+    summary &&
+    summary.taskCount === 0 &&
+    summary.reconciliation.status === 'BALANCED',
+  );
   const canFinalize = Boolean(
     summary &&
+    summary.taskCount > 0 &&
     summary.status === 'OPEN' &&
     summary.reconciliation.status === 'BALANCED' &&
     summary.tier &&
@@ -878,7 +884,7 @@ function SupplierSettlementConsole() {
             <span>MONTH-END CONTROL</span>
             <b>把客户账、通话明细与供应成本锁在同一月度凭证中</b>
             <p>
-              封账前实时重算；任一任务账务不平、供应阶梯缺失或月份尚未结束，系统都会阻断。
+              封账前实时重算；有结算任务的月份若账务不平、供应阶梯缺失或月份尚未结束，系统都会阻断。
             </p>
           </div>
           <div className="ops-settlement-controls">
@@ -955,21 +961,37 @@ function SupplierSettlementConsole() {
             <div className="ops-settlement-status-row">
               <div>
                 <Status
-                  tone={summary.status === 'FINALIZED' ? 'green' : 'blue'}
-                >
-                  {summary.status === 'FINALIZED' ? '已封账' : '待封账'}
-                </Status>
-                <Status
                   tone={
-                    summary.reconciliation.status === 'BALANCED'
+                    summary.status === 'FINALIZED'
                       ? 'green'
-                      : 'red'
+                      : emptyMonth
+                        ? 'gray'
+                        : 'blue'
                   }
                 >
-                  {summary.reconciliation.status === 'BALANCED'
-                    ? '账务平衡'
-                    : `${summary.reconciliation.discrepancyCount} 项差异`}
+                  {summary.status === 'FINALIZED'
+                    ? '已封账'
+                    : emptyMonth
+                      ? monthClosed
+                        ? '无需封账'
+                        : '动态预估'
+                      : '待封账'}
                 </Status>
+                {emptyMonth ? (
+                  <Status tone="gray">0 个任务</Status>
+                ) : (
+                  <Status
+                    tone={
+                      summary.reconciliation.status === 'BALANCED'
+                        ? 'green'
+                        : 'red'
+                    }
+                  >
+                    {summary.reconciliation.status === 'BALANCED'
+                      ? '账务平衡'
+                      : `${summary.reconciliation.discrepancyCount} 项差异`}
+                  </Status>
+                )}
                 {!monthClosed && summary.status === 'OPEN' ? (
                   <Status tone="amber">月份进行中</Status>
                 ) : null}
@@ -999,24 +1021,41 @@ function SupplierSettlementConsole() {
                 icon={Scale}
                 label="供应商成本"
                 value={
-                  summary.tier ? formatMoney(summary.totalPlatformCost) : '—'
+                  emptyMonth
+                    ? formatMoney(summary.totalPlatformCost)
+                    : summary.tier
+                      ? formatMoney(summary.totalPlatformCost)
+                      : '—'
                 }
                 note={
-                  summary.tier
-                    ? `${summary.tier.name} · ${formatRate(summary.tier.voiceRate)}/分`
-                    : '未匹配完整月阶梯'
+                  emptyMonth
+                    ? '无任务，不产生供应商成本'
+                    : summary.tier
+                      ? `${summary.tier.name} · ${formatRate(summary.tier.voiceRate)}/分`
+                      : '未匹配完整月阶梯'
                 }
-                tone={summary.tier ? 'default' : 'warning'}
+                tone={emptyMonth || summary.tier ? 'default' : 'warning'}
               />
               <SettlementFact
                 icon={FileCheck2}
                 label="平台毛利"
-                value={summary.tier ? formatMoney(summary.totalProfit) : '—'}
+                value={
+                  emptyMonth
+                    ? formatMoney(summary.totalProfit)
+                    : summary.tier
+                      ? formatMoney(summary.totalProfit)
+                      : '—'
+                }
                 note={
-                  summary.tier ? '客户收入 − 供应成本' : '供应成本确定后计算'
+                  emptyMonth
+                    ? '无任务，无需计算毛利'
+                    : summary.tier
+                      ? '客户收入 − 供应成本'
+                      : '供应成本确定后计算'
                 }
                 tone={
-                  summary.tier && Number(summary.totalProfit) >= 0
+                  emptyMonth ||
+                  (summary.tier && Number(summary.totalProfit) >= 0)
                     ? 'profit'
                     : 'warning'
                 }
@@ -1024,23 +1063,31 @@ function SupplierSettlementConsole() {
             </div>
 
             <div
-              className={`ops-settlement-reconciliation ${summary.reconciliation.status === 'BALANCED' ? 'is-balanced' : 'is-blocked'}`}
+              className={`ops-settlement-reconciliation ${emptyMonth ? 'is-empty' : summary.reconciliation.status === 'BALANCED' ? 'is-balanced' : 'is-blocked'}`}
             >
-              {summary.reconciliation.status === 'BALANCED' ? (
+              {emptyMonth || summary.reconciliation.status === 'BALANCED' ? (
                 <CheckCircle2 aria-hidden="true" size={17} />
               ) : (
                 <AlertTriangle aria-hidden="true" size={17} />
               )}
               <div>
                 <b>
-                  {summary.reconciliation.status === 'BALANCED'
-                    ? '四方账务核对一致'
-                    : '存在封账阻断项'}
+                  {emptyMonth
+                    ? monthClosed
+                      ? '本月无结算任务'
+                      : '当前暂无结算任务'
+                    : summary.reconciliation.status === 'BALANCED'
+                      ? '四方账务核对一致'
+                      : '存在封账阻断项'}
                 </b>
                 <p>
-                  {summary.reconciliation.status === 'BALANCED'
-                    ? '任务汇总、通话明细、账户流水和冻结资金守恒，可进入人工确认。'
-                    : `${summary.reconciliation.blockingTaskCount} 个任务受影响；修复差异并重新预览后才能封账。`}
+                  {emptyMonth
+                    ? monthClosed
+                      ? '该月份没有已结算任务，无需配置供应阶梯，也无需生成供应商月结单。'
+                      : '该月份仍在进行中，目前没有已结算任务；后续有任务时将自动参与动态核对。'
+                    : summary.reconciliation.status === 'BALANCED'
+                      ? '任务汇总、通话明细、账户流水和冻结资金守恒，可进入人工确认。'
+                      : `${summary.reconciliation.blockingTaskCount} 个任务受影响；修复差异并重新预览后才能封账。`}
                 </p>
                 {summary.reconciliation.issues.length ? (
                   <ul>
@@ -1077,6 +1124,10 @@ function SupplierSettlementConsole() {
               {summary.status === 'FINALIZED' ? (
                 <span className="ops-settlement-id">
                   结算凭证 {summary.settlementId}
+                </span>
+              ) : emptyMonth ? (
+                <span className="ops-settlement-id">
+                  {monthClosed ? '无需生成结算凭证' : '暂无可封账任务'}
                 </span>
               ) : (
                 <button
@@ -1251,6 +1302,11 @@ function settlementReadinessCopy(
   summary: SupplierSettlementSummary,
   monthClosed: boolean,
 ) {
+  if (summary.taskCount === 0) {
+    return monthClosed
+      ? '本月无结算任务，无需封账'
+      : '当前月份暂无结算任务，后续将随任务完成动态更新';
+  }
   if (!monthClosed) return '当前月份尚未结束，只能查看动态预估，不能封账';
   if (!summary.tier) return '该月份没有可覆盖完整自然月的供应商阶梯';
   if (summary.reconciliation.status === 'BLOCKED')

@@ -9,9 +9,11 @@ from playwright.sync_api import Route, expect, sync_playwright
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
 APP_URL = 'http://localhost:4173/'
 SETTLEMENT_MONTH = '2026-08'
+EMPTY_SETTLEMENT_MONTH = '2026-07'
 SOURCE_HASH = 'a' * 64
 SETTLEMENT_ID = 'd0a67a1e-6822-4cad-a1a6-8c63891570f7'
 SCREENSHOT = Path('/tmp/outbound-platform-stage7b-settlement.png')
+EMPTY_SCREENSHOT = Path('/tmp/outbound-platform-stage7b-empty-settlement.png')
 MOBILE_SCREENSHOT = Path('/tmp/outbound-platform-stage7b-settlement-mobile.png')
 
 
@@ -51,10 +53,46 @@ def settlement_summary(finalized: bool) -> dict:
     }
 
 
+def empty_settlement_summary() -> dict:
+    return {
+        'settlementId': None,
+        'settlementMonth': EMPTY_SETTLEMENT_MONTH,
+        'timezone': 'Asia/Shanghai',
+        'periodStart': '2026-06-30T16:00:00.000Z',
+        'periodEnd': '2026-07-31T16:00:00.000Z',
+        'status': 'OPEN',
+        'taskCount': 0,
+        'totalBillingMinutes': '0',
+        'tier': None,
+        'totalCustomerCharge': '0.000000',
+        'totalPlatformCost': '0.000000',
+        'totalProfit': '0.000000',
+        'sourceHash': 'b' * 64,
+        'reconciliation': {
+            'status': 'BALANCED',
+            'discrepancyCount': 0,
+            'blockingTaskCount': 0,
+            'lateTaskCount': 0,
+            'issues': [],
+            'issuesTruncated': False,
+        },
+        'finalizedBy': None,
+        'finalizedAt': None,
+        'idempotentReplay': False,
+    }
+
+
 def install_settlement_fixture(page, finalize_requests: list[dict]) -> None:
     def handle(route: Route) -> None:
         request = route.request
-        if request.method == 'GET' and request.url.endswith('/preview'):
+        if (
+            request.method == 'GET'
+            and f'/{EMPTY_SETTLEMENT_MONTH}/' in request.url
+            and request.url.endswith('/preview')
+        ):
+            data = empty_settlement_summary()
+            status = 200
+        elif request.method == 'GET' and request.url.endswith('/preview'):
             data = settlement_summary(False)
             status = 200
         elif request.method == 'POST' and request.url.endswith('/finalize'):
@@ -72,7 +110,7 @@ def install_settlement_fixture(page, finalize_requests: list[dict]) -> None:
 
     page.route(
         re.compile(
-            rf'.*/api/v1/supplier-settlements/{SETTLEMENT_MONTH}/(?:preview|finalize)$'
+            rf'.*/api/v1/supplier-settlements/(?:{SETTLEMENT_MONTH}|{EMPTY_SETTLEMENT_MONTH})/(?:preview|finalize)$'
         ),
         handle,
     )
@@ -144,6 +182,21 @@ def main() -> None:
         expect(panel.get_by_text(re.compile(SETTLEMENT_ID))).to_be_visible()
         page.screenshot(path=str(SCREENSHOT), full_page=True)
 
+        panel.get_by_label('供应商结算月份').fill(EMPTY_SETTLEMENT_MONTH)
+        expect(panel.get_by_text('无需封账', exact=True)).to_be_visible()
+        expect(panel.get_by_text('本月无结算任务', exact=True)).to_be_visible()
+        expect(
+            panel.get_by_text(
+                '该月份没有已结算任务，无需配置供应阶梯，也无需生成供应商月结单。',
+                exact=True,
+            )
+        ).to_be_visible()
+        expect(panel.get_by_text('存在封账阻断项', exact=True)).not_to_be_visible()
+        expect(panel.get_by_text('供应阶梯缺失', exact=True)).not_to_be_visible()
+        expect(panel.get_by_role('button', name='核对并封账')).not_to_be_visible()
+        expect(panel.get_by_text('无需生成结算凭证', exact=True)).to_be_visible()
+        page.screenshot(path=str(EMPTY_SCREENSHOT), full_page=True)
+
         if len(finalize_requests) != 1:
             raise AssertionError(
                 f'Expected one finalize request, got {len(finalize_requests)}'
@@ -180,9 +233,10 @@ def main() -> None:
         raise AssertionError(f'Unexpected external browser requests: {unexpected_network}')
     print(
         'Stage 7B UI verification passed '
-        '(preview + immutable confirmation + request contract + finalized state + mobile layout)'
+        '(preview + empty month + immutable confirmation + request contract + finalized state + mobile layout)'
     )
     print(f'Settlement screenshot: {SCREENSHOT}')
+    print(f'Empty month screenshot: {EMPTY_SCREENSHOT}')
     print(f'Mobile screenshot: {MOBILE_SCREENSHOT}')
 
 

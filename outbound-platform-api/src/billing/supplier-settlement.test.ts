@@ -100,7 +100,14 @@ describe('supplier monthly settlement projection', () => {
 
     const overlapping = buildSupplierSettlementProjection({
       month: '2026-09',
-      tasks: [],
+      tasks: [
+        {
+          id: 'task-with-overlapping-tier',
+          taskNo: 'PT-20260901-00002',
+          billingMinutes: 1,
+          customerCharge: '0.480000',
+        },
+      ],
       tiers: [
         septemberTiers[0]!,
         { ...septemberTiers[0]!, id: 'duplicate-tier', tierCode: 'duplicate' },
@@ -108,6 +115,21 @@ describe('supplier monthly settlement projection', () => {
     });
     expect(overlapping.tier).toBeNull();
     expect(overlapping.issues[0]?.code).toBe('SUPPLIER_TIER_OVERLAP');
+  });
+
+  it('does not require a supplier tier when the month has no tasks', () => {
+    const result = buildSupplierSettlementProjection({
+      month: '2026-08',
+      tasks: [],
+      tiers: [],
+    });
+
+    expect(result.taskCount).toBe(0);
+    expect(result.totalBillingMinutes).toBe(0n);
+    expect(result.tier).toBeNull();
+    expect(result.allocations).toEqual([]);
+    expect(result.totalPlatformCost).toBe('0.000000');
+    expect(result.issues).toEqual([]);
   });
 
   it('hashes normalized money and sorted task inputs deterministically', () => {
