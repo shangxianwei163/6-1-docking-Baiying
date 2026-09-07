@@ -11,6 +11,8 @@ STUDIO_SCREENSHOT = Path('/tmp/outbound-platform-pricing-studio.png')
 HAINAN_SCREENSHOT = Path('/tmp/outbound-platform-pricing-hainan.png')
 MOBILE_SCREENSHOT = Path('/tmp/outbound-platform-pricing-tabs-mobile.png')
 EDITOR_SCREENSHOT = Path('/tmp/outbound-platform-supplier-pricing-editor.png')
+EDITOR_FORM_SCREENSHOT = Path('/tmp/outbound-platform-supplier-pricing-form.png')
+EDITOR_SHORT_SCREENSHOT = Path('/tmp/outbound-platform-supplier-pricing-short.png')
 
 
 def install_supplier_pricing_fixture(page, requests: list[dict]) -> None:
@@ -119,6 +121,37 @@ def assert_internal_scroll(page, panel_id: str) -> None:
     panel.evaluate('element => { element.scrollTop = 0; }')
 
 
+def assert_dialog_footer_fully_visible(page, dialog) -> None:
+    footer = dialog.locator('[data-slot="dialog-footer"]')
+    dialog_box = dialog.bounding_box()
+    footer_box = footer.bounding_box()
+    viewport = page.viewport_size
+    if not dialog_box or not footer_box or not viewport:
+        raise AssertionError('Unable to measure the supplier pricing dialog footer')
+
+    dialog_bottom = dialog_box['y'] + dialog_box['height']
+    footer_bottom = footer_box['y'] + footer_box['height']
+    if footer_box['y'] < dialog_box['y'] or footer_bottom > dialog_bottom + 1:
+        raise AssertionError(
+            f'Dialog footer is clipped by the dialog: {footer_box=} {dialog_box=}'
+        )
+    if footer_bottom > viewport['height'] - 4:
+        raise AssertionError(
+            f'Dialog footer escapes the viewport: {footer_bottom}px > '
+            f'{viewport["height"] - 4}px'
+        )
+
+    for label in ['取消', '预览发布影响']:
+        button_box = dialog.get_by_role('button', name=label).bounding_box()
+        if not button_box:
+            raise AssertionError(f'Unable to measure dialog button: {label}')
+        button_bottom = button_box['y'] + button_box['height']
+        if button_box['y'] < footer_box['y'] or button_bottom > footer_bottom - 4:
+            raise AssertionError(
+                f'Dialog button is clipped inside the footer: {label} {button_box=}'
+            )
+
+
 def main() -> None:
     page_errors: list[str] = []
     supplier_pricing_requests: list[dict] = []
@@ -149,6 +182,15 @@ def main() -> None:
         ).to_be_visible()
         expect(dialog.get_by_label('第 1 档话费')).to_have_value('0.2')
         dialog.get_by_label('第 1 档话费').fill('0.21')
+        assert_dialog_footer_fully_visible(page, dialog)
+        page.screenshot(path=str(EDITOR_FORM_SCREENSHOT), full_page=True)
+
+        page.set_viewport_size({'width': 1024, 'height': 640})
+        assert_dialog_footer_fully_visible(page, dialog)
+        page.screenshot(path=str(EDITOR_SHORT_SCREENSHOT), full_page=True)
+        page.set_viewport_size({'width': 1327, 'height': 964})
+        assert_dialog_footer_fully_visible(page, dialog)
+
         dialog.get_by_role('button', name='预览发布影响').click()
         expect(
             dialog.get_by_role('heading', name='确认供应价格版本')
@@ -209,11 +251,13 @@ def main() -> None:
     print(
         'Pricing tabs UI verification passed '
         '(content separation + internal vertical scrolling + fixed tabs + '
-        'click/keyboard switching + mobile layout)'
+        'click/keyboard switching + fully visible dialog footer + mobile layout)'
     )
     print(f'Studio screenshot: {STUDIO_SCREENSHOT}')
     print(f'Hainan screenshot: {HAINAN_SCREENSHOT}')
     print(f'Supplier pricing editor screenshot: {EDITOR_SCREENSHOT}')
+    print(f'Supplier pricing form screenshot: {EDITOR_FORM_SCREENSHOT}')
+    print(f'Supplier pricing short viewport screenshot: {EDITOR_SHORT_SCREENSHOT}')
     print(f'Mobile screenshot: {MOBILE_SCREENSHOT}')
 
 
