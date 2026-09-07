@@ -97,6 +97,22 @@ def assert_single_studio_editor(page) -> None:
     expect(dialog.get_by_label('单影楼客户话费单价')).to_be_visible()
     expect(dialog.get_by_label('单影楼客户短信单价')).to_be_visible()
     expect(dialog.get_by_label('单影楼每号码冻结分钟')).to_be_visible()
+    overflow = dialog.evaluate(
+        '''element => ({
+            clientWidth: element.clientWidth,
+            scrollWidth: element.scrollWidth,
+            clientHeight: element.clientHeight,
+            scrollHeight: element.scrollHeight,
+            overflowX: getComputedStyle(element).overflowX,
+            overflowY: getComputedStyle(element).overflowY,
+        })'''
+    )
+    if overflow['overflowX'] != 'hidden' or overflow['overflowY'] != 'hidden':
+        raise AssertionError(f'Single-studio dialog allows scrolling: {overflow}')
+    if overflow['scrollWidth'] > overflow['clientWidth'] + 1:
+        raise AssertionError(f'Single-studio dialog clips horizontally: {overflow}')
+    if overflow['scrollHeight'] > overflow['clientHeight'] + 1:
+        raise AssertionError(f'Single-studio dialog clips vertically: {overflow}')
     page.screenshot(path=str(STUDIO_EDITOR_SCREENSHOT), full_page=True)
     dialog.get_by_role('button', name='取消').click()
     expect(dialog).not_to_be_visible()

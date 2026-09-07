@@ -451,7 +451,13 @@
   font-size: 8px;
   line-height: 1.55;
 }
-.ops-studio-pricing-dialog.ops-dialog { max-width: 720px; }
+.ops-studio-pricing-dialog.ops-dialog {
+  width: min(720px, calc(100vw - 28px));
+  max-width: 720px;
+  max-height: none;
+  gap: 0;
+  overflow: hidden;
+}
 .ops-studio-pricing-editor { padding: 15px 17px; }
 .ops-studio-pricing-current {
   display: grid;
@@ -487,6 +493,9 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
+}
+.ops-studio-pricing-dialog > [data-slot="dialog-footer"] {
+  margin: 0 !important;
 }
 .supplier-pricing-date-field {
   display: grid;
