@@ -1,5 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  ilike,
+  inArray,
+  lte,
+  or,
+  sql,
+} from 'drizzle-orm';
 import {
   accountLedgerEvidenceSchema,
   operatorLedgerPageSchema,
@@ -8,6 +19,8 @@ import {
   pricingOverviewSchema,
   pricingPreviewSchema,
   pricingPublishResultSchema,
+  supplierPricingPreviewSchema,
+  supplierPricingPublishResultSchema,
   type CreateOperatorStudioInput,
   type CreateTopUpInput,
   type LedgerEntryType,
@@ -18,10 +31,15 @@ import {
   type OperatorStudio,
   type OperatorStudioPage,
   type OperatorStudioStatus,
+  type OperatorSupplierPricingTier,
   type PricingOverview,
   type PricingPreview,
   type PricingPublishResult,
+  type PublishSupplierPricingInput,
   type PublishPricingInput,
+  type SupplierPricingPreview,
+  type SupplierPricingPublishResult,
+  type SupplierPricingTierDraft,
   type UpdateOperatorStudioInput,
 } from '@outbound/contracts';
 import {
@@ -61,6 +79,7 @@ type LedgerListInput = {
 };
 type StudioAccountRow = typeof studioAccounts.$inferSelect;
 type PricingRow = typeof studioPricingVersions.$inferSelect;
+type SupplierPricingRow = typeof supplierPricingTiers.$inferSelect;
 type StudioRow = typeof studios.$inferSelect;
 
 export class OperationsConsoleFailure extends Error {
@@ -108,6 +127,14 @@ export interface OperationsConsoleService {
     actorId: string,
     requestId: string,
   ): Promise<PricingPublishResult>;
+  previewSupplierPricing(
+    input: PublishSupplierPricingInput,
+  ): Promise<SupplierPricingPreview>;
+  publishSupplierPricing(
+    input: PublishSupplierPricingInput,
+    actorId: string,
+    requestId: string,
+  ): Promise<SupplierPricingPublishResult>;
 }
 
 export class PostgresOperationsConsoleService implements OperationsConsoleService {
@@ -527,12 +554,23 @@ export class PostgresOperationsConsoleService implements OperationsConsoleServic
       this.db
         .select()
         .from(supplierPricingTiers)
-        .orderBy(asc(supplierPricingTiers.minMonthlyMinutes)),
+        .orderBy(
+          desc(supplierPricingTiers.effectiveFrom),
+          asc(supplierPricingTiers.minMonthlyMinutes),
+        ),
     ]);
     const now = this.clock();
     const versionsByStudio = groupBy(
       pricingRows.map(toOperatorPricing),
       (item) => item.studioId,
+    );
+    const currentSupplierTiers = tierRows.filter(
+      (tier) =>
+        tier.effectiveFrom <= now &&
+        (!tier.effectiveTo || tier.effectiveTo > now),
+    );
+    const scheduledSupplierTiers = tierRows.filter(
+      (tier) => tier.effectiveFrom > now,
     );
     return pricingOverviewSchema.parse({
       studios: studioRows.map((studio) => {
@@ -547,19 +585,145 @@ export class PostgresOperationsConsoleService implements OperationsConsoleServic
           versions,
         };
       }),
-      supplierTiers: tierRows.map((tier) => ({
-        id: tier.id,
-        tierCode: tier.tierCode,
-        name: tier.name,
-        minMonthlyMinutes: tier.minMonthlyMinutes.toString(),
-        maxMonthlyMinutes: tier.maxMonthlyMinutes?.toString() ?? null,
-        voiceRate: normalizeMoney(tier.voiceRate),
-        smsRate: normalizeMoney(tier.smsRate),
-        effectiveFrom: tier.effectiveFrom.toISOString(),
-        effectiveTo: tier.effectiveTo?.toISOString() ?? null,
-        publishedBy: tier.publishedBy,
-        publishedAt: tier.publishedAt.toISOString(),
-      })),
+      supplierTiers: currentSupplierTiers.map(toOperatorSupplierPricing),
+      scheduledSupplierTiers: scheduledSupplierTiers.map(
+        toOperatorSupplierPricing,
+      ),
+      supplierTierVersionCount: new Set(
+        tierRows.map((tier) => tier.effectiveFrom.toISOString()),
+      ).size,
+    });
+  }
+
+  async previewSupplierPricing(
+    input: PublishSupplierPricingInput,
+  ): Promise<SupplierPricingPreview> {
+    const now = this.clock();
+    const effectiveFrom = validateSupplierPricingEffectiveFrom(
+      input.effectiveFrom,
+      now,
+    );
+    const tiers = normalizeSupplierPricingTiers(input.tiers);
+    const rows = await this.db
+      .select()
+      .from(supplierPricingTiers)
+      .orderBy(asc(supplierPricingTiers.effectiveFrom));
+    const current = rows.find(
+      (tier) =>
+        tier.effectiveFrom <= now &&
+        (!tier.effectiveTo || tier.effectiveTo > now),
+    );
+    const scheduled = rows.find((tier) => tier.effectiveFrom > now);
+    return supplierPricingPreviewSchema.parse({
+      effectiveFrom: effectiveFrom.toISOString(),
+      tierCount: tiers.length,
+      currentEffectiveFrom: current?.effectiveFrom.toISOString() ?? null,
+      replacesScheduledEffectiveFrom:
+        scheduled?.effectiveFrom.toISOString() ?? null,
+      tiers,
+    });
+  }
+
+  async publishSupplierPricing(
+    input: PublishSupplierPricingInput,
+    actorId: string,
+    requestId: string,
+  ): Promise<SupplierPricingPublishResult> {
+    const now = this.clock();
+    const effectiveFrom = validateSupplierPricingEffectiveFrom(
+      input.effectiveFrom,
+      now,
+    );
+    const tiers = normalizeSupplierPricingTiers(input.tiers);
+    const result = await this.db.transaction(async (tx) => {
+      await advisoryLock(tx, 'operator:supplier-pricing:publish');
+      const scheduledRows = await tx
+        .select()
+        .from(supplierPricingTiers)
+        .where(gt(supplierPricingTiers.effectiveFrom, now));
+      const activeRows = await tx
+        .select()
+        .from(supplierPricingTiers)
+        .where(
+          and(
+            lte(supplierPricingTiers.effectiveFrom, now),
+            or(
+              sql`${supplierPricingTiers.effectiveTo} IS NULL`,
+              gt(supplierPricingTiers.effectiveTo, now),
+            ),
+          ),
+        );
+
+      if (scheduledRows.length) {
+        await tx.delete(supplierPricingTiers).where(
+          inArray(
+            supplierPricingTiers.id,
+            scheduledRows.map((tier) => tier.id),
+          ),
+        );
+      }
+      if (activeRows.length) {
+        await tx
+          .update(supplierPricingTiers)
+          .set({ effectiveTo: effectiveFrom })
+          .where(
+            inArray(
+              supplierPricingTiers.id,
+              activeRows.map((tier) => tier.id),
+            ),
+          );
+      }
+
+      const published = await tx
+        .insert(supplierPricingTiers)
+        .values(
+          tiers.map((tier) => ({
+            id: this.createId(),
+            tierCode: tier.tierCode,
+            name: tier.name,
+            minMonthlyMinutes: BigInt(tier.minMonthlyMinutes),
+            maxMonthlyMinutes:
+              tier.maxMonthlyMinutes === null
+                ? null
+                : BigInt(tier.maxMonthlyMinutes),
+            voiceRate: tier.voiceRate,
+            smsRate: tier.smsRate,
+            effectiveFrom,
+            effectiveTo: null,
+            publishedBy: actorId,
+            publishedAt: now,
+          })),
+        )
+        .returning();
+      await tx.insert(auditLogs).values({
+        id: this.createId(),
+        requestId,
+        actorId,
+        action: 'SUPPLIER_PRICING_PUBLISHED',
+        objectType: 'SUPPLIER_PRICING_SET',
+        objectId: effectiveFrom.toISOString(),
+        detail: {
+          effectiveFrom: effectiveFrom.toISOString(),
+          tierCount: published.length,
+          replacedScheduledCount: scheduledRows.length,
+          reason: input.reason,
+          tiers: tiers.map((tier) => ({
+            tierCode: tier.tierCode,
+            name: tier.name,
+            minMonthlyMinutes: tier.minMonthlyMinutes,
+            maxMonthlyMinutes: tier.maxMonthlyMinutes,
+            voiceRate: tier.voiceRate,
+            smsRate: tier.smsRate,
+          })),
+        },
+        occurredAt: now,
+      });
+      return { published, replacedScheduledCount: scheduledRows.length };
+    });
+    return supplierPricingPublishResultSchema.parse({
+      effectiveFrom: effectiveFrom.toISOString(),
+      replacedScheduledCount: result.replacedScheduledCount,
+      published: result.published.map(toOperatorSupplierPricing),
     });
   }
 
@@ -893,6 +1057,24 @@ function toOperatorPricing(row: PricingRow): OperatorPricingVersion {
   });
 }
 
+function toOperatorSupplierPricing(
+  row: SupplierPricingRow,
+): OperatorSupplierPricingTier {
+  return {
+    id: row.id,
+    tierCode: row.tierCode,
+    name: row.name,
+    minMonthlyMinutes: row.minMonthlyMinutes.toString(),
+    maxMonthlyMinutes: row.maxMonthlyMinutes?.toString() ?? null,
+    voiceRate: normalizeMoney(row.voiceRate),
+    smsRate: normalizeMoney(row.smsRate),
+    effectiveFrom: row.effectiveFrom.toISOString(),
+    effectiveTo: row.effectiveTo?.toISOString() ?? null,
+    publishedBy: row.publishedBy,
+    publishedAt: row.publishedAt.toISOString(),
+  };
+}
+
 function currentPricing(
   versions: OperatorPricingVersion[],
   now: Date,
@@ -966,6 +1148,55 @@ function evidenceFrom(detail: Record<string, unknown>) {
     receiptFileName: detail.receiptFileName ?? null,
   });
   return parsed.success ? parsed.data : null;
+}
+
+function normalizeSupplierPricingTiers(
+  tiers: SupplierPricingTierDraft[],
+): SupplierPricingTierDraft[] {
+  return [...tiers]
+    .sort((left, right) => {
+      const leftMin = BigInt(left.minMonthlyMinutes);
+      const rightMin = BigInt(right.minMonthlyMinutes);
+      return leftMin === rightMin ? 0 : leftMin < rightMin ? -1 : 1;
+    })
+    .map((tier) => ({
+      ...tier,
+      name: tier.name.trim(),
+      tierCode: tier.tierCode.trim(),
+      minMonthlyMinutes: BigInt(tier.minMonthlyMinutes).toString(),
+      maxMonthlyMinutes:
+        tier.maxMonthlyMinutes === null
+          ? null
+          : BigInt(tier.maxMonthlyMinutes).toString(),
+      voiceRate: normalizeMoney(tier.voiceRate),
+      smsRate: normalizeMoney(tier.smsRate),
+    }));
+}
+
+function validateSupplierPricingEffectiveFrom(value: string, now: Date): Date {
+  const effectiveFrom = new Date(value);
+  const shanghaiTime = new Date(effectiveFrom.getTime() + 8 * 60 * 60 * 1_000);
+  const isShanghaiMonthStart =
+    shanghaiTime.getUTCDate() === 1 &&
+    shanghaiTime.getUTCHours() === 0 &&
+    shanghaiTime.getUTCMinutes() === 0 &&
+    shanghaiTime.getUTCSeconds() === 0 &&
+    shanghaiTime.getUTCMilliseconds() === 0;
+  if (!isShanghaiMonthStart) {
+    throw new OperationsConsoleFailure(
+      'SUPPLIER_PRICING_EFFECTIVE_TIME_INVALID',
+      '供应成本只能从上海时区自然月第一天 00:00 开始生效',
+      400,
+    );
+  }
+  if (effectiveFrom <= now) {
+    throw new OperationsConsoleFailure(
+      'SUPPLIER_PRICING_EFFECTIVE_TIME_CONFLICT',
+      '供应成本生效月份必须晚于当前时间',
+      409,
+    );
+  }
+  return effectiveFrom;
 }
 
 async function resolvePricingTargets(

@@ -776,7 +776,10 @@ export const supplierPricingTiers = pgTable(
       .defaultNow(),
   },
   (table) => [
-    uniqueIndex('supplier_pricing_tier_code_uq').on(table.tierCode),
+    uniqueIndex('supplier_pricing_tier_version_uq').on(
+      table.tierCode,
+      table.effectiveFrom,
+    ),
     check('supplier_pricing_min_ck', sql`${table.minMonthlyMinutes} >= 0`),
     check(
       'supplier_pricing_max_ck',
@@ -1119,7 +1122,9 @@ export const supplierSettlementTaskItems = pgTable(
   {
     settlementId: uuid('settlement_id')
       .notNull()
-      .references(() => supplierMonthlySettlements.id, { onDelete: 'restrict' }),
+      .references(() => supplierMonthlySettlements.id, {
+        onDelete: 'restrict',
+      }),
     taskId: uuid('task_id')
       .notNull()
       .references(() => platformTasks.id, { onDelete: 'restrict' }),

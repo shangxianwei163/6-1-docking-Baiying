@@ -133,7 +133,8 @@ npm run stage6:verify:ui
 
 - `GET/POST /api/v1/studios`、`PATCH /api/v1/studios/{studioId}` 和 `POST /api/v1/studios/{studioId}/status`：分页查询、新增、修改和启停；MC code 保持唯一，联系人电话加密保存、脱敏返回，写操作均记录审计日志。
 - `GET /api/v1/account-ledger` 和 `POST /api/v1/account-ledger/top-ups`：查询不可变账户流水，并在账户行锁内原子完成线下充值、余额更新和审计；同一幂等键不会重复入账。当前保存收款渠道、凭证号和文件名元数据，文件内容待阶段 5 接入阿里云 OSS。
-- `GET /api/v1/pricing`、`POST /api/v1/pricing/preview` 和 `POST /api/v1/pricing/publish`：读取当前/预约客户价格及供应商成本阶梯，支持统一或单影楼预览和不可变版本发布；立即版本只影响新任务，预约版本按上海时区次日零点生效。
+- `GET /api/v1/pricing`、`POST /api/v1/pricing/preview` 和 `POST /api/v1/pricing/publish`：读取当前/预约客户价格，支持统一或单影楼预览和不可变版本发布；立即版本只影响新任务，预约版本按上海时区次日零点生效。
+- `POST /api/v1/supplier-pricing/preview` 和 `POST /api/v1/supplier-pricing/publish`：海南人像没有可读取供应价格的外部接口，因此由运营根据已确认报价人工维护完整阶梯。第一档必须从 0 分钟开始、相邻档位必须连续且仅最后一档允许无上限；新版本只能预约在上海时区未来自然月首日生效，历史月份不回写，尚未生效的预约可整体替换，发布原因与完整价格写入审计日志。
 
 所有内部接口均要求 `X-Actor-Id`。本轮刻意不开放无审批的退款和人工调整入口，也不激活 ERP/CRM 回传端点；这两部分分别留给 6B-2 和取得真实地址、KMS 密钥后的外部联调阶段。
 
@@ -144,7 +145,7 @@ npm run db:verify:stage6b
 npm run stage6b:verify:ui
 ```
 
-数据库脚本会创建隔离影楼并在结束时清理，覆盖加密、幂等充值、即时/预约定价与审计；浏览器脚本只读取数据、打开表单和调用价格预览，不会新增、充值或发布版本，截图写入 `/tmp`。
+数据库脚本会创建隔离影楼并在结束时清理，覆盖加密、幂等充值、即时/预约定价与审计；浏览器回归还会使用网络夹具验证海南供应价格的完整阶梯编辑、预览与发布请求，不会改动本地数据库，截图写入 `/tmp`。
 
 ## 阶段 6B-2 退款、人工调整与操作审计
 

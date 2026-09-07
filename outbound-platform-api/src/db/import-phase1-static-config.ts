@@ -141,7 +141,12 @@ export async function importPhase1StaticConfig(
           effectiveFrom: new Date('2026-09-01T00:00:00+08:00'),
           publishedBy: 'phase1-static-import',
         })
-        .onConflictDoNothing({ target: supplierPricingTiers.tierCode })
+        .onConflictDoNothing({
+          target: [
+            supplierPricingTiers.tierCode,
+            supplierPricingTiers.effectiveFrom,
+          ],
+        })
         .returning({ id: supplierPricingTiers.id });
       report.supplierTiersInserted += inserted.length;
     }

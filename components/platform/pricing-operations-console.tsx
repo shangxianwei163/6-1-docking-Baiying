@@ -42,9 +42,15 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { UnifiedSelect } from '@/components/ui/unified-select';
+import { SupplierPricingEditor } from './supplier-pricing-editor';
 import { Panel, Status } from './shared';
 
-const emptyOverview: PricingOverview = { studios: [], supplierTiers: [] };
+const emptyOverview: PricingOverview = {
+  studios: [],
+  supplierTiers: [],
+  scheduledSupplierTiers: [],
+  supplierTierVersionCount: 0,
+};
 type PriceMode = 'UNIFORM' | 'PER_STUDIO';
 type EffectiveChoice = 'NOW' | 'TOMORROW';
 type PricingScope = 'STUDIO' | 'HAINAN';
@@ -54,6 +60,7 @@ export function PricingOperationsConsole() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [feedback, setFeedback] = useState('');
+  const [supplierFeedback, setSupplierFeedback] = useState('');
   const [refreshToken, setRefreshToken] = useState(0);
   const [scope, setScope] = useState<PricingScope>('STUDIO');
   const [mode, setMode] = useState<PriceMode>('UNIFORM');
@@ -292,343 +299,341 @@ export function PricingOperationsConsole() {
         tabIndex={0}
         hidden={scope !== 'STUDIO'}
       >
+        {feedback ? (
+          <output className="ops-feedback is-success">
+            <CheckCircle2 aria-hidden="true" size={16} />
+            <span>{feedback}</span>
+            <button type="button" onClick={() => setFeedback('')}>
+              关闭
+            </button>
+          </output>
+        ) : null}
 
-      {feedback ? (
-        <output className="ops-feedback is-success">
-          <CheckCircle2 aria-hidden="true" size={16} />
-          <span>{feedback}</span>
-          <button type="button" onClick={() => setFeedback('')}>
-            关闭
-          </button>
-        </output>
-      ) : null}
-
-      <section
-        className="ops-metric-grid pricing-metric-grid"
-        aria-label="影楼话费汇总"
-      >
-        <MetricCard
-          icon={Store}
-          label="定价影楼"
-          value={`${overview.studios.length} 家`}
-          note={`${currentCount} 家有当前价格`}
-        />
-        <MetricCard
-          icon={Layers3}
-          label="预约版本"
-          value={`${scheduledCount} 个`}
-          note="按生效时间解析"
-        />
-        <MetricCard
-          icon={ShieldCheck}
-          label="任务计价原则"
-          value="快照锁定"
-          note="发布只影响新任务"
-        />
-      </section>
-
-      <Panel
-        title="发布客户价格版本"
-        meta="先预览，再确认发布"
-        className="ops-panel ops-pricing-composer"
-      >
-        <div
-          className="ops-price-mode"
-          role="tablist"
-          aria-label="价格发布范围"
+        <section
+          className="ops-metric-grid pricing-metric-grid"
+          aria-label="影楼话费汇总"
         >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'UNIFORM'}
-            className={mode === 'UNIFORM' ? 'is-active' : ''}
-            onClick={() => {
-              setMode('UNIFORM');
-              setPreview(null);
-            }}
+          <MetricCard
+            icon={Store}
+            label="定价影楼"
+            value={`${overview.studios.length} 家`}
+            note={`${currentCount} 家有当前价格`}
+          />
+          <MetricCard
+            icon={Layers3}
+            label="预约版本"
+            value={`${scheduledCount} 个`}
+            note="按生效时间解析"
+          />
+          <MetricCard
+            icon={ShieldCheck}
+            label="任务计价原则"
+            value="快照锁定"
+            note="发布只影响新任务"
+          />
+        </section>
+
+        <Panel
+          title="发布客户价格版本"
+          meta="先预览，再确认发布"
+          className="ops-panel ops-pricing-composer"
+        >
+          <div
+            className="ops-price-mode"
+            role="tablist"
+            aria-label="价格发布范围"
           >
-            统一价格<small>覆盖全部影楼</small>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'PER_STUDIO'}
-            className={mode === 'PER_STUDIO' ? 'is-active' : ''}
-            onClick={() => {
-              setMode('PER_STUDIO');
-              setPreview(null);
-            }}
-          >
-            单影楼价格<small>只发布所选影楼</small>
-          </button>
-        </div>
-        <div className="ops-price-form">
-          {mode === 'PER_STUDIO' ? (
-            <div className="ops-field ops-field-wide">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'UNIFORM'}
+              className={mode === 'UNIFORM' ? 'is-active' : ''}
+              onClick={() => {
+                setMode('UNIFORM');
+                setPreview(null);
+              }}
+            >
+              统一价格<small>覆盖全部影楼</small>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'PER_STUDIO'}
+              className={mode === 'PER_STUDIO' ? 'is-active' : ''}
+              onClick={() => {
+                setMode('PER_STUDIO');
+                setPreview(null);
+              }}
+            >
+              单影楼价格<small>只发布所选影楼</small>
+            </button>
+          </div>
+          <div className="ops-price-form">
+            {mode === 'PER_STUDIO' ? (
+              <div className="ops-field ops-field-wide">
+                <span>
+                  目标影楼 <i>*</i>
+                </span>
+                <UnifiedSelect
+                  ariaLabel="单影楼价格目标"
+                  value={studioId}
+                  placeholder="选择影楼"
+                  popupLabel="选择价格目标影楼"
+                  options={overview.studios.map((studio) => ({
+                    value: studio.studioId,
+                    label: `${studio.businessCode} · ${studio.name}`,
+                    description: studio.currentPricing
+                      ? `当前 ${formatRate(studio.currentPricing.voiceRate)} / 分钟`
+                      : '当前未配置价格',
+                  }))}
+                  onValueChange={(value) => {
+                    setStudioId(value);
+                    const target = overview.studios.find(
+                      (studio) => studio.studioId === value,
+                    );
+                    if (target?.currentPricing) {
+                      setVoiceRate(trimMoney(target.currentPricing.voiceRate));
+                      setSmsRate(trimMoney(target.currentPricing.smsRate));
+                      setFrozenMinutes(
+                        String(target.currentPricing.frozenMinutes),
+                      );
+                    }
+                  }}
+                />
+              </div>
+            ) : (
+              <div className="ops-price-impact ops-field-wide">
+                <Sparkles aria-hidden="true" size={16} />
+                <div>
+                  <b>
+                    统一发布将为 {overview.studios.length}{' '}
+                    家影楼各生成一个独立版本
+                  </b>
+                  <p>
+                    包含已停用影楼，确保其未来启用时已有明确价格；发布前会显示完整影响清单。
+                  </p>
+                </div>
+              </div>
+            )}
+            <label className="ops-field">
               <span>
-                目标影楼 <i>*</i>
+                话费单价（元 / 分钟） <i>*</i>
+              </span>
+              <input
+                aria-label="客户话费单价"
+                inputMode="decimal"
+                value={voiceRate}
+                onChange={(event) => setVoiceRate(event.target.value)}
+              />
+            </label>
+            <label className="ops-field">
+              <span>
+                短信单价（元 / 条） <i>*</i>
+              </span>
+              <input
+                aria-label="客户短信单价"
+                inputMode="decimal"
+                value={smsRate}
+                onChange={(event) => setSmsRate(event.target.value)}
+              />
+            </label>
+            <label className="ops-field">
+              <span>
+                每号码冻结分钟 <i>*</i>
+              </span>
+              <input
+                aria-label="每号码冻结分钟"
+                inputMode="numeric"
+                value={frozenMinutes}
+                onChange={(event) => setFrozenMinutes(event.target.value)}
+              />
+            </label>
+            <div className="ops-field">
+              <span>
+                生效时间 <i>*</i>
               </span>
               <UnifiedSelect
-                ariaLabel="单影楼价格目标"
-                value={studioId}
-                placeholder="选择影楼"
-                popupLabel="选择价格目标影楼"
-                options={overview.studios.map((studio) => ({
-                  value: studio.studioId,
-                  label: `${studio.businessCode} · ${studio.name}`,
-                  description: studio.currentPricing
-                    ? `当前 ${formatRate(studio.currentPricing.voiceRate)} / 分钟`
-                    : '当前未配置价格',
-                }))}
-                onValueChange={(value) => {
-                  setStudioId(value);
-                  const target = overview.studios.find(
-                    (studio) => studio.studioId === value,
-                  );
-                  if (target?.currentPricing) {
-                    setVoiceRate(trimMoney(target.currentPricing.voiceRate));
-                    setSmsRate(trimMoney(target.currentPricing.smsRate));
-                    setFrozenMinutes(
-                      String(target.currentPricing.frozenMinutes),
-                    );
-                  }
-                }}
+                ariaLabel="价格生效时间"
+                value={effectiveChoice}
+                popupLabel="选择价格生效时间"
+                options={[
+                  { value: 'NOW', label: '立即对新任务生效' },
+                  { value: 'TOMORROW', label: '明日 00:00（上海）' },
+                ]}
+                onValueChange={(value) =>
+                  setEffectiveChoice(value as EffectiveChoice)
+                }
               />
             </div>
-          ) : (
-            <div className="ops-price-impact ops-field-wide">
-              <Sparkles aria-hidden="true" size={16} />
-              <div>
-                <b>
-                  统一发布将为 {overview.studios.length}{' '}
-                  家影楼各生成一个独立版本
-                </b>
-                <p>
-                  包含已停用影楼，确保其未来启用时已有明确价格；发布前会显示完整影响清单。
-                </p>
-              </div>
+            <label className="ops-field ops-field-wide">
+              <span>
+                发布原因 <i>*</i>
+              </span>
+              <textarea
+                rows={3}
+                maxLength={500}
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+              />
+            </label>
+          </div>
+          {actionError ? (
+            <div className="ops-inline-error" role="alert">
+              <AlertTriangle aria-hidden="true" size={14} />
+              {actionError}
             </div>
-          )}
-          <label className="ops-field">
+          ) : null}
+          <div className="ops-price-submit">
             <span>
-              话费单价（元 / 分钟） <i>*</i>
+              <ShieldCheck aria-hidden="true" size={13} />
+              发布动作与每家影楼生成的版本均写入审计日志
             </span>
-            <input
-              aria-label="客户话费单价"
-              inputMode="decimal"
-              value={voiceRate}
-              onChange={(event) => setVoiceRate(event.target.value)}
-            />
-          </label>
-          <label className="ops-field">
-            <span>
-              短信单价（元 / 条） <i>*</i>
-            </span>
-            <input
-              aria-label="客户短信单价"
-              inputMode="decimal"
-              value={smsRate}
-              onChange={(event) => setSmsRate(event.target.value)}
-            />
-          </label>
-          <label className="ops-field">
-            <span>
-              每号码冻结分钟 <i>*</i>
-            </span>
-            <input
-              aria-label="每号码冻结分钟"
-              inputMode="numeric"
-              value={frozenMinutes}
-              onChange={(event) => setFrozenMinutes(event.target.value)}
-            />
-          </label>
-          <div className="ops-field">
-            <span>
-              生效时间 <i>*</i>
-            </span>
-            <UnifiedSelect
-              ariaLabel="价格生效时间"
-              value={effectiveChoice}
-              popupLabel="选择价格生效时间"
-              options={[
-                { value: 'NOW', label: '立即对新任务生效' },
-                { value: 'TOMORROW', label: '明日 00:00（上海）' },
-              ]}
-              onValueChange={(value) =>
-                setEffectiveChoice(value as EffectiveChoice)
-              }
-            />
+            <button
+              type="button"
+              className="primary-button"
+              disabled={!input || previewing}
+              onClick={() => void requestPreview()}
+            >
+              {previewing ? (
+                <>
+                  <LoaderCircle
+                    aria-hidden="true"
+                    className="is-spinning"
+                    size={13}
+                  />
+                  正在计算影响…
+                </>
+              ) : (
+                '预览发布影响'
+              )}
+            </button>
           </div>
-          <label className="ops-field ops-field-wide">
-            <span>
-              发布原因 <i>*</i>
-            </span>
-            <textarea
-              rows={3}
-              maxLength={500}
-              value={reason}
-              onChange={(event) => setReason(event.target.value)}
-            />
-          </label>
-        </div>
-        {actionError ? (
-          <div className="ops-inline-error" role="alert">
-            <AlertTriangle aria-hidden="true" size={14} />
-            {actionError}
-          </div>
-        ) : null}
-        <div className="ops-price-submit">
-          <span>
-            <ShieldCheck aria-hidden="true" size={13} />
-            发布动作与每家影楼生成的版本均写入审计日志
-          </span>
-          <button
-            type="button"
-            className="primary-button"
-            disabled={!input || previewing}
-            onClick={() => void requestPreview()}
-          >
-            {previewing ? (
-              <>
-                <LoaderCircle
-                  aria-hidden="true"
-                  className="is-spinning"
-                  size={13}
-                />
-                正在计算影响…
-              </>
-            ) : (
-              '预览发布影响'
-            )}
-          </button>
-        </div>
-      </Panel>
+        </Panel>
 
-      <Panel
-        title="影楼价格版本"
-        meta={
-          loading
-            ? '正在读取数据库…'
-            : `${currentCount} / ${overview.studios.length} 家已配置`
-        }
-        className="ops-panel"
-      >
-        <div className="table-wrap ops-table-wrap" aria-busy={loading}>
-          <table className="data-table ops-pricing-table">
-            <caption className="sr-only">真实影楼价格版本</caption>
-            <thead>
-              <tr>
-                <th>影楼</th>
-                <th>当前话费</th>
-                <th>短信费</th>
-                <th>冻结规则</th>
-                <th>当前版本</th>
-                <th>预约版本</th>
-                <th>发布人与时间</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && !overview.studios.length
-                ? Array.from({ length: 4 }, (_, index) => (
-                    <SkeletonRow key={index} />
-                  ))
-                : overview.studios.map((studio) => {
-                    const current = studio.currentPricing;
-                    const scheduled = studio.scheduledPricing;
-                    return (
-                      <tr key={studio.studioId}>
-                        <td>
-                          <b>{studio.name}</b>
-                          <span className="table-meta">
-                            {studio.businessCode}
-                          </span>
-                        </td>
-                        <td>
-                          {current ? (
-                            <b className="ops-money">
-                              {formatRate(current.voiceRate)} / 分钟
-                            </b>
-                          ) : (
-                            <span className="ops-warning-copy">未配置</span>
-                          )}
-                        </td>
-                        <td>
-                          {current
-                            ? `${formatRate(current.smsRate)} / 条`
-                            : '—'}
-                        </td>
-                        <td>
-                          {current
-                            ? `${current.frozenMinutes} 分钟 / 号码`
-                            : '—'}
-                        </td>
-                        <td>
-                          {current ? (
-                            <>
-                              <Status tone="green">
-                                v{current.version} ·{' '}
-                                {current.sourceMode === 'UNIFORM'
-                                  ? '统一'
-                                  : '单影楼'}
-                              </Status>
-                              <span className="table-meta">
-                                {formatDateTime(current.effectiveFrom)} 起
-                              </span>
-                            </>
-                          ) : (
-                            '—'
-                          )}
-                          <span className="table-meta">
-                            历史 {studio.versions.length} 个版本
-                          </span>
-                        </td>
-                        <td>
-                          {scheduled ? (
-                            <>
-                              <Status tone="blue">
-                                v{scheduled.version} 待生效
-                              </Status>
-                              <span className="table-meta">
-                                {formatDateTime(scheduled.effectiveFrom)}
-                              </span>
-                              <b className="table-meta">
-                                {formatRate(scheduled.voiceRate)} / 分钟
+        <Panel
+          title="影楼价格版本"
+          meta={
+            loading
+              ? '正在读取数据库…'
+              : `${currentCount} / ${overview.studios.length} 家已配置`
+          }
+          className="ops-panel"
+        >
+          <div className="table-wrap ops-table-wrap" aria-busy={loading}>
+            <table className="data-table ops-pricing-table">
+              <caption className="sr-only">真实影楼价格版本</caption>
+              <thead>
+                <tr>
+                  <th>影楼</th>
+                  <th>当前话费</th>
+                  <th>短信费</th>
+                  <th>冻结规则</th>
+                  <th>当前版本</th>
+                  <th>预约版本</th>
+                  <th>发布人与时间</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading && !overview.studios.length
+                  ? Array.from({ length: 4 }, (_, index) => (
+                      <SkeletonRow key={index} />
+                    ))
+                  : overview.studios.map((studio) => {
+                      const current = studio.currentPricing;
+                      const scheduled = studio.scheduledPricing;
+                      return (
+                        <tr key={studio.studioId}>
+                          <td>
+                            <b>{studio.name}</b>
+                            <span className="table-meta">
+                              {studio.businessCode}
+                            </span>
+                          </td>
+                          <td>
+                            {current ? (
+                              <b className="ops-money">
+                                {formatRate(current.voiceRate)} / 分钟
                               </b>
-                            </>
-                          ) : (
-                            <span className="ops-muted">无预约版本</span>
-                          )}
-                        </td>
-                        <td>
-                          {current ? (
-                            <>
-                              <b>{current.publishedBy}</b>
-                              <span className="table-meta">
-                                {formatDateTime(current.publishedAt)}
-                              </span>
-                            </>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
-                        <td>
-                          <button
-                            type="button"
-                            className="ops-table-action"
-                            onClick={() => configureStudio(studio.studioId)}
-                          >
-                            单独调价
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-            </tbody>
-          </table>
-        </div>
-      </Panel>
-
+                            ) : (
+                              <span className="ops-warning-copy">未配置</span>
+                            )}
+                          </td>
+                          <td>
+                            {current
+                              ? `${formatRate(current.smsRate)} / 条`
+                              : '—'}
+                          </td>
+                          <td>
+                            {current
+                              ? `${current.frozenMinutes} 分钟 / 号码`
+                              : '—'}
+                          </td>
+                          <td>
+                            {current ? (
+                              <>
+                                <Status tone="green">
+                                  v{current.version} ·{' '}
+                                  {current.sourceMode === 'UNIFORM'
+                                    ? '统一'
+                                    : '单影楼'}
+                                </Status>
+                                <span className="table-meta">
+                                  {formatDateTime(current.effectiveFrom)} 起
+                                </span>
+                              </>
+                            ) : (
+                              '—'
+                            )}
+                            <span className="table-meta">
+                              历史 {studio.versions.length} 个版本
+                            </span>
+                          </td>
+                          <td>
+                            {scheduled ? (
+                              <>
+                                <Status tone="blue">
+                                  v{scheduled.version} 待生效
+                                </Status>
+                                <span className="table-meta">
+                                  {formatDateTime(scheduled.effectiveFrom)}
+                                </span>
+                                <b className="table-meta">
+                                  {formatRate(scheduled.voiceRate)} / 分钟
+                                </b>
+                              </>
+                            ) : (
+                              <span className="ops-muted">无预约版本</span>
+                            )}
+                          </td>
+                          <td>
+                            {current ? (
+                              <>
+                                <b>{current.publishedBy}</b>
+                                <span className="table-meta">
+                                  {formatDateTime(current.publishedAt)}
+                                </span>
+                              </>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="ops-table-action"
+                              onClick={() => configureStudio(studio.studioId)}
+                            >
+                              单独调价
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
       </section>
 
       <section
@@ -647,7 +652,7 @@ export function PricingOperationsConsole() {
             icon={CircleDollarSign}
             label="供应商阶梯"
             value={`${overview.supplierTiers.length} 档`}
-            note="海南人像月度成本"
+            note={`${overview.supplierTierVersionCount} 个价格版本`}
           />
           <MetricCard
             icon={CalendarClock}
@@ -663,60 +668,103 @@ export function PricingOperationsConsole() {
           />
         </section>
 
-      <SupplierSettlementConsole />
+        {supplierFeedback ? (
+          <output className="ops-feedback is-success">
+            <CheckCircle2 aria-hidden="true" size={16} />
+            <span>{supplierFeedback}</span>
+            <button type="button" onClick={() => setSupplierFeedback('')}>
+              关闭
+            </button>
+          </output>
+        ) : null}
 
-      <Panel
-        title="海南人像供应成本阶梯"
-        meta="数据库只读 · 月结成本口径"
-        className="ops-panel ops-supplier-panel"
-      >
-        <div className="ops-supplier-intro">
-          <CalendarClock aria-hidden="true" size={17} />
-          <div>
-            <b>供应价格与客户售价独立</b>
-            <p>
-              以下不可变阶梯同时用于任务成本暂估与月度封账；结算时按完整自然月分钟量选档，封账后任务成本与利润转为最终值。
-            </p>
+        <SupplierSettlementConsole />
+
+        <Panel
+          title="海南人像供应成本阶梯"
+          meta="运营人工维护 · 月结成本口径"
+          className="ops-panel ops-supplier-panel"
+        >
+          <div className="ops-supplier-intro supplier-pricing-maintenance">
+            <CalendarClock aria-hidden="true" size={17} />
+            <div>
+              <b>无外部价格接口，由运营确认后发布</b>
+              <p>
+                每次维护完整阶梯并按自然月版本化生效；历史月份继续使用原价格，所有发布动作写入审计日志。
+              </p>
+            </div>
+            <SupplierPricingEditor
+              currentTiers={overview.supplierTiers}
+              scheduledTiers={overview.scheduledSupplierTiers}
+              onPublished={(result) => {
+                setSupplierFeedback(
+                  `海南人像供应价格已发布：${result.published.length} 档，${formatDateTime(result.effectiveFrom)} 生效。`,
+                );
+                setRefreshToken((current) => current + 1);
+              }}
+            />
           </div>
-        </div>
-        <div className="table-wrap">
-          <table className="data-table ops-tier-table">
-            <thead>
-              <tr>
-                <th>阶梯</th>
-                <th>月度分钟范围</th>
-                <th>话费成本</th>
-                <th>短信成本</th>
-                <th>生效时间</th>
-                <th>发布人</th>
-              </tr>
-            </thead>
-            <tbody>
-              {overview.supplierTiers.map((tier) => (
-                <tr key={tier.id}>
-                  <td>
-                    <b>{tier.name}</b>
-                    <span className="table-meta">{tier.tierCode}</span>
-                  </td>
-                  <td>
-                    {formatTierRange(
-                      tier.minMonthlyMinutes,
-                      tier.maxMonthlyMinutes,
-                    )}
-                  </td>
-                  <td>
-                    <b>{formatRate(tier.voiceRate)} / 分钟</b>
-                  </td>
-                  <td>{formatRate(tier.smsRate)} / 条</td>
-                  <td>{formatDateTime(tier.effectiveFrom)}</td>
-                  <td>{tier.publishedBy}</td>
+          {overview.scheduledSupplierTiers.length ? (
+            <output className="supplier-pricing-scheduled">
+              <CalendarClock aria-hidden="true" size={14} />
+              <div>
+                <b>
+                  已预约 {overview.scheduledSupplierTiers.length} 档供应价格
+                </b>
+                <span>
+                  {formatDateTime(
+                    overview.scheduledSupplierTiers[0]!.effectiveFrom,
+                  )}{' '}
+                  起用于新月份；再次发布将替换这组尚未生效的预约。
+                </span>
+              </div>
+            </output>
+          ) : null}
+          <div className="table-wrap">
+            <table className="data-table ops-tier-table">
+              <thead>
+                <tr>
+                  <th>阶梯</th>
+                  <th>月度分钟范围</th>
+                  <th>话费成本</th>
+                  <th>短信成本</th>
+                  <th>生效时间</th>
+                  <th>发布人</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Panel>
-
+              </thead>
+              <tbody>
+                {overview.supplierTiers.length ? (
+                  overview.supplierTiers.map((tier) => (
+                    <tr key={tier.id}>
+                      <td>
+                        <b>{tier.name}</b>
+                        <span className="table-meta">{tier.tierCode}</span>
+                      </td>
+                      <td>
+                        {formatTierRange(
+                          tier.minMonthlyMinutes,
+                          tier.maxMonthlyMinutes,
+                        )}
+                      </td>
+                      <td>
+                        <b>{formatRate(tier.voiceRate)} / 分钟</b>
+                      </td>
+                      <td>{formatRate(tier.smsRate)} / 条</td>
+                      <td>{formatDateTime(tier.effectiveFrom)}</td>
+                      <td>{tier.publishedBy}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={6} className="table-empty-cell">
+                      尚未配置供应价格，请点击“维护供应价格”创建首个完整阶梯版本。
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
       </section>
 
       <PricingPreviewDialog

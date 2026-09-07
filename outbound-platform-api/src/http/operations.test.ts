@@ -21,6 +21,13 @@ function setup() {
   const publishPricing = vi.fn(async () => ({
     published: [{ version: 2 }],
   }));
+  const previewSupplierPricing = vi.fn(async () => ({
+    tierCount: 2,
+    effectiveFrom: '2026-10-31T16:00:00.000Z',
+  }));
+  const publishSupplierPricing = vi.fn(async () => ({
+    published: [{ tierCode: 'tier-basic' }, { tierCode: 'tier-scale' }],
+  }));
   const service = {
     listStudios,
     createStudio,
@@ -31,6 +38,8 @@ function setup() {
     getPricingOverview,
     previewPricing,
     publishPricing,
+    previewSupplierPricing,
+    publishSupplierPricing,
   } as unknown as OperationsConsoleService;
   const app = createApp({
     mappingRepository: {} as MappingRepository,
@@ -50,6 +59,8 @@ function setup() {
     getPricingOverview,
     previewPricing,
     publishPricing,
+    previewSupplierPricing,
+    publishSupplierPricing,
   };
 }
 
@@ -206,6 +217,65 @@ describe('operator configuration and billing HTTP API', () => {
       'platform-admin',
       'request-operations-001',
     );
+  });
+
+  it('previews and publishes a complete operator-maintained supplier tier set', async () => {
+    const { app, previewSupplierPricing, publishSupplierPricing } = setup();
+    const input = {
+      effectiveFrom: '2026-10-31T16:00:00.000Z',
+      reason: '海南人像新一期供应价格确认',
+      tiers: [
+        {
+          tierCode: 'tier-basic',
+          name: '基础阶梯',
+          minMonthlyMinutes: '0',
+          maxMonthlyMinutes: '10000',
+          voiceRate: '0.20',
+          smsRate: '0.08',
+        },
+        {
+          tierCode: 'tier-scale',
+          name: '规模阶梯',
+          minMonthlyMinutes: '10000',
+          maxMonthlyMinutes: null,
+          voiceRate: '0.18',
+          smsRate: '0.07',
+        },
+      ],
+    };
+
+    const preview = await app.request('/api/v1/supplier-pricing/preview', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify(input),
+    });
+    expect(preview.status).toBe(200);
+    expect(previewSupplierPricing).toHaveBeenCalledWith(input);
+
+    const published = await app.request('/api/v1/supplier-pricing/publish', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify(input),
+    });
+    expect(published.status).toBe(201);
+    expect(publishSupplierPricing).toHaveBeenCalledWith(
+      input,
+      'platform-admin',
+      'request-operations-001',
+    );
+
+    const invalid = await app.request('/api/v1/supplier-pricing/preview', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        ...input,
+        tiers: [
+          input.tiers[0],
+          { ...input.tiers[1], minMonthlyMinutes: '12000' },
+        ],
+      }),
+    });
+    expect(invalid.status).toBe(400);
   });
 
   it('keeps operational failures in the admin error envelope', async () => {

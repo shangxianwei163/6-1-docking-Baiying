@@ -120,6 +120,13 @@
       "when": 1788745689277,
       "tag": "0016_safe_line_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1788749320744,
+      "tag": "0017_jittery_nebula",
+      "breakpoints": true
     }
   ]
 }

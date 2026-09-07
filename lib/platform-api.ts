@@ -40,12 +40,15 @@ import type {
   PricingOverview,
   PricingPreview,
   PricingPublishResult,
+  PublishSupplierPricingInput,
   PublishPricingInput,
   PublishMappingInput,
   RemoveMappingDraftInput,
   SceneReadiness,
   SourceSystem,
   SupplierSettlementSummary,
+  SupplierPricingPreview,
+  SupplierPricingPublishResult,
   VariableSyncRequested,
   UpdateOperatorStudioInput,
 } from '@outbound/contracts';
@@ -69,6 +72,8 @@ import {
   pricingOverviewSchema,
   pricingPreviewSchema,
   pricingPublishResultSchema,
+  supplierPricingPreviewSchema,
+  supplierPricingPublishResultSchema,
   supplierSettlementSummarySchema,
 } from '@outbound/contracts';
 
@@ -746,6 +751,28 @@ export async function publishPricing(input: PublishPricingInput) {
       body: JSON.stringify(input),
     }),
   ) as PricingPublishResult;
+}
+
+export async function previewSupplierPricing(
+  input: PublishSupplierPricingInput,
+) {
+  return supplierPricingPreviewSchema.parse(
+    await request<unknown>('/api/v1/supplier-pricing/preview', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  ) as SupplierPricingPreview;
+}
+
+export async function publishSupplierPricing(
+  input: PublishSupplierPricingInput,
+) {
+  return supplierPricingPublishResultSchema.parse(
+    await request<unknown>('/api/v1/supplier-pricing/publish', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  ) as SupplierPricingPublishResult;
 }
 
 export async function loadSupplierSettlementPreview(month: string) {

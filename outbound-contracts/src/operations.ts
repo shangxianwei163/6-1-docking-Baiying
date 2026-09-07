@@ -318,6 +318,112 @@ export const pricingStudioSummarySchema = z.object({
 export const pricingOverviewSchema = z.object({
   studios: z.array(pricingStudioSummarySchema),
   supplierTiers: z.array(operatorSupplierPricingTierSchema),
+  scheduledSupplierTiers: z
+    .array(operatorSupplierPricingTierSchema)
+    .default([]),
+  supplierTierVersionCount: z.number().int().nonnegative().default(0),
+});
+
+export const supplierPricingTierDraftSchema = z
+  .object({
+    tierCode: z
+      .string()
+      .trim()
+      .min(2)
+      .max(64)
+      .regex(
+        /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+        '阶梯编码只能使用小写字母、数字和连字符',
+      ),
+    name: z.string().trim().min(1).max(128),
+    minMonthlyMinutes: z.string().regex(/^\d+$/),
+    maxMonthlyMinutes: z.string().regex(/^\d+$/).nullable(),
+    voiceRate: positiveAmountSchema,
+    smsRate: nonNegativeAmountSchema,
+  })
+  .strict();
+
+export const publishSupplierPricingInputSchema = z
+  .object({
+    effectiveFrom: z.iso.datetime({ offset: true }),
+    reason: z.string().trim().min(2).max(500),
+    tiers: z.array(supplierPricingTierDraftSchema).min(1).max(12),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    const codes = new Set<string>();
+    input.tiers.forEach((tier, index) => {
+      if (codes.has(tier.tierCode)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['tiers', index, 'tierCode'],
+          message: '阶梯编码不能重复',
+        });
+      }
+      codes.add(tier.tierCode);
+    });
+
+    const ordered = [...input.tiers].sort((left, right) => {
+      const leftMin = BigInt(left.minMonthlyMinutes);
+      const rightMin = BigInt(right.minMonthlyMinutes);
+      return leftMin === rightMin ? 0 : leftMin < rightMin ? -1 : 1;
+    });
+    if (ordered[0]?.minMonthlyMinutes !== '0') {
+      context.addIssue({
+        code: 'custom',
+        path: ['tiers'],
+        message: '第一档必须从 0 分钟开始',
+      });
+    }
+    ordered.forEach((tier, index) => {
+      const isLast = index === ordered.length - 1;
+      if (isLast && tier.maxMonthlyMinutes !== null) {
+        context.addIssue({
+          code: 'custom',
+          path: ['tiers'],
+          message: '最后一档的分钟上限必须留空，覆盖更高用量',
+        });
+      }
+      if (!isLast && tier.maxMonthlyMinutes === null) {
+        context.addIssue({
+          code: 'custom',
+          path: ['tiers'],
+          message: '只有最后一档可以不设置分钟上限',
+        });
+      }
+      if (
+        tier.maxMonthlyMinutes !== null &&
+        BigInt(tier.maxMonthlyMinutes) <= BigInt(tier.minMonthlyMinutes)
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['tiers'],
+          message: `${tier.name} 的分钟上限必须大于下限`,
+        });
+      }
+      const next = ordered[index + 1];
+      if (next && tier.maxMonthlyMinutes !== next.minMonthlyMinutes) {
+        context.addIssue({
+          code: 'custom',
+          path: ['tiers'],
+          message: `${tier.name} 与 ${next.name} 的分钟范围必须首尾相接`,
+        });
+      }
+    });
+  });
+
+export const supplierPricingPreviewSchema = z.object({
+  effectiveFrom: z.iso.datetime({ offset: true }),
+  tierCount: z.number().int().positive(),
+  currentEffectiveFrom: z.iso.datetime({ offset: true }).nullable(),
+  replacesScheduledEffectiveFrom: z.iso.datetime({ offset: true }).nullable(),
+  tiers: z.array(supplierPricingTierDraftSchema).min(1),
+});
+
+export const supplierPricingPublishResultSchema = z.object({
+  effectiveFrom: z.iso.datetime({ offset: true }),
+  replacedScheduledCount: z.number().int().nonnegative(),
+  published: z.array(operatorSupplierPricingTierSchema).min(1),
 });
 
 export const pricingRateInputSchema = z
@@ -705,10 +811,25 @@ export type DecideAccountAdjustmentInput = z.infer<
 export type OperatorPricingVersion = z.infer<
   typeof operatorPricingVersionSchema
 >;
+export type OperatorSupplierPricingTier = z.infer<
+  typeof operatorSupplierPricingTierSchema
+>;
 export type PricingOverview = z.infer<typeof pricingOverviewSchema>;
 export type PublishPricingInput = z.infer<typeof publishPricingInputSchema>;
 export type PricingPreview = z.infer<typeof pricingPreviewSchema>;
 export type PricingPublishResult = z.infer<typeof pricingPublishResultSchema>;
+export type SupplierPricingTierDraft = z.infer<
+  typeof supplierPricingTierDraftSchema
+>;
+export type PublishSupplierPricingInput = z.infer<
+  typeof publishSupplierPricingInputSchema
+>;
+export type SupplierPricingPreview = z.infer<
+  typeof supplierPricingPreviewSchema
+>;
+export type SupplierPricingPublishResult = z.infer<
+  typeof supplierPricingPublishResultSchema
+>;
 export type OperatorAuditCategory = z.infer<typeof operatorAuditCategorySchema>;
 export type OperatorAuditEvent = z.infer<typeof operatorAuditEventSchema>;
 export type OperatorAuditPage = z.infer<typeof operatorAuditPageSchema>;

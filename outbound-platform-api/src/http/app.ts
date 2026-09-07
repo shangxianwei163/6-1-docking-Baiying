@@ -18,6 +18,7 @@ import {
   mappingDraftInputSchema,
   plannedTaskBindingInputSchema,
   publishPricingInputSchema,
+  publishSupplierPricingInputSchema,
   publishMappingInputSchema,
   removeMappingDraftInputSchema,
   scriptBindingInputSchema,
@@ -550,14 +551,34 @@ export function createApp(dependencies: AppDependencies) {
     return context.json(success(context.get('requestId'), data), 201);
   });
 
+  app.post('/api/v1/supplier-pricing/preview', async (context) => {
+    requireActor(context.req.header('x-actor-id'));
+    const input = publishSupplierPricingInputSchema.parse(
+      await context.req.json(),
+    );
+    const data =
+      await operationsDependency(dependencies).previewSupplierPricing(input);
+    return context.json(success(context.get('requestId'), data));
+  });
+
+  app.post('/api/v1/supplier-pricing/publish', async (context) => {
+    const actorId = requireActor(context.req.header('x-actor-id'));
+    const input = publishSupplierPricingInputSchema.parse(
+      await context.req.json(),
+    );
+    const data = await operationsDependency(
+      dependencies,
+    ).publishSupplierPricing(input, actorId, context.get('requestId'));
+    return context.json(success(context.get('requestId'), data), 201);
+  });
+
   app.get('/api/v1/supplier-settlements/:month/preview', async (context) => {
     requireActor(context.req.header('x-actor-id'));
     const month = supplierSettlementMonthSchema.parse(
       context.req.param('month'),
     );
-    const data = await supplierSettlementDependency(dependencies).preview(
-      month,
-    );
+    const data =
+      await supplierSettlementDependency(dependencies).preview(month);
     return context.json(success(context.get('requestId'), data));
   });
 

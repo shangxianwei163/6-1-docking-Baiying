@@ -1,7 +1,8 @@
 from pathlib import Path
+import json
 import re
 
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import Route, expect, sync_playwright
 
 
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
@@ -9,6 +10,47 @@ APP_URL = 'http://localhost:4173/'
 STUDIO_SCREENSHOT = Path('/tmp/outbound-platform-pricing-studio.png')
 HAINAN_SCREENSHOT = Path('/tmp/outbound-platform-pricing-hainan.png')
 MOBILE_SCREENSHOT = Path('/tmp/outbound-platform-pricing-tabs-mobile.png')
+EDITOR_SCREENSHOT = Path('/tmp/outbound-platform-supplier-pricing-editor.png')
+
+
+def install_supplier_pricing_fixture(page, requests: list[dict]) -> None:
+    def handle(route: Route) -> None:
+        request = route.request
+        payload = request.post_data_json
+        requests.append({'path': request.url.rsplit('/', 1)[-1], 'body': payload})
+        if request.url.endswith('/preview'):
+            data = {
+                'effectiveFrom': payload['effectiveFrom'],
+                'tierCount': len(payload['tiers']),
+                'currentEffectiveFrom': '2026-08-31T16:00:00.000Z',
+                'replacesScheduledEffectiveFrom': None,
+                'tiers': payload['tiers'],
+            }
+            status = 200
+        else:
+            data = {
+                'effectiveFrom': payload['effectiveFrom'],
+                'replacedScheduledCount': 0,
+                'published': [
+                    {
+                        **tier,
+                        'id': f'00000000-0000-4000-8000-{index + 1:012d}',
+                        'effectiveFrom': payload['effectiveFrom'],
+                        'effectiveTo': None,
+                        'publishedBy': 'platform-admin',
+                        'publishedAt': '2026-09-07T03:00:00.000Z',
+                    }
+                    for index, tier in enumerate(payload['tiers'])
+                ],
+            }
+            status = 201
+        route.fulfill(
+            status=status,
+            content_type='application/json',
+            body=json.dumps({'requestId': 'supplier-pricing-ui-test', 'data': data}),
+        )
+
+    page.route(re.compile(r'.*/api/v1/supplier-pricing/(?:preview|publish)$'), handle)
 
 
 def open_pricing(page):
@@ -79,6 +121,7 @@ def assert_internal_scroll(page, panel_id: str) -> None:
 
 def main() -> None:
     page_errors: list[str] = []
+    supplier_pricing_requests: list[dict] = []
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
@@ -87,6 +130,7 @@ def main() -> None:
         )
         page = browser.new_page(viewport={'width': 1327, 'height': 964})
         page.on('pageerror', lambda error: page_errors.append(str(error)))
+        install_supplier_pricing_fixture(page, supplier_pricing_requests)
         studio_tab, hainan_tab = open_pricing(page)
 
         assert_studio_scope(page, studio_tab, hainan_tab)
@@ -97,6 +141,39 @@ def main() -> None:
         assert_hainan_scope(page, studio_tab, hainan_tab)
         assert_internal_scroll(page, 'pricing-panel-hainan')
         page.screenshot(path=str(HAINAN_SCREENSHOT), full_page=True)
+
+        page.get_by_role('button', name='维护供应价格').click()
+        dialog = page.get_by_role('dialog')
+        expect(
+            dialog.get_by_role('heading', name='维护海南人像供应价格')
+        ).to_be_visible()
+        expect(dialog.get_by_label('第 1 档话费')).to_have_value('0.2')
+        dialog.get_by_label('第 1 档话费').fill('0.21')
+        dialog.get_by_role('button', name='预览发布影响').click()
+        expect(
+            dialog.get_by_role('heading', name='确认供应价格版本')
+        ).to_be_visible()
+        expect(dialog.get_by_text('¥0.21 / 分钟', exact=True)).to_be_visible()
+        page.screenshot(path=str(EDITOR_SCREENSHOT), full_page=True)
+        dialog.get_by_role('button', name='确认发布新版本').click()
+        expect(dialog).not_to_be_visible()
+        expect(page.get_by_text(re.compile(r'海南人像供应价格已发布'))).to_be_visible()
+
+        if [item['path'] for item in supplier_pricing_requests] != [
+            'preview',
+            'publish',
+        ]:
+            raise AssertionError(
+                f'Unexpected supplier pricing requests: {supplier_pricing_requests}'
+            )
+        preview_body = supplier_pricing_requests[0]['body']
+        publish_body = supplier_pricing_requests[1]['body']
+        if preview_body != publish_body:
+            raise AssertionError('Published supplier pricing differs from preview')
+        if len(publish_body['tiers']) != 3:
+            raise AssertionError('Supplier pricing publication was not a complete tier set')
+        if publish_body['tiers'][0]['voiceRate'] != '0.21':
+            raise AssertionError('Edited supplier voice rate was not published')
 
         hainan_tab.press('ArrowLeft')
         assert_studio_scope(page, studio_tab, hainan_tab)
@@ -136,6 +213,7 @@ def main() -> None:
     )
     print(f'Studio screenshot: {STUDIO_SCREENSHOT}')
     print(f'Hainan screenshot: {HAINAN_SCREENSHOT}')
+    print(f'Supplier pricing editor screenshot: {EDITOR_SCREENSHOT}')
     print(f'Mobile screenshot: {MOBILE_SCREENSHOT}')
 
 

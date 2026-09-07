@@ -25,7 +25,10 @@ const financialActions = [
   'ACCOUNT_ADJUSTMENT_REJECTED',
   'SUPPLIER_MONTHLY_SETTLEMENT_FINALIZED',
 ] as const;
-const pricingActions = ['STUDIO_PRICING_PUBLISHED'] as const;
+const pricingActions = [
+  'STUDIO_PRICING_PUBLISHED',
+  'SUPPLIER_PRICING_PUBLISHED',
+] as const;
 const studioActions = [
   'STUDIO_CREATED',
   'STUDIO_UPDATED',
@@ -58,6 +61,7 @@ const actionLabels: Record<string, string> = {
   STUDIO_ENABLED: '启用影楼',
   STUDIO_DISABLED: '停用影楼',
   STUDIO_PRICING_PUBLISHED: '发布影楼价格',
+  SUPPLIER_PRICING_PUBLISHED: '发布海南人像供应价格',
   MAPPING_DRAFT_SAVED: '保存字段映射草稿',
   MAPPING_REMOVAL_STAGED: '提交字段映射移除',
   MAPPING_VERSION_PUBLISHED: '发布字段映射版本',

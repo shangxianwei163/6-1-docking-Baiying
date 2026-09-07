@@ -92,7 +92,15 @@ export async function reconcilePhase1(
       db
         .select()
         .from(supplierPricingTiers)
-        .where(inArray(supplierPricingTiers.tierCode, tierCodes)),
+        .where(
+          and(
+            inArray(supplierPricingTiers.tierCode, tierCodes),
+            eq(
+              supplierPricingTiers.effectiveFrom,
+              new Date('2026-09-01T00:00:00+08:00'),
+            ),
+          ),
+        ),
       db.select().from(baiyingRobotBindings),
     ]);
 

@@ -6,7 +6,7 @@ import { readConfig } from '../config.js';
 import { PostgresConfigurationRepository } from '../configuration/postgres-repository.js';
 import { PostgresOperationsConsoleService } from '../operations/service.js';
 import { LocalDataProtector } from '../security/data-protector.js';
-import { createDatabase } from './client.js';
+import { createDatabase, type Database } from './client.js';
 import {
   accountLedger,
   auditLogs,
@@ -33,6 +33,8 @@ const configurationRepository = new PostgresConfigurationRepository(
 );
 const requestIds: string[] = [];
 let studioId: string | undefined;
+
+class SupplierPricingVerificationRollback extends Error {}
 
 try {
   const createRequestId = randomUUID();
@@ -195,6 +197,8 @@ try {
   assert.equal(pricingStudio?.currentPricing?.voiceRate, '0.530000');
   assert.equal(pricingStudio?.scheduledPricing?.voiceRate, '0.550000');
 
+  await verifySupplierPricingPublishing();
+
   const auditRows = await database.db
     .select({ action: auditLogs.action })
     .from(auditLogs)
@@ -222,6 +226,7 @@ try {
           idempotentTopUpWithEvidence: true,
           idempotencyPayloadConflict: true,
           immediateAndScheduledPricing: true,
+          manualSupplierPricingVersioning: true,
           auditTrail: true,
         },
       },
@@ -250,4 +255,109 @@ try {
     });
   }
   await database.close();
+}
+
+async function verifySupplierPricingPublishing(): Promise<void> {
+  let completed = false;
+  try {
+    await database.db.transaction(async (tx) => {
+      const supplierService = new PostgresOperationsConsoleService(
+        tx as unknown as Database,
+        undefined,
+        () => now,
+        randomUUID,
+      );
+      const currentBefore = await supplierService.getPricingOverview();
+      const effectiveFrom = '2026-10-31T16:00:00.000Z';
+      const firstInput = {
+        effectiveFrom,
+        reason: '阶段 6B 海南供应价格人工发布验收',
+        tiers: [
+          {
+            tierCode: 'tier-basic',
+            name: '基础阶梯',
+            minMonthlyMinutes: '0',
+            maxMonthlyMinutes: '10000',
+            voiceRate: '0.210000',
+            smsRate: '0.080000',
+          },
+          {
+            tierCode: 'tier-growth',
+            name: '成长阶梯',
+            minMonthlyMinutes: '10000',
+            maxMonthlyMinutes: '50000',
+            voiceRate: '0.190000',
+            smsRate: '0.070000',
+          },
+          {
+            tierCode: 'tier-scale',
+            name: '规模阶梯',
+            minMonthlyMinutes: '50000',
+            maxMonthlyMinutes: null,
+            voiceRate: '0.170000',
+            smsRate: '0.060000',
+          },
+        ],
+      };
+      const preview = await supplierService.previewSupplierPricing(firstInput);
+      assert.equal(preview.tierCount, 3);
+      assert.equal(preview.effectiveFrom, effectiveFrom);
+
+      const firstRequestId = randomUUID();
+      const firstPublished = await supplierService.publishSupplierPricing(
+        firstInput,
+        'stage6b-supplier-pricing-verifier',
+        firstRequestId,
+      );
+      assert.equal(firstPublished.published.length, 3);
+      assert.ok(
+        firstPublished.published.every(
+          (tier) => tier.effectiveFrom === effectiveFrom,
+        ),
+      );
+
+      const secondRequestId = randomUUID();
+      const secondPublished = await supplierService.publishSupplierPricing(
+        {
+          ...firstInput,
+          reason: '阶段 6B 海南供应价格预约替换验收',
+          tiers: firstInput.tiers.map((tier, index) =>
+            index === 0 ? { ...tier, voiceRate: '0.220000' } : tier,
+          ),
+        },
+        'stage6b-supplier-pricing-verifier',
+        secondRequestId,
+      );
+      assert.equal(secondPublished.replacedScheduledCount, 3);
+
+      const overview = await supplierService.getPricingOverview();
+      assert.deepEqual(
+        overview.supplierTiers.map((tier) => [tier.id, tier.voiceRate]),
+        currentBefore.supplierTiers.map((tier) => [tier.id, tier.voiceRate]),
+        '未来供应价格发布不能提前改变当前生效价格',
+      );
+      assert.equal(overview.scheduledSupplierTiers.length, 3);
+      assert.equal(overview.scheduledSupplierTiers[0]?.voiceRate, '0.220000');
+
+      const auditRows = await tx
+        .select({ action: auditLogs.action, detail: auditLogs.detail })
+        .from(auditLogs)
+        .where(inArray(auditLogs.requestId, [firstRequestId, secondRequestId]));
+      assert.equal(auditRows.length, 2);
+      assert.ok(
+        auditRows.every(
+          (row) =>
+            row.action === 'SUPPLIER_PRICING_PUBLISHED' &&
+            Array.isArray(row.detail.tiers) &&
+            row.detail.tiers.length === 3,
+        ),
+      );
+
+      completed = true;
+      throw new SupplierPricingVerificationRollback();
+    });
+  } catch (error) {
+    if (!(error instanceof SupplierPricingVerificationRollback)) throw error;
+  }
+  assert.equal(completed, true, '海南供应价格事务验收没有完整执行');
 }
