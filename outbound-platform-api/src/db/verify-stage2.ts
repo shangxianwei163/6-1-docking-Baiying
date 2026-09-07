@@ -112,6 +112,8 @@ async function main() {
     );
     taskId = accepted.data.taskId;
     reservedAmount = accepted.data.reservedAmount;
+    const generatedTaskName = `${accepted.data.taskNo.slice(3, 11)}本地联调ERP婚礼邀约-${accepted.data.taskNo.slice(-5)}`;
+    assert.equal(accepted.data.taskName, generatedTaskName);
 
     const replayResponse = await signedRequest({
       app,
@@ -259,6 +261,7 @@ async function main() {
     assert.equal(detailResponse.status, 200);
     const detail = taskDetailEnvelopeSchema.parse(await detailResponse.json());
     assert.equal(detail.data.taskId, taskId);
+    assert.equal(detail.data.taskName, generatedTaskName);
     assert.equal(detail.data.billing.reservedAmount, reservedAmount);
     assert.equal(detail.data.mapping.variableCount, 3);
 

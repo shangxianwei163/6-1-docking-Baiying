@@ -3,7 +3,6 @@
   "externalRequestId": "ERP-REQ-20260906-0001",
   "sourceSystem": "ERP",
   "mcCode": "MC-ZTY-001",
-  "taskName": "国庆档期客户邀约",
   "customers": [
     {
       "externalCustomerId": "ERP-C-10001",

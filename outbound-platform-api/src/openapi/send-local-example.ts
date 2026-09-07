@@ -22,7 +22,6 @@ async function main() {
     externalRequestId: `local-${sourceSystem.toLowerCase()}-${Date.now()}`,
     sourceSystem,
     mcCode: 'MC-ZTY-001',
-    taskName: `${sourceSystem} 本地闭环验证`,
     customers: [
       {
         externalCustomerId: `customer-${Date.now()}`,

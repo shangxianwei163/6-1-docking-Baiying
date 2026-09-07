@@ -939,7 +939,6 @@ components:
           externalRequestId,
           sourceSystem,
           mcCode,
-          taskName,
           customers,
         ]
       properties:
@@ -947,7 +946,12 @@ components:
         externalRequestId: { type: string, minLength: 1, maxLength: 128 }
         sourceSystem: { $ref: '#/components/schemas/SourceSystem' }
         mcCode: { type: string, minLength: 1, maxLength: 64 }
-        taskName: { type: string, minLength: 1, maxLength: 200 }
+        taskName:
+          type: string
+          minLength: 1
+          maxLength: 200
+          deprecated: true
+          description: 兼容旧调用保留；平台忽略该值，并按北京时间日期、任务真实数据分类和当日五位序号自动生成任务名称。
         customers:
           type: array
           minItems: 1
@@ -1017,6 +1021,11 @@ components:
       properties:
         taskId: { type: string, format: uuid }
         taskNo: { type: string, pattern: '^PT-\d{8}-\d{5,}$' }
+        taskName:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: 平台生成的任务名称，格式为 YYYYMMDD + 真实数据分类 + - + 当日五位序号。
         executionStatus: { const: ACCEPTED }
         displayStatus: { const: 执行中 }
         phoneCount: { type: integer, minimum: 1, maximum: 10000 }
@@ -1847,7 +1856,6 @@ components:
         externalRequestId: ERP-REQ-20260906-0001
         sourceSystem: ERP
         mcCode: MC-ZTY-001
-        taskName: 国庆档期客户邀约
         customers:
           - externalCustomerId: ERP-C-10001
             name: 王女士
@@ -1866,6 +1874,7 @@ components:
         data:
           taskId: c5f1d5e0-1c67-4d02-a7a3-58666ea55792
           taskNo: PT-20260906-00025
+          taskName: 20260906邀约百天SS1-00025
           executionStatus: ACCEPTED
           displayStatus: 执行中
           phoneCount: 1

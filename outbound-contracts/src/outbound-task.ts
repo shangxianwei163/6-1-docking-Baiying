@@ -46,7 +46,7 @@ export const createOutboundTaskRequestSchema = z
     externalRequestId: z.string().trim().min(1).max(128),
     sourceSystem: sourceSystemSchema,
     mcCode: z.string().trim().min(1).max(64),
-    taskName: z.string().trim().min(1).max(200),
+    taskName: z.string().trim().min(1).max(200).optional(),
     customers: z.array(outboundCustomerSchema).min(1).max(10_000),
   })
   .strict()
@@ -144,6 +144,7 @@ export const taskStatusSummarySchema = z.object({
 export const taskAcceptedSchema = z.object({
   taskId: z.uuid(),
   taskNo: z.string().regex(/^PT-\d{8}-\d{5,}$/),
+  taskName: z.string().min(1).max(200).optional(),
   executionStatus: z.literal('ACCEPTED'),
   displayStatus: z.literal('执行中'),
   phoneCount: z.number().int().positive().max(10_000),

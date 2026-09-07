@@ -3,7 +3,6 @@
   "externalRequestId": "CRM-REQ-20260906-0038",
   "sourceSystem": "CRM",
   "mcCode": "MC-ZTY-001",
-  "taskName": "婚礼跟进客户回访",
   "customers": [
     {
       "externalCustomerId": "CRM-LEAD-88271",

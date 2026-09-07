@@ -296,10 +296,19 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
         reservedAmount,
       );
       const availableAfter = subtractMoney(account.balance, activeHoldAmount);
-      const categorySnapshot = configuration.categories.map((category) => ({
+      const taskCategories = Array.from(
+        new Set(
+          input.request.customers.map((customer) => customer.dataCategoryId),
+        ),
+      ).map((categoryId) => configuration.categoryById.get(categoryId)!);
+      const categorySnapshot = taskCategories.map((category) => ({
         id: category.externalId,
         path: category.categoryPath,
       }));
+      const taskName = buildPlatformTaskName(
+        taskNo,
+        taskCategories.map((category) => category.categoryPath),
+      );
 
       await tx.insert(platformTasks).values({
         id: taskId,
@@ -310,7 +319,7 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
         studioId: configuration.studio.id,
         studioNameSnapshot: configuration.studio.name,
         mcCodeSnapshot: configuration.studio.mcCode,
-        taskName: input.request.taskName,
+        taskName,
         phoneCount: input.request.customers.length,
         categorySnapshot,
         robotDefId: configuration.binding.robotDefId,
@@ -431,6 +440,7 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
         data: {
           taskId,
           taskNo,
+          taskName,
           executionStatus: 'ACCEPTED',
           displayStatus: '执行中',
           phoneCount: input.request.customers.length,
@@ -1455,6 +1465,32 @@ async function nextTaskNo(tx: Transaction, now: Date): Promise<string> {
     returning value
   `);
   return `PT-${date}-${String(rows[0]!.value).padStart(5, '0')}`;
+}
+
+export function buildPlatformTaskName(
+  taskNo: string,
+  categoryPaths: string[],
+): string {
+  const taskNumber = /^PT-(\d{8})-(\d{5})$/.exec(taskNo);
+  if (!taskNumber) {
+    throw new Error(`无法从任务编号 ${taskNo} 生成任务名称`);
+  }
+  const categoryNames = Array.from(
+    new Set(
+      categoryPaths
+        .map((path) => path.normalize('NFKC').replace(/[\s/\\>›_-]+/gu, ''))
+        .filter(Boolean),
+    ),
+  );
+  if (!categoryNames.length) {
+    throw new Error('无法使用空的数据分类生成任务名称');
+  }
+  const [date, sequence] = taskNumber.slice(1);
+  const categoryLength = 200 - date!.length - sequence!.length - 1;
+  const categoryName = Array.from(categoryNames.join('+'))
+    .slice(0, categoryLength)
+    .join('');
+  return `${date}${categoryName}-${sequence}`;
 }
 
 export function shanghaiDate(value: Date): string {

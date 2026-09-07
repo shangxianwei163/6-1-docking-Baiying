@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildPlatformTaskName,
   describeBaiyingJobStatus,
   displayStatusFor,
   shanghaiDate,
@@ -32,5 +33,18 @@ describe('outbound task helpers', () => {
 
   it('generates task dates in Asia/Shanghai', () => {
     expect(shanghaiDate(new Date('2026-09-05T16:30:00.000Z'))).toBe('20260906');
+  });
+
+  it('builds the task name from its real data category paths', () => {
+    expect(buildPlatformTaskName('PT-20260907-00023', ['排挡-百天-SS1'])).toBe(
+      '20260907排挡百天SS1-00023',
+    );
+    expect(
+      buildPlatformTaskName('PT-20260907-00024', [
+        '排挡/百天/SS1',
+        '邀约-周岁-SS2',
+        '排挡/百天/SS1',
+      ]),
+    ).toBe('20260907排挡百天SS1+邀约周岁SS2-00024');
   });
 });
