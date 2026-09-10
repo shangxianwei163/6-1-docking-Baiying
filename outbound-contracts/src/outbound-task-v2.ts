@@ -183,7 +183,7 @@ export const batchDetailEnvelopeV2Schema = z.object({
   data: batchDetailV2Schema,
 });
 
-export const outboundCallResultV2Schema = z
+export const outboundCallResultLegacyV2Schema = z
   .object({
     guid: z.string().min(1).max(128),
     externalCustomerId: z.string().min(1).max(128),
@@ -200,8 +200,94 @@ export const outboundCallResultV2Schema = z
     message: '兼容字段 externalCustomerId 必须与 guid 相同',
   });
 
-export const outboundCallResultInternalEventV2Schema = z.object({
+const callbackTextSchema = z.string().max(8_192);
+const callbackNullableTextSchema = callbackTextSchema.nullable();
+const callbackMoneySchema = z
+  .string()
+  .regex(/^\d{1,12}\.\d{6}$/, '回调金额必须是固定 6 位小数的非负字符串');
+
+export const customerResultCodeV2Schema = z.enum([
+  'HIGH_INTENT',
+  'MEDIUM_INTENT',
+  'LOW_INTENT',
+  'NO_INTENT',
+  'UNREACHED',
+  'CALL_FAILED',
+  'UNKNOWN',
+]);
+
+export const outboundCallResultV2Schema = z
+  .object({
+    event_id: z.uuid(),
+    event_type: z.literal('OUTBOUND_CALL_RESULT'),
+    occurred_at: z.iso.datetime({ offset: true }),
+    company_code: z.string().min(1).max(64),
+    batch_id: z.uuid().nullable(),
+    task_no: z.string().regex(/^PT-\d{8}-\d{5,}$/),
+    customer: z
+      .object({
+        guid: z.string().min(1).max(128),
+        customer_name: z.string().max(200).nullable(),
+        phone_masked: z.string().min(1).max(32),
+      })
+      .strict(),
+    customer_result: z
+      .object({
+        result_code: customerResultCodeV2Schema,
+        result_text: z.string().min(1).max(500),
+        contacted: z.boolean(),
+        intention_level: callbackNullableTextSchema,
+        intention_text: z.string().min(1).max(200),
+        summary: z.string().min(1).max(2_000),
+        follow_up_required: z.boolean(),
+        recommended_action: z.string().min(1).max(1_000),
+        customer_concerns: z.array(callbackTextSchema).max(100),
+        customer_tags: z.array(callbackTextSchema).max(100),
+        collected_data: z.record(z.string(), z.unknown()),
+      })
+      .strict(),
+    call: z
+      .object({
+        status: v2CallStatusSchema,
+        status_text: z.string().min(1).max(200),
+        called_at: z.iso.datetime({ offset: true }).nullable(),
+        duration_seconds: z.number().int().nonnegative(),
+      })
+      .strict(),
+    conversation_logs: z
+      .array(
+        z
+          .object({
+            sequence: z.number().int().positive(),
+            speaker: z.enum(['AI', 'CUSTOMER']),
+            content: z.string().max(20_000),
+          })
+          .strict(),
+      )
+      .max(10_000),
+    billing: z
+      .object({
+        billing_minutes: z.number().int().nonnegative(),
+        customer_charge: callbackMoneySchema,
+        currency: z.literal('CNY'),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const outboundCallResultInternalEventLegacyV2Schema = z.object({
   schemaVersion: z.literal('2.0'),
+  eventId: z.uuid(),
+  eventType: z.literal('OUTBOUND_CALL_RESULT_V2'),
+  occurredAt: z.iso.datetime({ offset: true }),
+  sourceSystem: z.enum(['ERP', 'CRM']),
+  mcCode: z.string().min(1).max(64),
+  taskNo: z.string().regex(/^PT-\d{8}-\d{5,}$/),
+  result: outboundCallResultLegacyV2Schema,
+});
+
+export const outboundCallResultInternalEventV21Schema = z.object({
+  schemaVersion: z.literal('2.1'),
   eventId: z.uuid(),
   eventType: z.literal('OUTBOUND_CALL_RESULT_V2'),
   occurredAt: z.iso.datetime({ offset: true }),
@@ -210,6 +296,14 @@ export const outboundCallResultInternalEventV2Schema = z.object({
   taskNo: z.string().regex(/^PT-\d{8}-\d{5,}$/),
   result: outboundCallResultV2Schema,
 });
+
+export const outboundCallResultInternalEventV2Schema = z.discriminatedUnion(
+  'schemaVersion',
+  [
+    outboundCallResultInternalEventLegacyV2Schema,
+    outboundCallResultInternalEventV21Schema,
+  ],
+);
 
 export type OutboundSourceCode = z.infer<typeof outboundSourceCodeSchema>;
 export type OutboundCustomerInfoV2 = z.infer<

@@ -264,7 +264,7 @@ export class PostgresBaiyingCallbackProcessor implements BaiyingCallbackProcesso
           .returning({ id: taskCallItems.id });
         if (marked.length) {
           const event = outboundCallResultInternalEventV2Schema.parse({
-            schemaVersion: '2.0',
+            schemaVersion: '2.1',
             eventId: resultEventId,
             eventType: 'OUTBOUND_CALL_RESULT_V2',
             occurredAt: now.toISOString(),
@@ -272,16 +272,46 @@ export class PostgresBaiyingCallbackProcessor implements BaiyingCallbackProcesso
             mcCode: task.mcCode,
             taskNo: task.taskNo,
             result: {
-              guid: item.externalCustomerId,
-              externalCustomerId: item.externalCustomerId,
-              phone_masked: maskPhoneForCallback(
-                this.protector.decryptUtf8(item.phoneCiphertext),
-              ),
-              call_status: callback.callStatus,
-              finish_status: callback.finishStatus,
-              result_complete: callback.resultComplete,
-              collected_variables: callback.collectProperties,
-              task_results: callback.taskResults,
+              event_id: resultEventId,
+              event_type: 'OUTBOUND_CALL_RESULT',
+              occurred_at: now.toISOString(),
+              company_code: task.mcCode,
+              batch_id: task.batchId,
+              task_no: task.taskNo,
+              customer: {
+                guid: item.externalCustomerId,
+                customer_name: item.customerNameCiphertext
+                  ? this.protector.decryptUtf8(item.customerNameCiphertext)
+                  : callback.customerName,
+                phone_masked: maskPhoneForCallback(
+                  this.protector.decryptUtf8(item.phoneCiphertext),
+                ),
+              },
+              customer_result: {
+                result_code: callback.customerResult.resultCode,
+                result_text: callback.customerResult.resultText,
+                contacted: callback.customerResult.contacted,
+                intention_level: callback.customerResult.intentionLevel,
+                intention_text: callback.customerResult.intentionText,
+                summary: callback.customerResult.summary,
+                follow_up_required: callback.customerResult.followUpRequired,
+                recommended_action: callback.customerResult.recommendedAction,
+                customer_concerns: callback.customerResult.customerConcerns,
+                customer_tags: callback.customerResult.customerTags,
+                collected_data: callback.customerResult.collectedData,
+              },
+              call: {
+                status: callback.callStatus,
+                status_text: callback.callStatusText,
+                called_at: callback.calledAt?.toISOString() ?? null,
+                duration_seconds: callback.durationSeconds,
+              },
+              conversation_logs: callback.conversationLogs,
+              billing: {
+                billing_minutes: billingMinutes,
+                customer_charge: customerCharge,
+                currency: 'CNY',
+              },
             },
           });
           await tx.insert(queueOutbox).values({
@@ -489,6 +519,7 @@ async function queueMissingV2FailureResults(
   const unresolved = await tx.execute<{
     externalCustomerId: string;
     phoneCiphertext: string;
+    customerNameCiphertext: string | null;
     resultEventId: string;
   }>(sql`
     UPDATE ${taskCallItems}
@@ -501,11 +532,12 @@ async function queueMissingV2FailureResults(
     RETURNING
       ${taskCallItems.externalCustomerId} AS "externalCustomerId",
       ${taskCallItems.phoneCiphertext} AS "phoneCiphertext",
+      ${taskCallItems.customerNameCiphertext} AS "customerNameCiphertext",
       ${taskCallItems.resultEventId} AS "resultEventId"
   `);
   const events = unresolved.map((item) => {
     const event = outboundCallResultInternalEventV2Schema.parse({
-      schemaVersion: '2.0',
+      schemaVersion: '2.1',
       eventId: item.resultEventId,
       eventType: 'OUTBOUND_CALL_RESULT_V2',
       occurredAt: now.toISOString(),
@@ -513,16 +545,36 @@ async function queueMissingV2FailureResults(
       mcCode: task.mcCode,
       taskNo: task.taskNo,
       result: {
-        guid: item.externalCustomerId,
-        externalCustomerId: item.externalCustomerId,
-        phone_masked: maskPhoneForCallback(
-          protector.decryptUtf8(item.phoneCiphertext),
+        event_id: item.resultEventId,
+        event_type: 'OUTBOUND_CALL_RESULT',
+        occurred_at: now.toISOString(),
+        company_code: task.mcCode,
+        batch_id: task.batchId,
+        task_no: task.taskNo,
+        customer: {
+          guid: item.externalCustomerId,
+          customer_name: item.customerNameCiphertext
+            ? protector.decryptUtf8(item.customerNameCiphertext)
+            : null,
+          phone_masked: maskPhoneForCallback(
+            protector.decryptUtf8(item.phoneCiphertext),
+          ),
+        },
+        customer_result: failedCustomerResult(
+          '百应任务已结束，但未取得该客户的完整通话结果。',
         ),
-        call_status: 'FAILED',
-        finish_status: null,
-        result_complete: false,
-        collected_variables: {},
-        task_results: [],
+        call: {
+          status: 'FAILED',
+          status_text: '未取得通话结果',
+          called_at: null,
+          duration_seconds: 0,
+        },
+        conversation_logs: [],
+        billing: {
+          billing_minutes: 0,
+          customer_charge: '0.000000',
+          currency: 'CNY',
+        },
       },
     });
     return {
@@ -576,6 +628,7 @@ async function matchCallItem(
   phoneTail4: string;
   phoneHmac: string;
   phoneCiphertext: string;
+  customerNameCiphertext: string | null;
   matchMethod: 'ITEM_TOKEN' | 'ITEM_PHONE' | 'PHONE_FALLBACK' | null;
 }> {
   if (callback.platformItemId) {
@@ -587,6 +640,7 @@ async function matchCallItem(
         phoneTail4: taskCallItems.phoneTail4,
         phoneHmac: taskCallItems.phoneHmac,
         phoneCiphertext: taskCallItems.phoneCiphertext,
+        customerNameCiphertext: taskCallItems.customerNameCiphertext,
       })
       .from(taskCallItems)
       .where(
@@ -662,6 +716,7 @@ async function matchCallItem(
       phoneTail4: taskCallItems.phoneTail4,
       phoneHmac: taskCallItems.phoneHmac,
       phoneCiphertext: taskCallItems.phoneCiphertext,
+      customerNameCiphertext: taskCallItems.customerNameCiphertext,
     })
     .from(taskCallItems)
     .where(
@@ -711,6 +766,22 @@ export function maskPhoneForCallback(phone: string): string {
   const normalized = normalizePhone(phone);
   if (normalized.length < 7) return '*'.repeat(normalized.length);
   return `${normalized.slice(0, 3)}${'*'.repeat(normalized.length - 7)}${normalized.slice(-4)}`;
+}
+
+function failedCustomerResult(summary: string) {
+  return {
+    result_code: 'CALL_FAILED' as const,
+    result_text: '本次外呼失败',
+    contacted: false,
+    intention_level: null,
+    intention_text: '外呼失败，无法判断',
+    summary: summary.slice(0, 2_000),
+    follow_up_required: true,
+    recommended_action: '建议检查任务状态后重新发起外呼',
+    customer_concerns: [],
+    customer_tags: [],
+    collected_data: {},
+  };
 }
 
 export function legacyV1CollectProperties(

@@ -590,7 +590,11 @@ export async function refreshTaskDeliverySummary(
 
 function buildEventKey(taskId: string, event: OutboundCallbackEvent): string {
   if (event.eventType === 'OUTBOUND_CALL_RESULT_V2') {
-    return `${event.eventType}:${taskId}:${event.result.guid}`;
+    const guid =
+      event.schemaVersion === '2.1'
+        ? event.result.customer.guid
+        : event.result.guid;
+    return `${event.eventType}:${taskId}:${guid}`;
   }
   if (event.eventType === 'OUTBOUND_CALL_RESULT_BATCH') {
     return `${event.eventType}:${taskId}:${identityHash(

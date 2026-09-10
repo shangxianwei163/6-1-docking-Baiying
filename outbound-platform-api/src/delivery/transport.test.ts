@@ -39,20 +39,48 @@ describe('LocalNoNetworkDeliveryTransport', () => {
     ]);
   });
 
-  it('accepts the minimal v2 business body with identity in headers', async () => {
+  it('accepts the business-first v2.1 result body with identity in headers', async () => {
     const transport = new LocalNoNetworkDeliveryTransport({
       environment: 'test',
       secretForUrl: async () => secret,
     });
     const result = {
-      guid: '11111111-1111-4111-8111-111111111101',
-      externalCustomerId: '11111111-1111-4111-8111-111111111101',
-      phone_masked: '135****0001',
-      call_status: 'ANSWERED',
-      finish_status: 0,
-      result_complete: true,
-      collected_variables: { appointment: '2026-09-20' },
-      task_results: [{ resultName: '客户意向等级', resultValue: 'A' }],
+      event_id: '22222222-2222-4222-8222-222222222222',
+      event_type: 'OUTBOUND_CALL_RESULT',
+      occurred_at: '2026-09-10T15:30:25+08:00',
+      company_code: '5903679116',
+      batch_id: '59fd515e-00f2-4d62-93ec-8883fb3aa090',
+      task_no: 'PT-20260910-00001',
+      customer: {
+        guid: '11111111-1111-4111-8111-111111111101',
+        customer_name: '张女士',
+        phone_masked: '135****0001',
+      },
+      customer_result: {
+        result_code: 'HIGH_INTENT',
+        result_text: '客户有明确意向，建议尽快跟进',
+        contacted: true,
+        intention_level: 'A',
+        intention_text: '高意向',
+        summary: '客户近期有拍摄计划。',
+        follow_up_required: true,
+        recommended_action: '建议尽快联系客户',
+        customer_concerns: ['套餐价格'],
+        customer_tags: ['高意向'],
+        collected_data: { appointment: '2026-09-20' },
+      },
+      call: {
+        status: 'ANSWERED',
+        status_text: '已接通',
+        called_at: '2026-09-10T15:28:30+08:00',
+        duration_seconds: 115,
+      },
+      conversation_logs: [],
+      billing: {
+        billing_minutes: 2,
+        customer_charge: '0.960000',
+        currency: 'CNY',
+      },
     };
     const eventId = '22222222-2222-4222-8222-222222222222';
     const url = 'https://erp.mock.invalid/callbacks/results';
@@ -62,7 +90,7 @@ describe('LocalNoNetworkDeliveryTransport', () => {
       url,
       headers: {
         'Content-Type': 'application/json',
-        'X-Contract-Version': '2.0',
+        'X-Contract-Version': '2.1',
         'X-Platform-Event-Id': eventId,
         'X-Timestamp': timestamp,
         'X-Signature': signCallbackRequest(

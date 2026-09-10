@@ -248,26 +248,62 @@ const callbackHeaders: Row[] = [
     'X-Contract-Version',
     'Header · string',
     '是',
-    '业务结果回调为 2.0；录音回调按当前录音事件版本发送',
+    '业务结果回调为 2.1；录音回调按当前录音事件版本发送',
   ],
 ];
 const resultEvent = `{
-  "guid": "11111111-1111-4111-8111-111111111101",
-  "externalCustomerId": "11111111-1111-4111-8111-111111111101",
-  "phone_masked": "135****0001",
-  "call_status": "ANSWERED",
-  "finish_status": 0,
-  "result_complete": true,
-  "collected_variables": {
-    "预约门店": "湖滨店",
-    "预约日期": "2026-09-20"
+  "event_id": "8d87e451-8aad-4a48-90a1-b6e38429a964",
+  "event_type": "OUTBOUND_CALL_RESULT",
+  "occurred_at": "2026-09-10T15:30:25+08:00",
+  "company_code": "5903679116",
+  "batch_id": "59fd515e-00f2-4d62-93ec-8883fb3aa090",
+  "task_no": "PT-20260910-00001",
+  "customer": {
+    "guid": "CRM-CUSTOMER-10001",
+    "customer_name": "张女士",
+    "phone_masked": "138****8888"
   },
-  "task_results": [
-    {
-      "resultName": "客户意向等级",
-      "resultValue": "A"
+  "customer_result": {
+    "result_code": "HIGH_INTENT",
+    "result_text": "客户有明确意向，建议尽快跟进",
+    "contacted": true,
+    "intention_level": "A",
+    "intention_text": "高意向",
+    "summary": "客户计划近期拍摄婚纱照，关注套餐价格和外景拍摄。",
+    "follow_up_required": true,
+    "recommended_action": "建议销售人员尽快联系客户并发送套餐报价",
+    "customer_concerns": ["套餐价格", "外景拍摄"],
+    "customer_tags": ["婚纱照", "近期需求", "高意向"],
+    "collected_data": {
+      "拍摄类型": "婚纱照",
+      "预算": "5000元左右",
+      "意向门店": "海口店",
+      "期望拍摄时间": "2026年10月"
     }
-  ]
+  },
+  "call": {
+    "status": "ANSWERED",
+    "status_text": "已接通",
+    "called_at": "2026-09-10T15:28:30+08:00",
+    "duration_seconds": 115
+  },
+  "conversation_logs": [
+    {
+      "sequence": 1,
+      "speaker": "AI",
+      "content": "您好，请问近期有拍摄婚纱照的计划吗？"
+    },
+    {
+      "sequence": 2,
+      "speaker": "CUSTOMER",
+      "content": "有的，我想了解一下你们的价格。"
+    }
+  ],
+  "billing": {
+    "billing_minutes": 2,
+    "customer_charge": "0.960000",
+    "currency": "CNY"
+  }
 }`;
 const recordingEvent = `{
   "schemaVersion": "1.0",
@@ -306,7 +342,12 @@ const apiDocs: ApiDoc[] = [
       idempotency,
       ['main_category', 'Body · string', '是', '一级分类，例如“排档”'],
       ['sub_category', 'Body · string', '是', '二级分类，例如“孕妈”'],
-      ['source', 'Body · integer', '是', '0=ERP，1=CRM；必须与请求 Token 的来源一致'],
+      [
+        'source',
+        'Body · integer',
+        '是',
+        '0=ERP，1=CRM；必须与请求 Token 的来源一致',
+      ],
       [
         'company_code',
         'Body · string',
@@ -414,53 +455,101 @@ const apiDocs: ApiDoc[] = [
     title: '业务结果回传',
     path: '{studio.resultCallbackUrl}',
     summary:
-      '每个 guid 投递一次最终业务结果；地址按影楼和来源系统分别固定配置。',
+      '每个 guid 投递一次业务结论；ERP/CRM 优先读取 customer_result，无需分析百应技术状态。',
     status: '外部接收方实现',
     caller: '百应外呼调度台',
     receiver: 'ERP / CRM',
     contentType: 'application/json;charset=utf-8',
     auth: 'X-Signature 回调签名 + X-Platform-Event-Id 幂等',
-    contractVersion: '2.0',
+    contractVersion: '2.1',
     host: 'configured',
     params: [
       ...callbackHeaders,
-      ['guid', 'Body · string', '是', 'ERP/CRM 本次发起时传入的号码唯一值'],
       [
-        'externalCustomerId',
+        'event_id',
+        'Body · uuid',
+        '是',
+        '与 X-Platform-Event-Id 相同，用于幂等',
+      ],
+      ['event_type', 'Body · string', '是', '固定为 OUTBOUND_CALL_RESULT'],
+      ['occurred_at', 'Body · datetime', '是', '平台形成最终结果的时间'],
+      ['company_code', 'Body · string', '是', '影楼编码'],
+      ['batch_id', 'Body · uuid|null', '是', '发起外呼时返回的批次 ID'],
+      ['task_no', 'Body · string', '是', '平台任务编号'],
+      [
+        'customer.guid',
         'Body · string',
         '是',
-        '短期过渡字段，值与 guid 完全相同；新接入只读取 guid',
+        'ERP/CRM 发起外呼时传入的客户唯一标识',
       ],
-      ['phone_masked', 'Body · string', '是', '脱敏号码，不返回完整手机号'],
+      ['customer.customer_name', 'Body · string|null', '是', '客户姓名'],
       [
-        'call_status',
+        'customer.phone_masked',
+        'Body · string',
+        '是',
+        '脱敏号码，不返回完整手机号',
+      ],
+      [
+        'customer_result.result_code',
         'Body · enum',
         '是',
-        'ANSWERED、NO_ANSWER、BUSY、REJECTED、FAILED 或 UNKNOWN',
+        '最终业务分类；ERP/CRM 自动处理时优先读取',
       ],
       [
-        'finish_status',
-        'Body · integer|null',
+        'customer_result.result_text',
+        'Body · string',
         '是',
-        '百应结束状态码；没有可用值时为 null',
+        '可以直接展示给业务人员的中文结论',
+      ],
+      ['customer_result.contacted', 'Body · boolean', '是', '是否实际接通客户'],
+      [
+        'customer_result.intention_level / intention_text',
+        'Body · string|null / string',
+        '是',
+        '百应原始意向值及平台归一化中文说明',
       ],
       [
-        'result_complete',
+        'customer_result.summary',
+        'Body · string',
+        '是',
+        '可以直接展示的客户情况摘要',
+      ],
+      [
+        'customer_result.follow_up_required',
         'Body · boolean',
         '是',
-        'true 表示已取得完整最终结果；false 表示补偿结果不完整',
+        '是否应在 ERP/CRM 创建跟进事项',
       ],
       [
-        'collected_variables',
+        'customer_result.recommended_action',
+        'Body · string',
+        '是',
+        '建议业务人员采取的下一步动作',
+      ],
+      [
+        'customer_result.customer_concerns / customer_tags',
+        'Body · string[]',
+        '是',
+        '客户关注点和业务标签',
+      ],
+      [
+        'customer_result.collected_data',
         'Body · object',
         '是',
-        '只包含百应本次通话实际采集到的变量，不包含呼叫前传入变量',
+        '仅包含本次通话实际采集到的业务数据',
       ],
+      ['call', 'Body · object', '是', '通话状态、中文状态、拨号时间和通话秒数'],
       [
-        'task_results',
+        'conversation_logs',
         'Body · array',
         '是',
-        '只包含百应本次通话实际产生的任务结果',
+        '完整 AI/客户对话，speaker 为 AI 或 CUSTOMER',
+      ],
+      [
+        'billing',
+        'Body · object',
+        '是',
+        'billing_minutes 为计费分钟数，customer_charge 为固定 6 位小数字符串，currency 固定为 CNY',
       ],
     ],
     request: resultEvent,
@@ -481,8 +570,16 @@ const apiDocs: ApiDoc[] = [
         '网络错误、408、429、5xx 按 1 分钟至 8 小时退避重试；其他 4xx 进入死信。',
       ],
       [
-        '数据最小化',
-        'Body 不包含完整手机号、原始动态变量、批次号、任务号、百应任务 ID 或平台内部 sx_* 字段。',
+        '业务读取顺序',
+        '程序优先读取 result_code 和 follow_up_required；页面优先展示 result_text、summary 和 recommended_action；conversation_logs 作为可展开明细。',
+      ],
+      [
+        '业务分类',
+        'result_code 为 HIGH_INTENT、MEDIUM_INTENT、LOW_INTENT、NO_INTENT、UNREACHED、CALL_FAILED 或 UNKNOWN。',
+      ],
+      [
+        '数据范围',
+        'Body 不包含完整手机号、呼叫前原始动态变量、百应任务/机器人/线路 ID 或平台内部 sx_* 字段。',
       ],
       [
         '配置位置',
@@ -1240,7 +1337,8 @@ export function ApiDocumentation({
                 <CopyButton value={active.errorResponse} />
               </div>
               <p className="api-section-lead">
-                ERP/CRM 可直接展示 recharge_qr_code_url 指向的图片供用户扫码充值。
+                ERP/CRM 可直接展示 recharge_qr_code_url
+                指向的图片供用户扫码充值。
               </p>
               <pre className="api-code-block">
                 <code>{active.errorResponse}</code>

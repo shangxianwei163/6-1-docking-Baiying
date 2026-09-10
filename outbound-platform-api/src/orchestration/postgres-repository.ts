@@ -549,7 +549,7 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
         `);
         const failureResults = unresolved.map((item) => {
           const event = outboundCallResultInternalEventV2Schema.parse({
-            schemaVersion: '2.0',
+            schemaVersion: '2.1',
             eventId: item.resultEventId,
             eventType: 'OUTBOUND_CALL_RESULT_V2',
             occurredAt: now.toISOString(),
@@ -557,14 +557,42 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
             mcCode: task.mcCode,
             taskNo: task.taskNo,
             result: {
-              guid: item.externalCustomerId,
-              externalCustomerId: item.externalCustomerId,
-              phone_masked: `*******${item.phoneTail4}`,
-              call_status: 'FAILED',
-              finish_status: null,
-              result_complete: false,
-              collected_variables: {},
-              task_results: [],
+              event_id: item.resultEventId,
+              event_type: 'OUTBOUND_CALL_RESULT',
+              occurred_at: now.toISOString(),
+              company_code: task.mcCode,
+              batch_id: task.batchId,
+              task_no: task.taskNo,
+              customer: {
+                guid: item.externalCustomerId,
+                customer_name: null,
+                phone_masked: `*******${item.phoneTail4}`,
+              },
+              customer_result: {
+                result_code: 'CALL_FAILED',
+                result_text: '本次外呼失败',
+                contacted: false,
+                intention_level: null,
+                intention_text: '外呼失败，无法判断',
+                summary: message,
+                follow_up_required: true,
+                recommended_action: '建议检查任务状态后重新发起外呼',
+                customer_concerns: [],
+                customer_tags: [],
+                collected_data: {},
+              },
+              call: {
+                status: 'FAILED',
+                status_text: orchestrationFailureStatusText(input.stage),
+                called_at: null,
+                duration_seconds: 0,
+              },
+              conversation_logs: [],
+              billing: {
+                billing_minutes: 0,
+                customer_charge: '0.000000',
+                currency: 'CNY',
+              },
             },
           });
           return {
@@ -745,6 +773,14 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
   private createId(): string {
     return this.options.createId?.() ?? randomUUID();
   }
+}
+
+function orchestrationFailureStatusText(
+  stage: 'BAIYING_CREATE' | 'BAIYING_IMPORT' | 'BAIYING_START',
+): string {
+  if (stage === 'BAIYING_CREATE') return '任务创建失败';
+  if (stage === 'BAIYING_IMPORT') return '号码导入失败';
+  return '任务启动失败';
 }
 
 export function userFacingTaskFailureMessage(

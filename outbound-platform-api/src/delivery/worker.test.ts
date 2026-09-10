@@ -141,19 +141,50 @@ describe('CallbackDeliveryWorker', () => {
     },
   );
 
-  it('delivers only the v2 business result body during the compatibility window', async () => {
+  it('delivers the business-first v2.1 customer result body', async () => {
     const result = {
-      guid: '11111111-1111-4111-8111-111111111101',
-      externalCustomerId: '11111111-1111-4111-8111-111111111101',
-      phone_masked: '135****0001',
-      call_status: 'ANSWERED',
-      finish_status: 0,
-      result_complete: true,
-      collected_variables: { 预约门店: '湖滨店' },
-      task_results: [{ resultName: '客户意向等级', resultValue: 'A' }],
+      event_id: '11111111-1111-4111-8111-111111111114',
+      event_type: 'OUTBOUND_CALL_RESULT',
+      occurred_at: '2026-09-06T10:35:00+08:00',
+      company_code: '5903679116',
+      batch_id: '33333333-3333-4333-8333-333333333333',
+      task_no: 'PT-20260906-00026',
+      customer: {
+        guid: '11111111-1111-4111-8111-111111111101',
+        customer_name: '张女士',
+        phone_masked: '135****0001',
+      },
+      customer_result: {
+        result_code: 'HIGH_INTENT',
+        result_text: '客户有明确意向，建议尽快跟进',
+        contacted: true,
+        intention_level: 'A',
+        intention_text: '高意向',
+        summary: '客户近期有拍摄计划。',
+        follow_up_required: true,
+        recommended_action: '建议尽快联系客户',
+        customer_concerns: ['套餐价格'],
+        customer_tags: ['高意向'],
+        collected_data: { 预约门店: '湖滨店' },
+      },
+      call: {
+        status: 'ANSWERED',
+        status_text: '已接通',
+        called_at: '2026-09-06T10:33:00+08:00',
+        duration_seconds: 61,
+      },
+      conversation_logs: [
+        { sequence: 1, speaker: 'AI', content: '您好。' },
+        { sequence: 2, speaker: 'CUSTOMER', content: '你好。' },
+      ],
+      billing: {
+        billing_minutes: 2,
+        customer_charge: '0.960000',
+        currency: 'CNY',
+      },
     };
     const v2Event = {
-      schemaVersion: '2.0',
+      schemaVersion: '2.1',
       eventId: '11111111-1111-4111-8111-111111111114',
       eventType: 'OUTBOUND_CALL_RESULT_V2',
       occurredAt: '2026-09-06T10:35:00+08:00',
@@ -165,15 +196,15 @@ describe('CallbackDeliveryWorker', () => {
     const v2Claimed: ClaimedDeliveryEvent = {
       ...claimed,
       eventId: v2Event.eventId,
-      eventKey: `OUTBOUND_CALL_RESULT_V2:${result.guid}`,
+      eventKey: `OUTBOUND_CALL_RESULT_V2:${result.customer.guid}`,
       eventType: v2Event.eventType,
       payload: v2Event,
     };
     const send = vi.fn<DeliveryTransport['send']>(async (request) => {
       const rawBody = Buffer.from(request.body).toString('utf8');
-      expect(request.headers['X-Contract-Version']).toBe('2.0');
+      expect(request.headers['X-Contract-Version']).toBe('2.1');
       expect(JSON.parse(rawBody)).toEqual(result);
-      expect(rawBody).not.toContain('taskNo');
+      expect(rawBody).not.toContain('baiyingCallJobId');
       expect(
         verifyCallbackRequestSignature(
           {

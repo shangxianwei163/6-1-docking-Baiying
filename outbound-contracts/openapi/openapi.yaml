@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 6+1 Outbound Platform API
-  version: 2.0.0
+  version: 2.1.0
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -456,9 +456,9 @@ webhooks:
       operationId: onOutboundCallResultV2
       summary: ERP/CRM 接收单号码最终业务结果
       description: |
-        每个 GUID 只投递一次最终业务结果。短期兼容窗口内同时发送 guid 与 externalCustomerId，
-        两者值完全相同；兼容窗口结束后移除 externalCustomerId。result_complete=false 表示平台只能形成补偿结果，
-        未获得完整的百应真实回调数据。
+        每个 GUID 只投递一次最终业务结果。ERP/CRM 应优先读取 customer_result：
+        result_code 适合程序分类，result_text、summary 和 recommended_action 可直接展示给业务人员。
+        conversation_logs 仅作为通话详情使用。完整手机号、百应任务/机器人/线路标识及平台内部字段不会对外返回。
       security:
         - CallbackTimestampHeader: []
           CallbackSignatureHeader: []
@@ -469,7 +469,7 @@ webhooks:
         - name: X-Contract-Version
           in: header
           required: true
-          schema: { const: '2.0' }
+          schema: { const: '2.1' }
       requestBody:
         required: true
         content:
@@ -882,37 +882,144 @@ components:
       type: object
       additionalProperties: false
       required:
-        - guid
-        - externalCustomerId
-        - phone_masked
-        - call_status
-        - finish_status
-        - result_complete
-        - collected_variables
-        - task_results
+        - event_id
+        - event_type
+        - occurred_at
+        - company_code
+        - batch_id
+        - task_no
+        - customer
+        - customer_result
+        - call
+        - conversation_logs
+        - billing
       properties:
-        guid: { type: string, minLength: 1, maxLength: 128 }
-        externalCustomerId:
+        event_id:
           type: string
-          minLength: 1
-          maxLength: 128
-          deprecated: true
-          description: 临时兼容字段，当前必须与 guid 相同，兼容窗口结束后移除。
-        phone_masked: { type: string, minLength: 1, maxLength: 32 }
-        call_status:
-          { enum: [ANSWERED, NO_ANSWER, BUSY, REJECTED, FAILED, UNKNOWN] }
-        finish_status: { type: [integer, 'null'] }
-        result_complete:
-          type: boolean
-          description: true=百应真实完成回调；false=补偿/对账形成的不完整最终结果。
-        collected_variables:
+          format: uuid
+          description: 回调事件唯一标识，与 X-Platform-Event-Id 相同，也是接收方幂等键。
+        event_type: { const: OUTBOUND_CALL_RESULT }
+        occurred_at: { type: string, format: date-time }
+        company_code: { type: string, minLength: 1, maxLength: 64 }
+        batch_id: { type: [string, 'null'], format: uuid }
+        task_no: { type: string, pattern: '^PT-\d{8}-\d{5,}$' }
+        customer:
           type: object
-          additionalProperties: true
-          description: 仅来自百应 callInstance.collectProperties，不混入导入参数。
-        task_results:
+          additionalProperties: false
+          required: [guid, customer_name, phone_masked]
+          properties:
+            guid:
+              type: string
+              minLength: 1
+              maxLength: 128
+              description: ERP/CRM 发起外呼时传入的客户唯一标识。
+            customer_name: { type: [string, 'null'], maxLength: 200 }
+            phone_masked: { type: string, minLength: 1, maxLength: 32 }
+        customer_result:
+          type: object
+          additionalProperties: false
+          required:
+            - result_code
+            - result_text
+            - contacted
+            - intention_level
+            - intention_text
+            - summary
+            - follow_up_required
+            - recommended_action
+            - customer_concerns
+            - customer_tags
+            - collected_data
+          properties:
+            result_code:
+              enum:
+                - HIGH_INTENT
+                - MEDIUM_INTENT
+                - LOW_INTENT
+                - NO_INTENT
+                - UNREACHED
+                - CALL_FAILED
+                - UNKNOWN
+              description: ERP/CRM 自动分类时优先读取的最终结论。
+            result_text:
+              type: string
+              minLength: 1
+              maxLength: 500
+              description: 与 result_code 对应、可直接向业务人员展示的中文结论。
+            contacted: { type: boolean, description: 是否实际接通客户。 }
+            intention_level:
+              type: [string, 'null']
+              maxLength: 8192
+              description: 百应任务结果或采集变量中的原始客户意向值，例如 A；未取得时为 null。
+            intention_text:
+              type: string
+              minLength: 1
+              maxLength: 200
+              description: 归一化后的中文意向说明。
+            summary:
+              type: string
+              minLength: 1
+              maxLength: 2000
+              description: 优先采用百应返回的客户/通话摘要；没有摘要时由平台根据通话结果确定性拼接。
+            follow_up_required:
+              type: boolean
+              description: ERP/CRM 是否应创建跟进事项。
+            recommended_action:
+              type: string
+              minLength: 1
+              maxLength: 1000
+              description: 可直接展示给业务人员的下一步处理建议。
+            customer_concerns:
+              type: array
+              maxItems: 100
+              items: { type: string, maxLength: 8192 }
+            customer_tags:
+              type: array
+              maxItems: 100
+              items: { type: string, maxLength: 8192 }
+            collected_data:
+              type: object
+              additionalProperties: true
+              description: 百应本次通话实际采集到的业务数据，不包含呼叫前传入变量和 sx_* 内部字段。
+        call:
+          type: object
+          additionalProperties: false
+          required: [status, status_text, called_at, duration_seconds]
+          properties:
+            status:
+              enum: [ANSWERED, NO_ANSWER, BUSY, REJECTED, FAILED, UNKNOWN]
+            status_text:
+              type: string
+              minLength: 1
+              maxLength: 200
+              description: 可直接展示的中文通话状态。
+            called_at:
+              type: [string, 'null']
+              format: date-time
+              description: 开始拨号时间；未取得时为 null。
+            duration_seconds: { type: integer, minimum: 0 }
+        conversation_logs:
           type: array
-          items: { type: object, additionalProperties: true }
-          description: 来自百应 data.taskResult。
+          maxItems: 10000
+          description: 百应返回的完整 AI/客户对话，按 sequence 升序排列。
+          items:
+            type: object
+            additionalProperties: false
+            required: [sequence, speaker, content]
+            properties:
+              sequence: { type: integer, minimum: 1 }
+              speaker: { enum: [AI, CUSTOMER] }
+              content: { type: string, maxLength: 20000 }
+        billing:
+          type: object
+          additionalProperties: false
+          required: [billing_minutes, customer_charge, currency]
+          properties:
+            billing_minutes: { type: integer, minimum: 0 }
+            customer_charge:
+              type: string
+              pattern: '^\d{1,12}\.\d{6}$'
+            currency: { const: CNY }
     RecordingAvailableBatchEvent:
       allOf:
         - { $ref: '#/components/schemas/PlatformEventBase' }
@@ -1217,17 +1324,47 @@ components:
               status_url: /openapi/v1/outbound/tasks/PT-20260909-00026
           status_url: /openapi/v2/outbound/batches/4f4f0d65-8d01-48c9-b87f-71569344cb63
     OutboundCallResultV2:
-      summary: 单个 GUID 的最终业务回调
+      summary: 单个 GUID 的业务结论优先回调
       value:
-        guid: '11111111-1111-4111-8111-111111111101'
-        externalCustomerId: '11111111-1111-4111-8111-111111111101'
-        phone_masked: 135****0001
-        call_status: ANSWERED
-        finish_status: 0
-        result_complete: true
-        collected_variables:
-          预约门店: 湖滨店
-          预约日期: '2026-09-20'
-        task_results:
-          - resultName: 客户意向等级
-            resultValue: A
+        event_id: 8d87e451-8aad-4a48-90a1-b6e38429a964
+        event_type: OUTBOUND_CALL_RESULT
+        occurred_at: '2026-09-10T15:30:25+08:00'
+        company_code: '5903679116'
+        batch_id: 59fd515e-00f2-4d62-93ec-8883fb3aa090
+        task_no: PT-20260910-00001
+        customer:
+          guid: CRM-CUSTOMER-10001
+          customer_name: 张女士
+          phone_masked: 138****8888
+        customer_result:
+          result_code: HIGH_INTENT
+          result_text: 客户有明确意向，建议尽快跟进
+          contacted: true
+          intention_level: A
+          intention_text: 高意向
+          summary: 客户计划近期拍摄婚纱照，关注套餐价格和外景拍摄。
+          follow_up_required: true
+          recommended_action: 建议销售人员尽快联系客户并发送套餐报价
+          customer_concerns: [套餐价格, 外景拍摄]
+          customer_tags: [婚纱照, 近期需求, 高意向]
+          collected_data:
+            拍摄类型: 婚纱照
+            预算: 5000元左右
+            意向门店: 海口店
+            期望拍摄时间: 2026年10月
+        call:
+          status: ANSWERED
+          status_text: 已接通
+          called_at: '2026-09-10T15:28:30+08:00'
+          duration_seconds: 115
+        conversation_logs:
+          - sequence: 1
+            speaker: AI
+            content: 您好，请问近期有拍摄婚纱照的计划吗？
+          - sequence: 2
+            speaker: CUSTOMER
+            content: 有的，我想了解一下你们的价格。
+        billing:
+          billing_minutes: 2
+          customer_charge: '0.960000'
+          currency: CNY

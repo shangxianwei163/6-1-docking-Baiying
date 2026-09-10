@@ -1,6 +1,6 @@
 # ERP / CRM 外呼接口联调手册
 
-> 契约版本：2.0.0
+> 契约版本：2.1.0
 > 文档日期：2026-09-10
 > 适用系统：ERP、CRM 及百应外呼调度平台
 > 生产地址：`https://scheduling.paiyide.cc`
@@ -176,13 +176,13 @@ HTTP 状态码：`202 Accepted`
 
 ### 4.4 GUID 与幂等规则
 
-| 场景                 | 调用要求                                                                              | 平台行为                        |
-| -------------------- | ------------------------------------------------------------------------------------- | ------------------------------- |
-| HTTP 超时后重试      | 复用原 GUID、原 `Idempotency-Key`、原 Token 和字节完全一致的 Body                     | 返回原批次，不重复建任务        |
-| 同幂等键但 Body 不同 | 禁止                                                                                  | 返回 `409 IDEMPOTENCY_CONFLICT` |
-| 同一号码以后再次发起 | 使用新 GUID 和新 `Idempotency-Key`                                                    | 创建新批次，允许再次呼叫        |
-| 同批次 GUID 重复     | 禁止                                                                                  | 整批返回 `422 GUID_DUPLICATED`  |
-| 同批次手机号重复     | 禁止                                                                                  | 整批返回 `422 PHONE_DUPLICATED` |
+| 场景                 | 调用要求                                                          | 平台行为                        |
+| -------------------- | ----------------------------------------------------------------- | ------------------------------- |
+| HTTP 超时后重试      | 复用原 GUID、原 `Idempotency-Key`、原 Token 和字节完全一致的 Body | 返回原批次，不重复建任务        |
+| 同幂等键但 Body 不同 | 禁止                                                              | 返回 `409 IDEMPOTENCY_CONFLICT` |
+| 同一号码以后再次发起 | 使用新 GUID 和新 `Idempotency-Key`                                | 创建新批次，允许再次呼叫        |
+| 同批次 GUID 重复     | 禁止                                                              | 整批返回 `422 GUID_DUPLICATED`  |
+| 同批次手机号重复     | 禁止                                                              | 整批返回 `422 PHONE_DUPLICATED` |
 
 平台生成 `batch_id`，ERP/CRM 不需要传业务批次号。幂等记录在批次未结束时不会过期，批次结束后至少保留 180 天。
 
@@ -235,7 +235,7 @@ GET /openapi/v2/outbound/batches/{batchId}
 X-Platform-Event-Id: 22222222-2222-4222-8222-222222222222
 X-Timestamp: 1788661800000
 X-Signature: Base64-HMAC-SHA256-Signature
-X-Contract-Version: 2.0
+X-Contract-Version: 2.1
 Content-Type: application/json
 ```
 
@@ -243,39 +243,110 @@ Content-Type: application/json
 
 ```json
 {
-  "guid": "11111111-1111-4111-8111-111111111101",
-  "externalCustomerId": "11111111-1111-4111-8111-111111111101",
-  "phone_masked": "135****0001",
-  "call_status": "ANSWERED",
-  "finish_status": 0,
-  "result_complete": true,
-  "collected_variables": {
-    "预约门店": "湖滨店",
-    "预约日期": "2026-09-20"
+  "event_id": "8d87e451-8aad-4a48-90a1-b6e38429a964",
+  "event_type": "OUTBOUND_CALL_RESULT",
+  "occurred_at": "2026-09-10T15:30:25+08:00",
+  "company_code": "5903679116",
+  "batch_id": "59fd515e-00f2-4d62-93ec-8883fb3aa090",
+  "task_no": "PT-20260910-00001",
+  "customer": {
+    "guid": "CRM-CUSTOMER-10001",
+    "customer_name": "张女士",
+    "phone_masked": "138****8888"
   },
-  "task_results": [
-    {
-      "resultName": "客户意向等级",
-      "resultValue": "A"
+  "customer_result": {
+    "result_code": "HIGH_INTENT",
+    "result_text": "客户有明确意向，建议尽快跟进",
+    "contacted": true,
+    "intention_level": "A",
+    "intention_text": "高意向",
+    "summary": "客户计划近期拍摄婚纱照，关注套餐价格和外景拍摄。",
+    "follow_up_required": true,
+    "recommended_action": "建议销售人员尽快联系客户并发送套餐报价",
+    "customer_concerns": ["套餐价格", "外景拍摄"],
+    "customer_tags": ["婚纱照", "近期需求", "高意向"],
+    "collected_data": {
+      "拍摄类型": "婚纱照",
+      "预算": "5000元左右",
+      "意向门店": "海口店",
+      "期望拍摄时间": "2026年10月"
     }
-  ]
+  },
+  "call": {
+    "status": "ANSWERED",
+    "status_text": "已接通",
+    "called_at": "2026-09-10T15:28:30+08:00",
+    "duration_seconds": 115
+  },
+  "conversation_logs": [
+    {
+      "sequence": 1,
+      "speaker": "AI",
+      "content": "您好，请问近期有拍摄婚纱照的计划吗？"
+    },
+    {
+      "sequence": 2,
+      "speaker": "CUSTOMER",
+      "content": "有的，我想了解一下你们的价格。"
+    }
+  ],
+  "billing": {
+    "billing_minutes": 2,
+    "customer_charge": "0.960000",
+    "currency": "CNY"
+  }
 }
 ```
 
-字段说明：
+ERP/CRM 应优先读取 `customer_result`，不需要自行分析百应状态码或对话内容：
 
-| 字段                  | 类型         | 说明                                                             |
-| --------------------- | ------------ | ---------------------------------------------------------------- |
-| `guid`                | string       | ERP/CRM 本次发起时传入的 GUID                                    |
-| `externalCustomerId`  | string       | 短期过渡字段，值与 `guid` 完全相同；新接入只读取 `guid`          |
-| `phone_masked`        | string       | 脱敏号码                                                         |
-| `call_status`         | enum         | `ANSWERED`、`NO_ANSWER`、`BUSY`、`REJECTED`、`FAILED`、`UNKNOWN` |
-| `finish_status`       | integer/null | 百应结束状态码                                                   |
-| `result_complete`     | boolean      | 是否取得完整最终结果                                             |
-| `collected_variables` | object       | 仅来自百应本次通话实际采集结果                                   |
-| `task_results`        | array        | 仅来自百应本次通话实际产生的任务结果                             |
+| 字段                                 | 类型          | 说明                                                        |
+| ------------------------------------ | ------------- | ----------------------------------------------------------- |
+| `event_id`                           | uuid          | 回调唯一标识，与请求头 `X-Platform-Event-Id` 相同，用于幂等 |
+| `event_type`                         | string        | 固定为 `OUTBOUND_CALL_RESULT`                               |
+| `occurred_at`                        | datetime      | 平台形成本次最终结果的时间                                  |
+| `company_code`                       | string        | 影楼编码                                                    |
+| `batch_id`                           | uuid/null     | 发起外呼时返回的批次 ID                                     |
+| `task_no`                            | string        | 平台任务编号                                                |
+| `customer.guid`                      | string        | ERP/CRM 发起外呼时传入的客户唯一标识                        |
+| `customer.customer_name`             | string/null   | 客户姓名                                                    |
+| `customer.phone_masked`              | string        | 脱敏手机号                                                  |
+| `customer_result.result_code`        | enum          | 最终业务分类，ERP/CRM 自动处理时优先读取                    |
+| `customer_result.result_text`        | string        | 可直接展示给业务人员的中文结论                              |
+| `customer_result.contacted`          | boolean       | 是否实际接通客户                                            |
+| `customer_result.intention_level`    | string/null   | 百应返回的原始意向值，例如 `A`                              |
+| `customer_result.intention_text`     | string        | 归一化后的中文意向说明                                      |
+| `customer_result.summary`            | string        | 客户情况摘要                                                |
+| `customer_result.follow_up_required` | boolean       | 是否应在 ERP/CRM 创建跟进事项                               |
+| `customer_result.recommended_action` | string        | 建议业务人员采取的下一步动作                                |
+| `customer_result.customer_concerns`  | string[]      | 客户关注点                                                  |
+| `customer_result.customer_tags`      | string[]      | 客户标签                                                    |
+| `customer_result.collected_data`     | object        | 本次通话实际采集到的业务数据                                |
+| `call.status` / `call.status_text`   | enum/string   | 标准通话状态及可直接展示的中文说明                          |
+| `call.called_at`                     | datetime/null | 开始拨号时间                                                |
+| `call.duration_seconds`              | integer       | 通话时长（秒）                                              |
+| `conversation_logs`                  | array         | 完整 AI/客户对话；`speaker` 为 `AI` 或 `CUSTOMER`           |
+| `conversation_logs[].sequence`       | integer       | 对话顺序，从 1 开始                                         |
+| `conversation_logs[].content`        | string        | 本轮对话文本                                                |
+| `billing.billing_minutes`            | integer       | 本次计费分钟数                                              |
+| `billing.customer_charge`            | string        | 本次客户费用，固定 6 位小数                                 |
+| `billing.currency`                   | string        | 固定为 `CNY`                                                |
 
-每个 `guid` 只投递一个最终业务结果。Body 不包含完整手机号、呼叫前原始动态变量、批次号、任务号、百应任务 ID 或平台内部 `sx_*` 字段。
+`result_code` 的取值：
+
+| 值              | 含义                                     |
+| --------------- | ---------------------------------------- |
+| `HIGH_INTENT`   | 高意向客户                               |
+| `MEDIUM_INTENT` | 中意向客户                               |
+| `LOW_INTENT`    | 低意向客户                               |
+| `NO_INTENT`     | 当前无意向                               |
+| `UNREACHED`     | 未接通客户                               |
+| `CALL_FAILED`   | 外呼任务或线路失败                       |
+| `UNKNOWN`       | 已接通但意向暂不明确，或没有足够数据判断 |
+
+默认意向映射为：`A/S/HIGH/高意向` → `HIGH_INTENT`，`B/MEDIUM/中意向` → `MEDIUM_INTENT`，`C/LOW/低意向` → `LOW_INTENT`，`D/NONE/无意向/不感兴趣` → `NO_INTENT`。未接通和外呼失败分别优先归为 `UNREACHED` 和 `CALL_FAILED`；未识别的自定义意向原值仍保留在 `intention_level`，同时将 `result_code` 设为 `UNKNOWN`。
+
+每个 `guid` 只投递一个最终业务结果。`summary` 和 `recommended_action` 优先采用百应任务结果或采集字段；百应没有返回对应内容时，平台根据通话状态、意向和关注点生成固定规则文案。Body 不包含完整手机号、呼叫前原始动态变量、百应任务/机器人/线路 ID 或平台内部 `sx_*` 字段。
 
 ## 7. 录音回传
 
