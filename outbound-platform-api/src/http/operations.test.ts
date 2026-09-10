@@ -163,23 +163,56 @@ describe('operator configuration and billing HTTP API', () => {
       'request-operations-001',
     );
 
-    const insecureEndpoint = await app.request('/api/v1/studios', {
+    const legacyHttpEndpoint = await app.request('/api/v1/studios', {
       method: 'POST',
       headers: jsonHeaders,
       body: JSON.stringify({
-        name: '不安全端点影楼',
-        mcCode: 'MC-INSECURE-001',
+        name: '旧系统 HTTP 端点影楼',
+        mcCode: 'MC-HTTP-001',
         endpoints: [
           {
             sourceSystem: 'ERP',
-            resultUrl: 'http://erp.example.com/result',
+            resultUrl: 'http://testmc.6161520.cn:8083/SAi/Sx_AI_CallResult',
+            recordingUrl:
+              'http://testmc.6161520.cn:8083/SAi/Sx_AI_UpdateVoiceUrl',
+          },
+        ],
+      }),
+    });
+    expect(legacyHttpEndpoint.status).toBe(201);
+    expect(createStudio).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        mcCode: 'MC-HTTP-001',
+        endpoints: [
+          expect.objectContaining({
+            sourceSystem: 'ERP',
+            resultUrl: 'http://testmc.6161520.cn:8083/SAi/Sx_AI_CallResult',
+            recordingUrl:
+              'http://testmc.6161520.cn:8083/SAi/Sx_AI_UpdateVoiceUrl',
+          }),
+        ],
+      }),
+      'platform-admin',
+      'request-operations-001',
+    );
+
+    const invalidEndpoint = await app.request('/api/v1/studios', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        name: '非 HTTP 端点影楼',
+        mcCode: 'MC-FTP-001',
+        endpoints: [
+          {
+            sourceSystem: 'ERP',
+            resultUrl: 'ftp://erp.example.com/result',
             recordingUrl: 'https://erp.example.com/recording',
           },
         ],
       }),
     });
-    expect(insecureEndpoint.status).toBe(400);
-    expect(createStudio).toHaveBeenCalledTimes(1);
+    expect(invalidEndpoint.status).toBe(400);
+    expect(createStudio).toHaveBeenCalledTimes(2);
 
     const disabled = await app.request(`/api/v1/studios/${studioId}/status`, {
       method: 'POST',

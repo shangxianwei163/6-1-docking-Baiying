@@ -9,11 +9,13 @@ export interface DataProtector {
   encryptUtf8(value: string): string;
   decryptUtf8(value: string): string;
   phoneHmac(normalizedPhone: string): string;
+  correlationHmac(value: string): string;
 }
 
 export class LocalDataProtector implements DataProtector {
   private readonly encryptionKey: Buffer;
   private readonly phoneKey: Buffer;
+  private readonly correlationKey: Buffer;
 
   constructor(
     rootSecret: string,
@@ -26,6 +28,7 @@ export class LocalDataProtector implements DataProtector {
       throw new Error('本地根密钥长度至少为 24 个字符');
     this.encryptionKey = derive(rootSecret, 'data-encryption');
     this.phoneKey = derive(rootSecret, 'phone-hmac');
+    this.correlationKey = derive(rootSecret, 'correlation-hmac');
   }
 
   encryptUtf8(value: string): string {
@@ -60,6 +63,12 @@ export class LocalDataProtector implements DataProtector {
   phoneHmac(normalizedPhone: string): string {
     return createHmac('sha256', this.phoneKey)
       .update(normalizedPhone, 'utf8')
+      .digest('hex');
+  }
+
+  correlationHmac(value: string): string {
+    return createHmac('sha256', this.correlationKey)
+      .update(value, 'utf8')
       .digest('hex');
   }
 }

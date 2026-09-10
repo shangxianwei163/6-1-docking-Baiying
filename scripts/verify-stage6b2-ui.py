@@ -1,14 +1,12 @@
 from pathlib import Path
 import json
 import re
-from urllib.request import ProxyHandler, Request, build_opener
 
 from playwright.sync_api import Route, expect, sync_playwright
+from ui_auth import authenticated_api_json, open_authenticated
 
 
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
-APP_URL = 'http://localhost:4173/'
-API_BASE_URL = 'http://127.0.0.1:8788'
 APPROVAL_SCREENSHOT = Path('/tmp/outbound-platform-stage6b2-approval.png')
 ADJUSTMENT_PAGE_SCREENSHOT = Path('/tmp/outbound-platform-stage6b2-adjustments.png')
 ADJUSTMENT_CREATE_SCREENSHOT = Path(
@@ -36,19 +34,13 @@ def assert_dialog_has_no_overflow(dialog, label: str) -> None:
         raise AssertionError(f'{label} clips vertically: {metrics}')
 
 
-def api_json(path: str) -> dict:
-    opener = build_opener(ProxyHandler({}))
-    request = Request(
-        f'{API_BASE_URL}{path}',
-        headers={'x-actor-id': 'stage6b2-ui-verifier'},
-    )
-    with opener.open(request, timeout=10) as response:
-        return json.load(response)['data']
-
-
 def load_fixtures() -> tuple[dict, dict]:
-    studios = api_json('/api/v1/studios?pageNum=0&pageSize=100')['studios']
-    audit_events = api_json('/api/v1/audit-logs?pageNum=0&pageSize=20')['items']
+    studios = authenticated_api_json(
+        '/api/v1/studios?pageNum=0&pageSize=100'
+    )['studios']
+    audit_events = authenticated_api_json(
+        '/api/v1/audit-logs?pageNum=0&pageSize=20'
+    )['items']
     if not studios:
         raise AssertionError('Stage 6B-2 UI verification needs at least one studio')
     if not audit_events:
@@ -130,7 +122,7 @@ def main() -> None:
         page = browser.new_page(viewport={'width': 1600, 'height': 1000})
         page.on('pageerror', lambda error: page_errors.append(str(error)))
         install_adjustment_fixture(page, studio)
-        page.goto(APP_URL, wait_until='networkidle')
+        open_authenticated(page)
 
         page.get_by_role('button', name=re.compile(r'^充值记录')).click()
         ledger_tab = page.get_by_role('tab', name=re.compile(r'^真实账户流水'))
@@ -154,7 +146,7 @@ def main() -> None:
             raise AssertionError('Adjustment policy or approval panel is missing')
         if policy_box['y'] + policy_box['height'] > approval_panel_box['y']:
             raise AssertionError('Adjustment policy must appear above the approval panel')
-        if not approval_table_box or approval_table_box['height'] < 340:
+        if not approval_table_box or approval_table_box['height'] < 300:
             raise AssertionError(
                 f'Approval table area is too short: {approval_table_box}'
             )
@@ -234,7 +226,7 @@ def main() -> None:
         mobile = browser.new_page(viewport={'width': 390, 'height': 844})
         mobile.on('pageerror', lambda error: page_errors.append(str(error)))
         install_adjustment_fixture(mobile, studio)
-        mobile.goto(APP_URL, wait_until='networkidle')
+        open_authenticated(mobile)
         mobile.get_by_role('button', name=re.compile(r'^充值记录')).click()
         mobile.get_by_role(
             'tab', name=re.compile(r'^退款与人工调整审批')

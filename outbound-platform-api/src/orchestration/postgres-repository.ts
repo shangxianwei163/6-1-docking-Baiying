@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, count, eq, sql } from 'drizzle-orm';
 import {
+  outboundCallResultInternalEventV2Schema,
   taskStartedEventSchema,
   taskStartFailedEventSchema,
   type SourceSystem,
@@ -17,12 +18,14 @@ import type { Database } from '../db/client.js';
 import {
   accountLedger,
   fundHolds,
+  intakeBatches,
   platformTasks,
   queueOutbox,
   studioAccounts,
   taskCallItems,
   taskOperations,
 } from '../db/schema.js';
+import { refreshIntakeBatchLifecycle } from '../outbound-task/batch-lifecycle.js';
 import {
   TaskNotFoundError,
   TaskStateConflictError,
@@ -36,6 +39,8 @@ type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 
 type LockedTask = {
   id: string;
+  batchId: string | null;
+  contractVersion: string;
   taskNo: string;
   sourceSystem: string;
   mcCode: string;
@@ -62,6 +67,7 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
     private readonly db: Database,
     private readonly options: {
       deliveryQueueName?: string;
+      orchestrationQueueName?: string;
       lowBalanceThreshold?: string;
       clock?: () => Date;
       createId?: () => string;
@@ -72,6 +78,8 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
     const [task] = await this.db
       .select({
         id: platformTasks.id,
+        batchId: platformTasks.batchId,
+        contractVersion: platformTasks.contractVersion,
         taskNo: platformTasks.taskNo,
         taskName: platformTasks.taskName,
         sourceSystem: platformTasks.sourceSystem,
@@ -94,6 +102,7 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
       .select({
         id: taskCallItems.id,
         ordinal: taskCallItems.ordinal,
+        phoneHmac: taskCallItems.phoneHmac,
         phoneCiphertext: taskCallItems.phoneCiphertext,
         customerNameCiphertext: taskCallItems.customerNameCiphertext,
         mappedPropertiesCiphertext: taskCallItems.mappedPropertiesCiphertext,
@@ -289,6 +298,103 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
     });
   }
 
+  async releaseBatchStartBarrier(input: {
+    batchId: string;
+    currentTaskId: string;
+  }): Promise<'WAITING' | 'RELEASED' | 'FAILED'> {
+    return this.db.transaction(async (tx) => {
+      const batches = await tx.execute<{ executionStatus: string }>(sql`
+        SELECT ${intakeBatches.executionStatus} AS "executionStatus"
+        FROM ${intakeBatches}
+        WHERE ${intakeBatches.id} = ${input.batchId}
+        FOR UPDATE
+      `);
+      const batch = batches[0];
+      if (!batch) throw new TaskNotFoundError(`批次 ${input.batchId} 不存在`);
+      if (
+        ['FAILED', 'PARTIAL_FAILED', 'CANCELLED', 'COMPLETED'].includes(
+          batch.executionStatus,
+        )
+      ) {
+        return 'FAILED';
+      }
+      if (batch.executionStatus === 'RUNNING') return 'RELEASED';
+
+      const children = await tx
+        .select({
+          id: platformTasks.id,
+          taskNo: platformTasks.taskNo,
+          sourceSystem: platformTasks.sourceSystem,
+          executionStatus: platformTasks.executionStatus,
+        })
+        .from(platformTasks)
+        .where(eq(platformTasks.batchId, input.batchId));
+      if (
+        children.some(({ executionStatus }) =>
+          ['CREATE_FAILED', 'IMPORT_FAILED', 'START_FAILED'].includes(
+            executionStatus,
+          ),
+        )
+      ) {
+        await refreshIntakeBatchLifecycle(tx, input.batchId, this.clock());
+        return 'FAILED';
+      }
+
+      const ready = children.every(({ executionStatus }) =>
+        ['IMPORTED', 'STARTING', 'CALLING', 'PAUSED'].includes(executionStatus),
+      );
+      const now = this.clock();
+      if (!ready) {
+        await tx
+          .update(intakeBatches)
+          .set({ executionStatus: 'PREPARING', updatedAt: now })
+          .where(eq(intakeBatches.id, input.batchId));
+        return 'WAITING';
+      }
+
+      await tx
+        .update(intakeBatches)
+        .set({ executionStatus: 'RUNNING', updatedAt: now })
+        .where(eq(intakeBatches.id, input.batchId));
+      const waitingSiblings = children.filter(
+        (child) =>
+          child.id !== input.currentTaskId &&
+          child.executionStatus === 'IMPORTED',
+      );
+      if (waitingSiblings.length) {
+        await tx.insert(queueOutbox).values(
+          waitingSiblings.map((child) => ({
+            id: this.createId(),
+            eventType: 'TASK_ACCEPTED',
+            queueName:
+              this.options.orchestrationQueueName ?? 'task-orchestration-queue',
+            payload: {
+              schemaVersion: '1.0',
+              taskId: child.id,
+              taskNo: child.taskNo,
+              sourceSystem: requireSourceSystem(child.sourceSystem),
+            },
+            availableAt: now,
+            createdAt: now,
+          })),
+        );
+      }
+      return 'RELEASED';
+    });
+  }
+
+  async isBatchAborted(batchId: string): Promise<boolean> {
+    const [batch] = await this.db
+      .select({ executionStatus: intakeBatches.executionStatus })
+      .from(intakeBatches)
+      .where(eq(intakeBatches.id, batchId))
+      .limit(1);
+    if (!batch) throw new TaskNotFoundError(`批次 ${batchId} 不存在`);
+    return ['FAILED', 'PARTIAL_FAILED', 'CANCELLED'].includes(
+      batch.executionStatus,
+    );
+  }
+
   async recordCalling(taskId: string): Promise<void> {
     await this.db.transaction(async (tx) => {
       const task = await lockTask(tx, taskId);
@@ -307,19 +413,6 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
         );
       }
       const now = this.clock();
-      const eventId = this.createId();
-      const event = taskStartedEventSchema.parse({
-        schemaVersion: '1.0',
-        eventId,
-        eventType: 'OUTBOUND_TASK_STARTED',
-        occurredAt: now.toISOString(),
-        sourceSystem: requireSourceSystem(task.sourceSystem),
-        mcCode: task.mcCode,
-        taskNo: task.taskNo,
-        baiyingCallJobId: task.baiyingCallJobId,
-        executionStatus: 'CALLING',
-        startedAt: now.toISOString(),
-      });
       await tx
         .update(platformTasks)
         .set({
@@ -329,14 +422,33 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
           lockVersion: sql`${platformTasks.lockVersion} + 1`,
         })
         .where(eq(platformTasks.id, taskId));
-      await tx.insert(queueOutbox).values({
-        id: eventId,
-        eventType: event.eventType,
-        queueName: this.options.deliveryQueueName ?? 'callback-delivery-queue',
-        payload: event,
-        availableAt: now,
-        createdAt: now,
-      });
+      if (task.batchId) {
+        await refreshIntakeBatchLifecycle(tx, task.batchId, now);
+      }
+      if (task.contractVersion !== '2.0') {
+        const eventId = this.createId();
+        const event = taskStartedEventSchema.parse({
+          schemaVersion: '1.0',
+          eventId,
+          eventType: 'OUTBOUND_TASK_STARTED',
+          occurredAt: now.toISOString(),
+          sourceSystem: requireSourceSystem(task.sourceSystem),
+          mcCode: task.mcCode,
+          taskNo: task.taskNo,
+          baiyingCallJobId: task.baiyingCallJobId,
+          executionStatus: 'CALLING',
+          startedAt: now.toISOString(),
+        });
+        await tx.insert(queueOutbox).values({
+          id: eventId,
+          eventType: event.eventType,
+          queueName:
+            this.options.deliveryQueueName ?? 'callback-delivery-queue',
+          payload: event,
+          availableAt: now,
+          createdAt: now,
+        });
+      }
     });
   }
 
@@ -380,25 +492,6 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
           userFacingTaskFailureMessage(input.stage, input.message),
           1_000,
         ) ?? '百应任务处理失败，任务流程已结束，请核对配置后重新创建任务';
-      const eventId = this.createId();
-      const failureEvent = taskStartFailedEventSchema.parse({
-        schemaVersion: '1.0',
-        eventId,
-        eventType: 'OUTBOUND_TASK_START_FAILED',
-        occurredAt: now.toISOString(),
-        sourceSystem: requireSourceSystem(task.sourceSystem),
-        mcCode: task.mcCode,
-        taskNo: task.taskNo,
-        baiyingCallJobId: task.baiyingCallJobId,
-        executionStatus: input.executionStatus,
-        failure: {
-          stage: input.stage,
-          code,
-          message,
-          retryable: input.retryable,
-          occurredAt: now.toISOString(),
-        },
-      });
       if (input.executionStatus === 'IMPORT_FAILED') {
         await tx
           .update(taskCallItems)
@@ -434,14 +527,136 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
           lockVersion: sql`${platformTasks.lockVersion} + 1`,
         })
         .where(eq(platformTasks.id, input.taskId));
-      await tx.insert(queueOutbox).values({
-        id: eventId,
-        eventType: failureEvent.eventType,
-        queueName: this.options.deliveryQueueName ?? 'callback-delivery-queue',
-        payload: failureEvent,
-        availableAt: now,
-        createdAt: now,
-      });
+      if (task.contractVersion === '2.0') {
+        const unresolved = await tx.execute<{
+          id: string;
+          externalCustomerId: string;
+          phoneTail4: string;
+          resultEventId: string;
+        }>(sql`
+          UPDATE ${taskCallItems}
+          SET
+            result_event_id = gen_random_uuid(),
+            call_status = 'FAILED',
+            updated_at = ${now}
+          WHERE ${taskCallItems.taskId} = ${input.taskId}
+            AND ${taskCallItems.resultEventId} IS NULL
+          RETURNING
+            ${taskCallItems.id} AS "id",
+            ${taskCallItems.externalCustomerId} AS "externalCustomerId",
+            ${taskCallItems.phoneTail4} AS "phoneTail4",
+            ${taskCallItems.resultEventId} AS "resultEventId"
+        `);
+        const failureResults = unresolved.map((item) => {
+          const event = outboundCallResultInternalEventV2Schema.parse({
+            schemaVersion: '2.0',
+            eventId: item.resultEventId,
+            eventType: 'OUTBOUND_CALL_RESULT_V2',
+            occurredAt: now.toISOString(),
+            sourceSystem: requireSourceSystem(task.sourceSystem),
+            mcCode: task.mcCode,
+            taskNo: task.taskNo,
+            result: {
+              guid: item.externalCustomerId,
+              externalCustomerId: item.externalCustomerId,
+              phone_masked: `*******${item.phoneTail4}`,
+              call_status: 'FAILED',
+              finish_status: null,
+              result_complete: false,
+              collected_variables: {},
+              task_results: [],
+            },
+          });
+          return {
+            id: item.resultEventId,
+            eventType: event.eventType,
+            queueName:
+              this.options.deliveryQueueName ?? 'callback-delivery-queue',
+            payload: event,
+            availableAt: now,
+            createdAt: now,
+          };
+        });
+        for (let offset = 0; offset < failureResults.length; offset += 500) {
+          await tx
+            .insert(queueOutbox)
+            .values(failureResults.slice(offset, offset + 500));
+        }
+      }
+      if (task.batchId) {
+        await tx
+          .update(intakeBatches)
+          .set({
+            failureCode: code,
+            failureMessage: message,
+            updatedAt: now,
+          })
+          .where(eq(intakeBatches.id, task.batchId));
+        await refreshIntakeBatchLifecycle(tx, task.batchId, now);
+        const siblings = await tx
+          .select({
+            id: platformTasks.id,
+            taskNo: platformTasks.taskNo,
+            sourceSystem: platformTasks.sourceSystem,
+            executionStatus: platformTasks.executionStatus,
+          })
+          .from(platformTasks)
+          .where(eq(platformTasks.batchId, task.batchId));
+        const compensationTargets = siblings.filter(
+          (sibling) =>
+            sibling.id !== input.taskId &&
+            !isTaskTerminal(sibling.executionStatus),
+        );
+        if (compensationTargets.length) {
+          await tx.insert(queueOutbox).values(
+            compensationTargets.map((sibling) => ({
+              id: this.createId(),
+              eventType: 'TASK_ACCEPTED',
+              queueName:
+                this.options.orchestrationQueueName ??
+                'task-orchestration-queue',
+              payload: {
+                schemaVersion: '1.0',
+                taskId: sibling.id,
+                taskNo: sibling.taskNo,
+                sourceSystem: requireSourceSystem(sibling.sourceSystem),
+              },
+              availableAt: now,
+              createdAt: now,
+            })),
+          );
+        }
+      }
+      if (task.contractVersion !== '2.0') {
+        const eventId = this.createId();
+        const failureEvent = taskStartFailedEventSchema.parse({
+          schemaVersion: '1.0',
+          eventId,
+          eventType: 'OUTBOUND_TASK_START_FAILED',
+          occurredAt: now.toISOString(),
+          sourceSystem: requireSourceSystem(task.sourceSystem),
+          mcCode: task.mcCode,
+          taskNo: task.taskNo,
+          baiyingCallJobId: task.baiyingCallJobId,
+          executionStatus: input.executionStatus,
+          failure: {
+            stage: input.stage,
+            code,
+            message,
+            retryable: input.retryable,
+            occurredAt: now.toISOString(),
+          },
+        });
+        await tx.insert(queueOutbox).values({
+          id: eventId,
+          eventType: failureEvent.eventType,
+          queueName:
+            this.options.deliveryQueueName ?? 'callback-delivery-queue',
+          payload: failureEvent,
+          availableAt: now,
+          createdAt: now,
+        });
+      }
     });
   }
 
@@ -552,6 +767,8 @@ async function lockTask(tx: Transaction, taskId: string): Promise<LockedTask> {
   const rows = await tx.execute<LockedTask>(sql`
     select
       ${platformTasks.id} as "id",
+      ${platformTasks.batchId} as "batchId",
+      ${platformTasks.contractVersion} as "contractVersion",
       ${platformTasks.taskNo} as "taskNo",
       ${platformTasks.sourceSystem} as "sourceSystem",
       ${platformTasks.mcCodeSnapshot} as "mcCode",
@@ -597,7 +814,23 @@ function canFailFrom(
   if (failure === 'IMPORT_FAILED') {
     return current === 'BAIYING_CREATED' || current === 'IMPORTING';
   }
-  return current === 'IMPORTED' || current === 'STARTING';
+  return (
+    current === 'IMPORTED' ||
+    current === 'STARTING' ||
+    current === 'CALLING' ||
+    current === 'PAUSED'
+  );
+}
+
+function isTaskTerminal(status: TaskExecutionStatus): boolean {
+  return [
+    'COMPLETED',
+    'CREATE_FAILED',
+    'IMPORT_FAILED',
+    'START_FAILED',
+    'CANCELLED',
+    'TERMINATED',
+  ].includes(status);
 }
 
 function accountStatusAfter(

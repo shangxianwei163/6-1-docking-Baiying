@@ -53,6 +53,8 @@ import type { Database } from '../db/client.js';
 import {
   accountLedger,
   auditLogs,
+  integrationClients,
+  integrationClientStudios,
   integrationEndpoints,
   platformTasks,
   studioAccounts,
@@ -250,6 +252,22 @@ export class PostgresOperationsConsoleService implements OperationsConsoleServic
         status: 'OVERDUE',
         updatedAt: now,
       });
+      const activeClients = await tx
+        .select({ integrationClientId: integrationClients.id })
+        .from(integrationClients)
+        .where(eq(integrationClients.status, 'ACTIVE'));
+      if (activeClients.length) {
+        await tx
+          .insert(integrationClientStudios)
+          .values(
+            activeClients.map(({ integrationClientId }) => ({
+              integrationClientId,
+              studioId,
+              createdAt: now,
+            })),
+          )
+          .onConflictDoNothing();
+      }
       const endpointSources = await saveEndpointDrafts(
         tx,
         studioId,
@@ -973,7 +991,8 @@ export class PostgresOperationsConsoleService implements OperationsConsoleServic
   ): Promise<OperatorStudio[]> {
     if (!rows.length) return [];
     const studioIds = rows.map((row) => row.studio.id);
-    const [endpointRows, pricingRows, taskRows] = await Promise.all([
+    const [endpointRows, pricingRows, taskRows, requestTokenRows] =
+      await Promise.all([
       this.db
         .select()
         .from(integrationEndpoints)
@@ -999,6 +1018,32 @@ export class PostgresOperationsConsoleService implements OperationsConsoleServic
         .from(platformTasks)
         .where(inArray(platformTasks.studioId, studioIds))
         .groupBy(platformTasks.studioId),
+      this.db
+        .select({
+          studioId: integrationClientStudios.studioId,
+          sourceSystem: integrationClients.sourceSystem,
+          clientId: integrationClients.clientId,
+          token: integrationClients.accessToken,
+        })
+        .from(integrationClientStudios)
+        .innerJoin(
+          integrationClients,
+          eq(
+            integrationClients.id,
+            integrationClientStudios.integrationClientId,
+          ),
+        )
+        .where(
+          and(
+            inArray(integrationClientStudios.studioId, studioIds),
+            eq(integrationClients.status, 'ACTIVE'),
+          ),
+        )
+        .orderBy(
+          integrationClientStudios.studioId,
+          sql`case when ${integrationClients.sourceSystem} = 'ERP' then 0 else 1 end`,
+          integrationClients.clientId,
+        ),
     ]);
     const endpointsByStudio = groupBy(endpointRows, (row) => row.studioId);
     const pricingByStudio = groupBy(
@@ -1006,6 +1051,10 @@ export class PostgresOperationsConsoleService implements OperationsConsoleServic
       (row) => row.studioId,
     );
     const taskByStudio = new Map(taskRows.map((row) => [row.studioId, row]));
+    const requestTokensByStudio = groupBy(
+      requestTokenRows,
+      (row) => row.studioId,
+    );
     const now = this.clock();
     return rows.map(({ studio, account }) => {
       const versions = pricingByStudio.get(studio.id) ?? [];
@@ -1024,6 +1073,13 @@ export class PostgresOperationsConsoleService implements OperationsConsoleServic
         currentPricing: currentPricing(versions, now),
         scheduledPricing: scheduledPricing(versions, now),
         pricingVersionCount: versions.length,
+        requestTokens: (requestTokensByStudio.get(studio.id) ?? []).map(
+          ({ sourceSystem, clientId, token }) => ({
+            sourceSystem: sourceSystem as 'ERP' | 'CRM',
+            clientId,
+            token,
+          }),
+        ),
         endpoints: (endpointsByStudio.get(studio.id) ?? []).map((endpoint) => ({
           id: endpoint.id,
           sourceSystem: endpoint.sourceSystem as 'ERP' | 'CRM',
@@ -1145,7 +1201,7 @@ function toOperatorSupplierPricing(
   };
 }
 
-function currentPricing(
+export function currentPricing(
   versions: OperatorPricingVersion[],
   now: Date,
 ): OperatorPricingVersion | null {
@@ -1165,7 +1221,7 @@ function currentPricing(
   );
 }
 
-function scheduledPricing(
+export function scheduledPricing(
   versions: OperatorPricingVersion[],
   now: Date,
 ): OperatorPricingVersion | null {
@@ -1291,10 +1347,15 @@ function validateSupplierPricingEffectiveFrom(value: string, now: Date): Date {
       400,
     );
   }
-  if (effectiveFrom <= now) {
+  const shanghaiNow = new Date(now.getTime() + 8 * 60 * 60 * 1_000);
+  const currentShanghaiMonthStart = new Date(
+    Date.UTC(shanghaiNow.getUTCFullYear(), shanghaiNow.getUTCMonth(), 1) -
+      8 * 60 * 60 * 1_000,
+  );
+  if (effectiveFrom < currentShanghaiMonthStart) {
     throw new OperationsConsoleFailure(
       'SUPPLIER_PRICING_EFFECTIVE_TIME_CONFLICT',
-      '供应成本生效月份必须晚于当前时间',
+      '供应成本生效月份不得早于当前自然月',
       409,
     );
   }

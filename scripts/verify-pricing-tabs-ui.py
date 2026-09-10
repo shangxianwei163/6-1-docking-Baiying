@@ -5,10 +5,10 @@ import re
 from playwright.sync_api import Route, expect, sync_playwright
 
 from dialog_assertions import assert_dialog_has_no_outer_overflow
+from ui_auth import open_authenticated
 
 
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
-APP_URL = 'http://localhost:4173/'
 STUDIO_SCREENSHOT = Path('/tmp/outbound-platform-pricing-studio.png')
 STUDIO_EDITOR_SCREENSHOT = Path('/tmp/outbound-platform-studio-pricing-editor.png')
 MONTH_PICKER_SCREENSHOT = Path('/tmp/outbound-platform-month-picker.png')
@@ -64,7 +64,7 @@ def install_supplier_pricing_fixture(page, requests: list[dict]) -> None:
 
 
 def open_pricing(page):
-    page.goto(APP_URL, wait_until='networkidle')
+    open_authenticated(page)
     page.get_by_role('button', name=re.compile(r'^话费设置')).click()
     expect(page.get_by_role('heading', name='话费设置', exact=True)).to_be_visible()
     return (

@@ -1,7 +1,8 @@
-import { randomUUID } from 'node:crypto';
-import { and, count, countDistinct, eq, sql } from 'drizzle-orm';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { and, count, countDistinct, eq, isNull, sql } from 'drizzle-orm';
 import {
   callResultBatchEventSchema,
+  outboundCallResultInternalEventV2Schema,
   taskCompletedEventSchema,
   type SourceSystem,
   type TaskExecutionStatus,
@@ -26,7 +27,10 @@ import {
   studioAccounts,
   taskCallItems,
 } from '../db/schema.js';
+import { refreshTaskDeliverySummary } from '../delivery/postgres-repository.js';
+import { refreshIntakeBatchLifecycle } from '../outbound-task/batch-lifecycle.js';
 import type { DataProtector } from '../security/data-protector.js';
+import { buildCallItemCorrelationToken } from '../security/correlation-token.js';
 import {
   calculateBillingMinutes,
   normalizePhone,
@@ -40,6 +44,8 @@ type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 
 type LockedTask = {
   id: string;
+  batchId: string | null;
+  contractVersion: string;
   taskNo: string;
   sourceSystem: string;
   mcCode: string;
@@ -167,7 +173,7 @@ export class PostgresBaiyingCallbackProcessor implements BaiyingCallbackProcesso
         };
       }
 
-      const item = await matchCallItem(tx, task.id, callback, this.protector);
+      const item = await matchCallItem(tx, task, callback, this.protector);
       const billingMinutes = calculateBillingMinutes(callback.durationSeconds);
       const customerCharge = multiplyMoneyByInteger(
         task.customerRate,
@@ -189,6 +195,9 @@ export class PostgresBaiyingCallbackProcessor implements BaiyingCallbackProcesso
         billingMinutes,
         customerCharge,
         collectProperties: callback.collectProperties,
+        taskResults: callback.taskResults,
+        resultComplete: callback.resultComplete,
+        matchMethod: item.matchMethod,
         providerOccurredAt: callback.providerOccurredAt,
         createdAt: now,
         updatedAt: now,
@@ -241,44 +250,89 @@ export class PostgresBaiyingCallbackProcessor implements BaiyingCallbackProcesso
         })
         .where(eq(platformTasks.id, task.id));
 
-      const callEventId = this.createId();
-      const expectedCalls = task.importSucceededCount || task.phoneCount;
-      const callEvent = callResultBatchEventSchema.parse({
-        schemaVersion: '1.0',
-        eventId: callEventId,
-        eventType: 'OUTBOUND_CALL_RESULT_BATCH',
-        occurredAt: now.toISOString(),
-        sourceSystem: requireSourceSystem(task.sourceSystem),
-        mcCode: task.mcCode,
-        taskNo: task.taskNo,
-        baiyingCallJobId: callback.callJobId,
-        batchNo: task.callInstanceCount + 1,
-        isLastBatch:
-          task.executionStatus === 'RECONCILING' &&
-          task.callInstanceCount + 1 >= expectedCalls,
-        calls: [
-          {
-            externalCustomerId: item.externalCustomerId,
-            platformCallId: callInstanceId,
-            baiyingCallInstanceId: callback.callInstanceId,
-            phoneMasked: `*******${item.phoneTail4}`,
-            callStatus: callback.callStatus,
-            finishStatus: callback.finishStatus,
-            durationSeconds: callback.durationSeconds,
-            billingMinutes,
-            customerCharge,
-            collectProperties: callback.collectProperties,
-          },
-        ],
-      });
-      await tx.insert(queueOutbox).values({
-        id: callEventId,
-        eventType: callEvent.eventType,
-        queueName: this.deliveryQueueName,
-        payload: callEvent,
-        availableAt: now,
-        createdAt: now,
-      });
+      if (task.contractVersion === '2.0') {
+        const resultEventId = this.createId();
+        const marked = await tx
+          .update(taskCallItems)
+          .set({ resultEventId, updatedAt: now })
+          .where(
+            and(
+              eq(taskCallItems.id, item.id),
+              isNull(taskCallItems.resultEventId),
+            ),
+          )
+          .returning({ id: taskCallItems.id });
+        if (marked.length) {
+          const event = outboundCallResultInternalEventV2Schema.parse({
+            schemaVersion: '2.0',
+            eventId: resultEventId,
+            eventType: 'OUTBOUND_CALL_RESULT_V2',
+            occurredAt: now.toISOString(),
+            sourceSystem: requireSourceSystem(task.sourceSystem),
+            mcCode: task.mcCode,
+            taskNo: task.taskNo,
+            result: {
+              guid: item.externalCustomerId,
+              externalCustomerId: item.externalCustomerId,
+              phone_masked: maskPhoneForCallback(
+                this.protector.decryptUtf8(item.phoneCiphertext),
+              ),
+              call_status: callback.callStatus,
+              finish_status: callback.finishStatus,
+              result_complete: callback.resultComplete,
+              collected_variables: callback.collectProperties,
+              task_results: callback.taskResults,
+            },
+          });
+          await tx.insert(queueOutbox).values({
+            id: resultEventId,
+            eventType: event.eventType,
+            queueName: this.deliveryQueueName,
+            payload: event,
+            availableAt: now,
+            createdAt: now,
+          });
+        }
+      } else {
+        const callEventId = this.createId();
+        const expectedCalls = task.importSucceededCount || task.phoneCount;
+        const callEvent = callResultBatchEventSchema.parse({
+          schemaVersion: '1.0',
+          eventId: callEventId,
+          eventType: 'OUTBOUND_CALL_RESULT_BATCH',
+          occurredAt: now.toISOString(),
+          sourceSystem: requireSourceSystem(task.sourceSystem),
+          mcCode: task.mcCode,
+          taskNo: task.taskNo,
+          baiyingCallJobId: callback.callJobId,
+          batchNo: task.callInstanceCount + 1,
+          isLastBatch:
+            task.executionStatus === 'RECONCILING' &&
+            task.callInstanceCount + 1 >= expectedCalls,
+          calls: [
+            {
+              externalCustomerId: item.externalCustomerId,
+              platformCallId: callInstanceId,
+              baiyingCallInstanceId: callback.callInstanceId,
+              phoneMasked: `*******${item.phoneTail4}`,
+              callStatus: callback.callStatus,
+              finishStatus: callback.finishStatus,
+              durationSeconds: callback.durationSeconds,
+              billingMinutes,
+              customerCharge,
+              collectProperties: legacyV1CollectProperties(callback),
+            },
+          ],
+        });
+        await tx.insert(queueOutbox).values({
+          id: callEventId,
+          eventType: callEvent.eventType,
+          queueName: this.deliveryQueueName,
+          payload: callEvent,
+          availableAt: now,
+          createdAt: now,
+        });
+      }
 
       const settled = await tryFinalizeTask(
         tx,
@@ -323,6 +377,7 @@ export class PostgresBaiyingCallbackProcessor implements BaiyingCallbackProcesso
             lockVersion: sql`${platformTasks.lockVersion} + 1`,
           })
           .where(eq(platformTasks.id, task.id));
+        await refreshIntakeBatchLifecycle(tx, task.batchId, now);
         changed = true;
         settled = await tryFinalizeTask(
           tx,
@@ -373,6 +428,16 @@ export class PostgresBaiyingCallbackProcessor implements BaiyingCallbackProcesso
             lockVersion: sql`${platformTasks.lockVersion} + 1`,
           })
           .where(eq(platformTasks.id, task.id));
+        if (task.contractVersion === '2.0') {
+          await queueMissingV2FailureResults(
+            tx,
+            task,
+            now,
+            this.protector,
+            this.deliveryQueueName,
+          );
+        }
+        await refreshIntakeBatchLifecycle(tx, task.batchId, now);
         changed = true;
         settled = true;
       } else if (!terminal && task.executionStatus !== 'RECONCILING') {
@@ -414,6 +479,66 @@ export class PostgresBaiyingCallbackProcessor implements BaiyingCallbackProcesso
   }
 }
 
+async function queueMissingV2FailureResults(
+  tx: Transaction,
+  task: LockedTask,
+  now: Date,
+  protector: DataProtector,
+  deliveryQueueName: string,
+): Promise<void> {
+  const unresolved = await tx.execute<{
+    externalCustomerId: string;
+    phoneCiphertext: string;
+    resultEventId: string;
+  }>(sql`
+    UPDATE ${taskCallItems}
+    SET
+      result_event_id = gen_random_uuid(),
+      call_status = 'FAILED',
+      updated_at = ${now}
+    WHERE ${taskCallItems.taskId} = ${task.id}
+      AND ${taskCallItems.resultEventId} IS NULL
+    RETURNING
+      ${taskCallItems.externalCustomerId} AS "externalCustomerId",
+      ${taskCallItems.phoneCiphertext} AS "phoneCiphertext",
+      ${taskCallItems.resultEventId} AS "resultEventId"
+  `);
+  const events = unresolved.map((item) => {
+    const event = outboundCallResultInternalEventV2Schema.parse({
+      schemaVersion: '2.0',
+      eventId: item.resultEventId,
+      eventType: 'OUTBOUND_CALL_RESULT_V2',
+      occurredAt: now.toISOString(),
+      sourceSystem: requireSourceSystem(task.sourceSystem),
+      mcCode: task.mcCode,
+      taskNo: task.taskNo,
+      result: {
+        guid: item.externalCustomerId,
+        externalCustomerId: item.externalCustomerId,
+        phone_masked: maskPhoneForCallback(
+          protector.decryptUtf8(item.phoneCiphertext),
+        ),
+        call_status: 'FAILED',
+        finish_status: null,
+        result_complete: false,
+        collected_variables: {},
+        task_results: [],
+      },
+    });
+    return {
+      id: item.resultEventId,
+      eventType: event.eventType,
+      queueName: deliveryQueueName,
+      payload: event,
+      availableAt: now,
+      createdAt: now,
+    };
+  });
+  for (let offset = 0; offset < events.length; offset += 500) {
+    await tx.insert(queueOutbox).values(events.slice(offset, offset + 500));
+  }
+}
+
 async function storeFullRecording(
   tx: Transaction,
   callInstanceId: string,
@@ -441,7 +566,7 @@ async function storeFullRecording(
 
 async function matchCallItem(
   tx: Transaction,
-  taskId: string,
+  task: Pick<LockedTask, 'id' | 'contractVersion'>,
   callback: BaiyingCallResult,
   protector: DataProtector,
 ): Promise<{
@@ -449,6 +574,9 @@ async function matchCallItem(
   callStatus: 'PENDING' | NormalizedCallStatus;
   externalCustomerId: string;
   phoneTail4: string;
+  phoneHmac: string;
+  phoneCiphertext: string;
+  matchMethod: 'ITEM_TOKEN' | 'ITEM_PHONE' | 'PHONE_FALLBACK' | null;
 }> {
   if (callback.platformItemId) {
     const [item] = await tx
@@ -457,12 +585,14 @@ async function matchCallItem(
         callStatus: taskCallItems.callStatus,
         externalCustomerId: taskCallItems.externalCustomerId,
         phoneTail4: taskCallItems.phoneTail4,
+        phoneHmac: taskCallItems.phoneHmac,
+        phoneCiphertext: taskCallItems.phoneCiphertext,
       })
       .from(taskCallItems)
       .where(
         and(
           eq(taskCallItems.id, callback.platformItemId),
-          eq(taskCallItems.taskId, taskId),
+          eq(taskCallItems.taskId, task.id),
         ),
       )
       .limit(1)
@@ -476,9 +606,46 @@ async function matchCallItem(
         `sx_platform_item_id ${callback.platformItemId} 不属于当前任务`,
       );
     }
-    return item;
+    const callbackPhoneHmac = callback.customerTelephone
+      ? protector.phoneHmac(normalizePhone(callback.customerTelephone))
+      : null;
+    if (callbackPhoneHmac && callbackPhoneHmac !== item.phoneHmac) {
+      throw new CallbackBusinessConflictError(
+        `回调明细 ${callback.platformItemId} 与回调手机号不属于同一客户`,
+      );
+    }
+    if (task.contractVersion === '2.0') {
+      if (!callback.correlationToken) {
+        throw new CallbackBusinessConflictError(
+          `v2 回调明细 ${callback.platformItemId} 缺少 sx_correlation_token`,
+        );
+      }
+      if (
+        !verifyCallItemCorrelationToken(
+          protector,
+          task.id,
+          item.id,
+          item.phoneHmac,
+          callback.correlationToken,
+        )
+      ) {
+        throw new CallbackBusinessConflictError(
+          `v2 回调明细 ${callback.platformItemId} 的关联签名无效`,
+        );
+      }
+      return { ...item, matchMethod: 'ITEM_TOKEN' };
+    }
+    return {
+      ...item,
+      matchMethod: callbackPhoneHmac ? 'ITEM_PHONE' : null,
+    };
   }
 
+  if (task.contractVersion === '2.0') {
+    throw new CallbackItemNotFoundError(
+      'v2 回调缺少 sx_platform_item_id，禁止仅按手机号后备匹配',
+    );
+  }
   if (!callback.customerTelephone) {
     throw new CallbackItemNotFoundError(
       '回调既没有 sx_platform_item_id，也没有可用于后备匹配的手机号',
@@ -493,11 +660,13 @@ async function matchCallItem(
       callStatus: taskCallItems.callStatus,
       externalCustomerId: taskCallItems.externalCustomerId,
       phoneTail4: taskCallItems.phoneTail4,
+      phoneHmac: taskCallItems.phoneHmac,
+      phoneCiphertext: taskCallItems.phoneCiphertext,
     })
     .from(taskCallItems)
     .where(
       and(
-        eq(taskCallItems.taskId, taskId),
+        eq(taskCallItems.taskId, task.id),
         eq(taskCallItems.phoneHmac, phoneHmac),
       ),
     )
@@ -509,7 +678,54 @@ async function matchCallItem(
         : '手机号后备匹配未找到客户明细',
     );
   }
-  return matches[0]!;
+  return { ...matches[0]!, matchMethod: 'PHONE_FALLBACK' };
+}
+
+export function verifyCallItemCorrelationToken(
+  protector: Pick<DataProtector, 'correlationHmac'>,
+  taskId: string,
+  itemId: string,
+  phoneHmac: string,
+  actualToken: string,
+): boolean {
+  const expectedToken = buildCallItemCorrelationToken(
+    protector,
+    taskId,
+    itemId,
+    phoneHmac,
+  );
+  return safeTokenEqual(actualToken, expectedToken);
+}
+
+function safeTokenEqual(actual: string, expected: string): boolean {
+  if (!/^[a-f0-9]{64}$/i.test(actual) || !/^[a-f0-9]{64}$/i.test(expected)) {
+    return false;
+  }
+  return timingSafeEqual(
+    Buffer.from(actual, 'hex'),
+    Buffer.from(expected, 'hex'),
+  );
+}
+
+export function maskPhoneForCallback(phone: string): string {
+  const normalized = normalizePhone(phone);
+  if (normalized.length < 7) return '*'.repeat(normalized.length);
+  return `${normalized.slice(0, 3)}${'*'.repeat(normalized.length - 7)}${normalized.slice(-4)}`;
+}
+
+export function legacyV1CollectProperties(
+  callback: Pick<
+    BaiyingCallResult,
+    'importedProperties' | 'collectProperties' | 'taskResults'
+  >,
+): Record<string, unknown> {
+  return {
+    ...callback.importedProperties,
+    ...callback.collectProperties,
+    ...(callback.taskResults.length
+      ? { taskResult: callback.taskResults }
+      : {}),
+  };
 }
 
 async function settleCallCharge(
@@ -648,6 +864,13 @@ async function tryFinalizeTask(
       lockVersion: sql`${platformTasks.lockVersion} + 1`,
     })
     .where(eq(platformTasks.id, taskId));
+  await refreshIntakeBatchLifecycle(tx, task.batchId, now);
+  if (task.contractVersion === '2.0') {
+    // Per-number v2 results may all be delivered before the later job-complete
+    // callback. Re-evaluate the aggregate once the task itself is terminal.
+    await refreshTaskDeliverySummary(tx, taskId, 'RESULT', now);
+    return true;
+  }
   const [completed] = await tx.execute<{
     sourceSystem: string;
     mcCode: string;
@@ -780,6 +1003,8 @@ async function lockTaskByProvider(
   const rows = await tx.execute<LockedTask>(sql`
     SELECT
       ${platformTasks.id} AS "id",
+      ${platformTasks.batchId} AS "batchId",
+      ${platformTasks.contractVersion} AS "contractVersion",
       ${platformTasks.taskNo} AS "taskNo",
       ${platformTasks.sourceSystem} AS "sourceSystem",
       ${platformTasks.mcCodeSnapshot} AS "mcCode",
@@ -813,6 +1038,8 @@ async function lockTaskById(
   const rows = await tx.execute<LockedTask>(sql`
     SELECT
       ${platformTasks.id} AS "id",
+      ${platformTasks.batchId} AS "batchId",
+      ${platformTasks.contractVersion} AS "contractVersion",
       ${platformTasks.taskNo} AS "taskNo",
       ${platformTasks.sourceSystem} AS "sourceSystem",
       ${platformTasks.mcCodeSnapshot} AS "mcCode",

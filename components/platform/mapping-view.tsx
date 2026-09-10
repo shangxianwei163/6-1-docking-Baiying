@@ -30,6 +30,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { UnifiedSelect } from '@/components/ui/unified-select';
 import {
   loadMappingCenter,
+  platformActorId,
   PlatformApiError,
   publishMappings,
   removeMappingDraft,
@@ -40,7 +41,7 @@ import {
 import { Panel, Status } from './shared';
 
 type TransformType = 'TEXT' | 'DATE' | 'MONEY' | 'ENUM' | 'TEMPLATE';
-type EmptyPolicy = 'BLOCK' | 'DEFAULT';
+type EmptyPolicy = 'BLOCK' | 'DEFAULT' | 'OMIT';
 type RuleStatus = 'PUBLISHED' | 'REMOVED';
 type MappingDisplayStatus = 'PUBLISHED' | 'DRAFT' | 'REMOVED' | 'UNMAPPED';
 type SceneStatus =
@@ -349,7 +350,9 @@ function applyPreview(draft: MappingDraft) {
   if (!source)
     return draft.emptyPolicy === 'DEFAULT'
       ? draft.defaultValue
-      : '空值将阻断导入';
+      : draft.emptyPolicy === 'OMIT'
+        ? '空值将省略该变量'
+        : '空值将阻断导入';
   if (draft.transform === 'DATE')
     return source.replaceAll('/', '-').replaceAll('.', '-');
   if (draft.transform === 'MONEY') {
@@ -660,7 +663,7 @@ export function MappingView() {
     try {
       const variables = drafts.map((draft) => draft.variable).join('、');
       const result = await publishMappings({
-        publisherId: 'platform-admin',
+        publisherId: platformActorId,
         changeSummary: `发布 ${drafts.length} 项映射变更：${variables}`,
       });
       await refreshData();
@@ -1225,6 +1228,8 @@ export function MappingView() {
                             '—'
                           ) : rule.emptyPolicy === 'BLOCK' ? (
                             <Status tone="red">缺失阻断</Status>
+                          ) : rule.emptyPolicy === 'OMIT' ? (
+                            <Status tone="gray">空值省略</Status>
                           ) : (
                             <div>
                               <Status tone="blue">使用默认值</Status>
@@ -1476,6 +1481,7 @@ export function MappingView() {
                       options={[
                         { value: 'BLOCK', label: 'BLOCK · 缺失阻断' },
                         { value: 'DEFAULT', label: 'DEFAULT · 使用默认值' },
+                        { value: 'OMIT', label: 'OMIT · 空值不发送' },
                       ]}
                     />
                   </div>
@@ -1500,6 +1506,12 @@ export function MappingView() {
                         placeholder="字段为空或转换未命中时使用"
                       />
                     </label>
+                  ) : draftForm.emptyPolicy === 'OMIT' ? (
+                    <div className="notice">
+                      <b>空值省略：</b>
+                      对应来源字段为
+                      null、未提供或空字符串时，不向百应发送该变量。
+                    </div>
                   ) : (
                     <div className="notice warn">
                       <b>缺失即阻断：</b>

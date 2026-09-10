@@ -1,0 +1,26 @@
+{
+  "code": "BATCH_ACCEPTED",
+  "message": "外呼批次已受理",
+  "request_id": "9bba018d-36b2-478d-af0a-af3f7d573937",
+  "data": {
+    "batch_id": "4f4f0d65-8d01-48c9-b87f-71569344cb63",
+    "execution_status": "ACCEPTED",
+    "phone_count": 3,
+    "task_count": 2,
+    "tasks": [
+      {
+        "task_id": "c5f1d5e0-1c67-4d02-a7a3-58666ea55792",
+        "task_no": "PT-20260909-00025",
+        "phone_count": 2,
+        "status_url": "/openapi/v1/outbound/tasks/PT-20260909-00025"
+      },
+      {
+        "task_id": "0871e61e-7749-4684-9cb6-aad28c220a5a",
+        "task_no": "PT-20260909-00026",
+        "phone_count": 1,
+        "status_url": "/openapi/v1/outbound/tasks/PT-20260909-00026"
+      }
+    ],
+    "status_url": "/openapi/v2/outbound/batches/4f4f0d65-8d01-48c9-b87f-71569344cb63"
+  }
+}

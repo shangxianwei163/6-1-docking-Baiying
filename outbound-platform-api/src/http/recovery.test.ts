@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { MappingRepository } from '../mapping/repository.js';
 import type { RecoveryOperationsService } from '../operations/recovery-service.js';
 import type { TaskControlService } from '../operations/task-control-service.js';
+import type { ReconciliationOperations } from '../reconciliation/postgres-repository.js';
 import { createApp } from './app.js';
 
 const taskNo = 'PT-20260906-00001';
@@ -47,7 +48,99 @@ function deadLetter(status: 'OPEN' | 'REPLAYING' | 'IGNORED' = 'OPEN') {
   };
 }
 
+function reconciliation(status: 'MANUAL_REVIEW' | 'PENDING' = 'MANUAL_REVIEW') {
+  return {
+    taskId: fixedId,
+    taskNo,
+    taskName: '阶段 4B 测试任务',
+    status,
+    providerState: 'COMPLETED',
+    expectedCallCount: 2,
+    providerCallCount: 2,
+    platformCallCount: 1,
+    pendingInboxCount: 0,
+    stableRounds: 0,
+    mismatchSince: '2026-09-06T09:40:00.000Z',
+    lastCheckedAt: '2026-09-06T10:00:00.000Z',
+    nextCheckAt: status === 'PENDING' ? '2026-09-06T10:01:00.000Z' : null,
+    lastSuccessfulAt: '2026-09-06T10:00:00.000Z',
+    lastProviderRequestId: 'provider-request-1',
+    failureAttempts: 0,
+    lastError: null,
+    manualReviewAt:
+      status === 'MANUAL_REVIEW' ? '2026-09-06T10:00:00.000Z' : null,
+    repairCount: status === 'PENDING' ? 1 : 0,
+    lastRepairRequestedAt:
+      status === 'PENDING' ? '2026-09-06T10:01:00.000Z' : null,
+    updatedAt: '2026-09-06T10:00:00.000Z',
+  } as const;
+}
+
 describe('operator recovery APIs', () => {
+  it('lists reconciliation mismatches and submits an audited manual repair', async () => {
+    const listReconciliations = vi.fn<
+      ReconciliationOperations['listReconciliations']
+    >(async () => ({
+      total: 1,
+      pages: 1,
+      pageNum: 0,
+      pageSize: 20,
+      items: [reconciliation()],
+    }));
+    const requestRepair = vi.fn<ReconciliationOperations['requestRepair']>(
+      async () => ({
+        reconciliation: reconciliation('PENDING'),
+        idempotentReplay: false,
+        replayedInboxCount: 1,
+        message: '失败 Inbox 已恢复为待处理，对账任务已安排立即复查',
+      }),
+    );
+    const app = createApp({
+      mappingRepository: mappingRepository(),
+      consoleOrigin: 'http://localhost:4173',
+      workerSharedSecret: 'a-worker-secret-longer-than-24-characters',
+      createId: () => fixedId,
+      reconciliationOperations: { listReconciliations, requestRepair },
+    });
+
+    const listResponse = await app.request(
+      '/api/v1/reconciliations?status=MANUAL_REVIEW&pageNum=0&pageSize=20',
+      { headers: { 'x-actor-id': 'operator-4b' } },
+    );
+    expect(listResponse.status).toBe(200);
+    expect(listReconciliations).toHaveBeenCalledWith({
+      status: 'MANUAL_REVIEW',
+      pageNum: 0,
+      pageSize: 20,
+    });
+
+    const repairResponse = await app.request(
+      `/api/v1/outbound-tasks/${taskNo}/reconciliation/repair`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-actor-id': 'operator-4b',
+          'x-request-id': 'request-reconciliation-repair',
+        },
+        body: JSON.stringify({
+          reason: '已核对百应任务和漏回调，重新拉取并处理',
+          idempotencyKey: thirdId,
+        }),
+      },
+    );
+    expect(repairResponse.status).toBe(202);
+    expect(requestRepair).toHaveBeenCalledWith(
+      taskNo,
+      {
+        reason: '已核对百应任务和漏回调，重新拉取并处理',
+        idempotencyKey: thirdId,
+      },
+      'operator-4b',
+      'request-reconciliation-repair',
+    );
+  });
+
   it('validates and delegates task commands with actor and request identity', async () => {
     const commandTask = vi.fn<TaskControlService['commandTask']>(
       async (_taskNo, input) => ({

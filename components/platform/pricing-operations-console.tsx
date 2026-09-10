@@ -1923,7 +1923,7 @@ function supplierPublisher(value: string) {
   if (value === 'phase1-static-import') {
     return { label: '系统初始化导入', detail: '历史配置迁移' };
   }
-  if (value === 'platform-admin') {
+  if (value === 'platform-admin' || value === 'fc6j1') {
     return { label: '平台管理员', detail: '运营后台发布' };
   }
   return { label: value, detail: '操作账号' };

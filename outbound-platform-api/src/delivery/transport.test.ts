@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { serializeStableJson } from './serializer.js';
 import { signCallbackRequest } from './signature.js';
-import { LocalNoNetworkDeliveryTransport } from './transport.js';
+import {
+  HttpDeliveryTransport,
+  LocalNoNetworkDeliveryTransport,
+} from './transport.js';
 
 const secret = Buffer.from('local-receiver-test-secret');
 const event = {
@@ -36,6 +39,51 @@ describe('LocalNoNetworkDeliveryTransport', () => {
     ]);
   });
 
+  it('accepts the minimal v2 business body with identity in headers', async () => {
+    const transport = new LocalNoNetworkDeliveryTransport({
+      environment: 'test',
+      secretForUrl: async () => secret,
+    });
+    const result = {
+      guid: '11111111-1111-4111-8111-111111111101',
+      externalCustomerId: '11111111-1111-4111-8111-111111111101',
+      phone_masked: '135****0001',
+      call_status: 'ANSWERED',
+      finish_status: 0,
+      result_complete: true,
+      collected_variables: { appointment: '2026-09-20' },
+      task_results: [{ resultName: '客户意向等级', resultValue: 'A' }],
+    };
+    const eventId = '22222222-2222-4222-8222-222222222222';
+    const url = 'https://erp.mock.invalid/callbacks/results';
+    const timestamp = '1788661800000';
+    const body = serializeStableJson(result);
+    const response = await transport.send({
+      url,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Contract-Version': '2.0',
+        'X-Platform-Event-Id': eventId,
+        'X-Timestamp': timestamp,
+        'X-Signature': signCallbackRequest(
+          { url, timestamp, eventId, rawBody: body },
+          secret,
+        ),
+      },
+      body,
+      timeoutMs: 10_000,
+    });
+
+    expect(response.status).toBe(200);
+    expect(transport.receipts).toEqual([
+      expect.objectContaining({
+        eventId,
+        eventType: 'OUTBOUND_CALL_RESULT_V2',
+        duplicate: false,
+      }),
+    ]);
+  });
+
   it('rejects a non-fixture destination without attempting a network call', async () => {
     const transport = new LocalNoNetworkDeliveryTransport({
       environment: 'test',
@@ -55,6 +103,66 @@ describe('LocalNoNetworkDeliveryTransport', () => {
           secretForUrl: async () => secret,
         }),
     ).toThrow('生产环境禁止');
+  });
+});
+
+describe('HttpDeliveryTransport', () => {
+  it.each([
+    'http://testmc.6161520.cn:8083/SAi/Sx_AI_CallResult',
+    'https://erp.example.com/SAi/Sx_AI_CallResult',
+  ])('posts to a fixed HTTP or HTTPS endpoint: %s', async (url) => {
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      Promise.resolve(new Response('{"Code":200}', { status: 200 })),
+    );
+    const transport = new HttpDeliveryTransport({ fetchImpl });
+
+    await expect(transport.send({ ...signedRequest(), url })).resolves.toEqual({
+      status: 200,
+      body: '{"Code":200}',
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      new URL(url),
+      expect.objectContaining({
+        method: 'POST',
+        redirect: 'manual',
+        body: expect.any(Buffer),
+      }),
+    );
+  });
+
+  it('does not follow a redirect returned by the receiver', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      Promise.resolve(
+        new Response('', {
+          status: 302,
+          headers: { Location: 'http://other.example.com/callback' },
+        }),
+      ),
+    );
+    const transport = new HttpDeliveryTransport({ fetchImpl });
+
+    await expect(transport.send(signedRequest())).resolves.toEqual({
+      status: 302,
+      body: '',
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects credentials, query strings, fragments and other protocols', async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const transport = new HttpDeliveryTransport({ fetchImpl });
+
+    for (const url of [
+      'ftp://erp.example.com/callback',
+      'http://user:secret@erp.example.com/callback',
+      'http://erp.example.com/callback?token=secret',
+      'https://erp.example.com/callback#fragment',
+    ]) {
+      await expect(transport.send({ ...signedRequest(), url })).rejects.toThrow(
+        'HTTP 或 HTTPS',
+      );
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
 

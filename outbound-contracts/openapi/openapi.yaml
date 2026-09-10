@@ -1,12 +1,12 @@
 openapi: 3.1.0
 info:
   title: 6+1 Outbound Platform API
-  version: 1.0.0
+  version: 2.0.0
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
   description: |
-    6+1 智能外呼平台的 OpenAPI 3.1 契约。`/openapi/v1` 面向 ERP/CRM，
+    6+1 智能外呼平台的 OpenAPI 3.1 契约。ERP/CRM 新增外呼统一使用 `/openapi/v2` 批次/GUID 契约；
     `/api/v1` 面向运营后台、内部 Worker 与百应回调。
 servers:
   - url: https://{apiHost}
@@ -19,15 +19,9 @@ security:
   - ConsoleBearer: []
 tags:
   - name: Outbound Tasks
-    description: ERP/CRM 外呼任务受理、查询与控制
-  - name: Studio Billing
-    description: ERP/CRM 影楼余额与账本查询
+    description: ERP/CRM 外呼批次受理与查询
   - name: Baiying Callbacks
     description: 百应供应商回调入口
-  - name: Console Configuration
-    description: 运营后台配置接口
-  - name: Internal Workers
-    description: 平台内部 Worker 接口
 paths:
   /api/v1/mappings:
     get:
@@ -348,20 +342,18 @@ paths:
       responses:
         '201': { $ref: '#/components/responses/Success' }
         '401': { $ref: '#/components/responses/Error' }
-  /openapi/v1/outbound/tasks:
+  /openapi/v2/outbound/tasks:
     post:
       tags: [Outbound Tasks]
-      operationId: createOutboundTask
-      summary: 创建并异步受理外呼任务
+      operationId: createOutboundBatchV2
+      summary: 按三级分类创建一个平台外呼批次
       description: |
-        完成本地鉴权、业务预检、配置快照、余额冻结和 Outbox 写入后返回 202。
-        百应创建、导入和启动在异步编排中完成；结果通过查询接口和 ERP/CRM 回调获取。
-        同一 Idempotency-Key 与相同请求正文重复提交时返回首次受理结果；正文不同则返回 409。
+        ERP/CRM 提交一个逻辑批次；平台按实际话术和线路路由拆成一个或多个百应任务。
+        所有百应子任务全部创建且导入成功后才统一放行启动。source=0 表示 ERP，source=1 表示 CRM，
+        并且必须与请求 Token 的来源一致。同一次 HTTP 重试必须复用原 GUID、Idempotency-Key 和完全相同的正文；
+        新一次业务发起必须为每个号码生成新的 GUID。运行期间幂等记录不过期，批次终态后保留 180 天。
       security:
-        - ClientIdHeader: []
-          TimestampHeader: []
-          NonceHeader: []
-          SignatureHeader: []
+        - AccessTokenHeader: []
       parameters:
         - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -369,228 +361,53 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CreateOutboundTaskRequest' }
+            schema:
+              { $ref: '#/components/schemas/CreateOutboundBatchRequestV2' }
             examples:
-              erpTask:
-                $ref: '#/components/examples/ErpCreateTaskRequest'
+              erpBatch:
+                $ref: '#/components/examples/ErpCreateBatchRequestV2'
       responses:
         '202':
-          description: 任务已被平台原子受理
+          description: 平台批次及全部执行子任务已原子受理
           headers:
             X-Request-Id: { $ref: '#/components/headers/RequestId' }
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/TaskAcceptedEnvelope' }
+              schema: { $ref: '#/components/schemas/BatchAcceptedEnvelopeV2' }
               examples:
                 accepted:
-                  $ref: '#/components/examples/TaskAcceptedResponse'
+                  $ref: '#/components/examples/BatchAcceptedResponseV2'
         '400': { $ref: '#/components/responses/ExternalError' }
         '401': { $ref: '#/components/responses/ExternalError' }
+        '403': { $ref: '#/components/responses/ExternalError' }
         '404': { $ref: '#/components/responses/ExternalError' }
         '409': { $ref: '#/components/responses/ExternalError' }
-        '422': { $ref: '#/components/responses/ExternalError' }
-        '429': { $ref: '#/components/responses/ExternalError' }
-        '503': { $ref: '#/components/responses/ExternalError' }
-  /openapi/v1/outbound/tasks/{taskNo}:
-    get:
-      tags: [Outbound Tasks]
-      operationId: getOutboundTask
-      summary: 查询外呼任务详情
-      description: 只允许任务所属来源系统且获授权访问该 MC code 的客户端查询。
-      security:
-        - ClientIdHeader: []
-          TimestampHeader: []
-          NonceHeader: []
-          SignatureHeader: []
-      parameters:
-        - $ref: '#/components/parameters/TaskNo'
-        - $ref: '#/components/parameters/RequestId'
-      responses:
-        '200':
-          description: 任务详情及五条独立状态线
-          headers:
-            X-Request-Id: { $ref: '#/components/headers/RequestId' }
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/TaskDetailEnvelope' }
-        '401': { $ref: '#/components/responses/ExternalError' }
-        '404': { $ref: '#/components/responses/ExternalError' }
-        '429': { $ref: '#/components/responses/ExternalError' }
-  /openapi/v1/outbound/tasks/{taskNo}/calls:
-    get:
-      tags: [Outbound Tasks]
-      operationId: listOutboundTaskCalls
-      summary: 分页查询任务通话明细
-      security:
-        - ClientIdHeader: []
-          TimestampHeader: []
-          NonceHeader: []
-          SignatureHeader: []
-      parameters:
-        - $ref: '#/components/parameters/TaskNo'
-        - $ref: '#/components/parameters/RequestId'
-        - $ref: '#/components/parameters/Cursor'
-        - name: limit
-          in: query
-          description: 单页条数
-          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
-      responses:
-        '200':
-          description: 手机号已脱敏的通话明细页
-          headers:
-            X-Request-Id: { $ref: '#/components/headers/RequestId' }
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/CallPageEnvelope' }
-        '401': { $ref: '#/components/responses/ExternalError' }
-        '404': { $ref: '#/components/responses/ExternalError' }
-        '429': { $ref: '#/components/responses/ExternalError' }
-  /openapi/v1/outbound/tasks/{taskNo}/calls/{callId}:
-    get:
-      tags: [Outbound Tasks]
-      operationId: getOutboundTaskCall
-      summary: 查询单条通话明细
-      security:
-        - ClientIdHeader: []
-          TimestampHeader: []
-          NonceHeader: []
-          SignatureHeader: []
-      parameters:
-        - $ref: '#/components/parameters/TaskNo'
-        - $ref: '#/components/parameters/CallId'
-        - $ref: '#/components/parameters/RequestId'
-      responses:
-        '200':
-          description: 通话明细
-          headers:
-            X-Request-Id: { $ref: '#/components/headers/RequestId' }
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/CallDetailEnvelope' }
-        '401': { $ref: '#/components/responses/ExternalError' }
-        '404': { $ref: '#/components/responses/ExternalError' }
-        '429': { $ref: '#/components/responses/ExternalError' }
-  /openapi/v1/outbound/tasks/{taskNo}/commands:
-    post:
-      tags: [Outbound Tasks]
-      operationId: createOutboundTaskCommand
-      summary: 异步提交启动、恢复、暂停或终止命令
-      description: 命令先持久化为 PENDING；最终状态以百应响应、状态回调或补偿查询为准。
-      security:
-        - ClientIdHeader: []
-          TimestampHeader: []
-          NonceHeader: []
-          SignatureHeader: []
-      parameters:
-        - $ref: '#/components/parameters/TaskNo'
-        - $ref: '#/components/parameters/RequestId'
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/TaskCommandRequest' }
-      responses:
-        '202':
-          description: 操作已进入异步队列
-          headers:
-            X-Request-Id: { $ref: '#/components/headers/RequestId' }
-          content:
-            application/json:
-              schema:
-                { $ref: '#/components/schemas/TaskCommandAcceptedEnvelope' }
-        '400': { $ref: '#/components/responses/ExternalError' }
-        '401': { $ref: '#/components/responses/ExternalError' }
-        '404': { $ref: '#/components/responses/ExternalError' }
-        '409': { $ref: '#/components/responses/ExternalError' }
-        '422': { $ref: '#/components/responses/ExternalError' }
-        '429': { $ref: '#/components/responses/ExternalError' }
-  /openapi/v1/outbound/recordings/{recordingId}/download-url:
-    post:
-      tags: [Outbound Tasks]
-      operationId: issueRecordingDownloadUrl
-      summary: 重新签发录音下载地址
-      description: |
-        返回默认 15 分钟有效的 OSS V4 预签名 URL；URL 不得写入普通应用日志。
-        同一客户端使用相同 Idempotency-Key 重试时返回首次签发结果；URL 过期后应使用新幂等键重新签发。
-      security:
-        - ClientIdHeader: []
-          TimestampHeader: []
-          NonceHeader: []
-          SignatureHeader: []
-      parameters:
-        - $ref: '#/components/parameters/RecordingId'
-        - $ref: '#/components/parameters/RequestId'
-        - $ref: '#/components/parameters/IdempotencyKey'
-      responses:
-        '200':
-          description: 新签发的短期录音下载地址
-          headers:
-            X-Request-Id: { $ref: '#/components/headers/RequestId' }
-          content:
-            application/json:
-              schema:
-                { $ref: '#/components/schemas/RecordingDownloadUrlEnvelope' }
-        '400': { $ref: '#/components/responses/ExternalError' }
-        '401': { $ref: '#/components/responses/ExternalError' }
-        '404': { $ref: '#/components/responses/ExternalError' }
-        '409': { $ref: '#/components/responses/ExternalError' }
-        '410': { $ref: '#/components/responses/ExternalError' }
         '413': { $ref: '#/components/responses/ExternalError' }
-        '429': { $ref: '#/components/responses/ExternalError' }
+        '422': { $ref: '#/components/responses/ExternalError' }
         '503': { $ref: '#/components/responses/ExternalError' }
-  /openapi/v1/studios/{mcCode}/balance:
+  /openapi/v2/outbound/batches/{batchId}:
     get:
-      tags: [Studio Billing]
-      operationId: getStudioBalance
-      summary: 查询影楼账户余额
+      tags: [Outbound Tasks]
+      operationId: getOutboundBatchV2
+      summary: 查询平台批次及其百应执行子任务
       security:
-        - ClientIdHeader: []
-          TimestampHeader: []
-          NonceHeader: []
-          SignatureHeader: []
+        - AccessTokenHeader: []
       parameters:
-        - $ref: '#/components/parameters/McCode'
+        - name: batchId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
         - $ref: '#/components/parameters/RequestId'
       responses:
         '200':
-          description: 余额、冻结金额和可用余额
+          description: 平台批次状态
           headers:
             X-Request-Id: { $ref: '#/components/headers/RequestId' }
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/StudioBalanceEnvelope' }
+              schema: { $ref: '#/components/schemas/BatchDetailEnvelopeV2' }
         '401': { $ref: '#/components/responses/ExternalError' }
         '404': { $ref: '#/components/responses/ExternalError' }
-        '429': { $ref: '#/components/responses/ExternalError' }
-  /openapi/v1/studios/{mcCode}/ledger:
-    get:
-      tags: [Studio Billing]
-      operationId: listStudioLedger
-      summary: 分页查询影楼账户流水
-      security:
-        - ClientIdHeader: []
-          TimestampHeader: []
-          NonceHeader: []
-          SignatureHeader: []
-      parameters:
-        - $ref: '#/components/parameters/McCode'
-        - $ref: '#/components/parameters/RequestId'
-        - $ref: '#/components/parameters/Cursor'
-        - name: limit
-          in: query
-          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
-      responses:
-        '200':
-          description: 倒序排列的账户流水
-          headers:
-            X-Request-Id: { $ref: '#/components/headers/RequestId' }
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/LedgerPageEnvelope' }
-        '401': { $ref: '#/components/responses/ExternalError' }
-        '404': { $ref: '#/components/responses/ExternalError' }
-        '429': { $ref: '#/components/responses/ExternalError' }
   /api/v1/callbacks/baiying:
     post:
       tags: [Baiying Callbacks]
@@ -618,58 +435,33 @@ paths:
         '415': { $ref: '#/components/responses/Error' }
         '503': { $ref: '#/components/responses/Error' }
 webhooks:
-  outboundTaskStarted:
+  outboundCallResultV2:
     post:
-      operationId: onOutboundTaskStarted
-      summary: ERP/CRM 接收任务启动事件
+      operationId: onOutboundCallResultV2
+      summary: ERP/CRM 接收单号码最终业务结果
+      description: |
+        每个 GUID 只投递一次最终业务结果。短期兼容窗口内同时发送 guid 与 externalCustomerId，
+        两者值完全相同；兼容窗口结束后移除 externalCustomerId。result_complete=false 表示平台只能形成补偿结果，
+        未获得完整的百应真实回调数据。
       security:
-        - TimestampHeader: []
-          SignatureHeader: []
+        - CallbackTimestampHeader: []
+          CallbackSignatureHeader: []
       parameters:
         - $ref: '#/components/parameters/PlatformEventId'
         - $ref: '#/components/parameters/CallbackTimestamp'
         - $ref: '#/components/parameters/CallbackSignature'
+        - name: X-Contract-Version
+          in: header
+          required: true
+          schema: { const: '2.0' }
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/TaskStartedEvent' }
-      responses:
-        '200': { $ref: '#/components/responses/CallbackAccepted' }
-  outboundTaskStartFailed:
-    post:
-      operationId: onOutboundTaskStartFailed
-      summary: ERP/CRM 接收任务异步启动失败事件
-      security:
-        - TimestampHeader: []
-          SignatureHeader: []
-      parameters:
-        - $ref: '#/components/parameters/PlatformEventId'
-        - $ref: '#/components/parameters/CallbackTimestamp'
-        - $ref: '#/components/parameters/CallbackSignature'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/TaskStartFailedEvent' }
-      responses:
-        '200': { $ref: '#/components/responses/CallbackAccepted' }
-  outboundCallResultBatch:
-    post:
-      operationId: onOutboundCallResultBatch
-      summary: ERP/CRM 接收通话结果批次
-      security:
-        - TimestampHeader: []
-          SignatureHeader: []
-      parameters:
-        - $ref: '#/components/parameters/PlatformEventId'
-        - $ref: '#/components/parameters/CallbackTimestamp'
-        - $ref: '#/components/parameters/CallbackSignature'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/CallResultBatchEvent' }
+            schema: { $ref: '#/components/schemas/OutboundCallResultV2' }
+            examples:
+              result:
+                $ref: '#/components/examples/OutboundCallResultV2'
       responses:
         '200': { $ref: '#/components/responses/CallbackAccepted' }
   outboundRecordingAvailableBatch:
@@ -677,8 +469,8 @@ webhooks:
       operationId: onOutboundRecordingAvailableBatch
       summary: ERP/CRM 接收录音可下载批次
       security:
-        - TimestampHeader: []
-          SignatureHeader: []
+        - CallbackTimestampHeader: []
+          CallbackSignatureHeader: []
       parameters:
         - $ref: '#/components/parameters/PlatformEventId'
         - $ref: '#/components/parameters/CallbackTimestamp'
@@ -689,24 +481,6 @@ webhooks:
           application/json:
             schema:
               { $ref: '#/components/schemas/RecordingAvailableBatchEvent' }
-      responses:
-        '200': { $ref: '#/components/responses/CallbackAccepted' }
-  outboundTaskCompleted:
-    post:
-      operationId: onOutboundTaskCompleted
-      summary: ERP/CRM 接收任务完成与结算摘要
-      security:
-        - TimestampHeader: []
-          SignatureHeader: []
-      parameters:
-        - $ref: '#/components/parameters/PlatformEventId'
-        - $ref: '#/components/parameters/CallbackTimestamp'
-        - $ref: '#/components/parameters/CallbackSignature'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/TaskCompletedEvent' }
       responses:
         '200': { $ref: '#/components/responses/CallbackAccepted' }
 components:
@@ -721,26 +495,21 @@ components:
       in: header
       name: X-Worker-Secret
       description: 仅在阿里云 VPC 内使用的 Worker 共享凭证；生产建议迁移为短期服务身份。
-    ClientIdHeader:
+    AccessTokenHeader:
       type: apiKey
       in: header
-      name: X-Client-Id
-      description: 平台分配给 ERP 或 CRM 的客户端标识。
-    TimestampHeader:
+      name: X-Access-Token
+      description: 在影楼管理详情中查看并复制的 ERP 或 CRM 固定请求 Token。
+    CallbackTimestampHeader:
       type: apiKey
       in: header
       name: X-Timestamp
-      description: Unix 毫秒时间戳；服务端允许的最大时钟偏差为 5 分钟。
-    NonceHeader:
-      type: apiKey
-      in: header
-      name: X-Nonce
-      description: 每次请求唯一随机串；服务端至少保留 10 分钟并拒绝重放。
-    SignatureHeader:
+      description: 平台向 ERP/CRM 回传事件时生成的 Unix 毫秒时间戳。
+    CallbackSignatureHeader:
       type: apiKey
       in: header
       name: X-Signature
-      description: Base64(HMAC-SHA256(secret, canonicalRequest))。
+      description: 平台向 ERP/CRM 回传事件时使用的 HMAC-SHA256 签名。
   headers:
     RequestId:
       description: 平台请求追踪 ID。
@@ -762,39 +531,13 @@ components:
       name: Idempotency-Key
       in: header
       required: true
-      description: 幂等键；同一客户端内唯一，记录至少保留 7 天。
+      description: 幂等键；同一客户端内唯一，批次终态后至少保留 180 天。
       schema: { type: string, minLength: 8, maxLength: 128 }
-    TaskNo:
-      name: taskNo
-      in: path
-      required: true
-      schema: { type: string, pattern: '^PT-\d{8}-\d{5,}$' }
-    CallId:
-      name: callId
-      in: path
-      required: true
-      schema: { type: string, format: uuid }
-    RecordingId:
-      name: recordingId
-      in: path
-      required: true
-      schema: { type: string, format: uuid }
-    McCode:
-      name: mcCode
-      in: path
-      required: true
-      schema: { type: string, minLength: 1, maxLength: 64 }
-    Cursor:
-      name: cursor
-      in: query
-      required: false
-      description: 上一页返回的不透明游标；调用方不得解析或修改。
-      schema: { type: string, maxLength: 512 }
     PlatformEventId:
       name: X-Platform-Event-Id
       in: header
       required: true
-      description: 与 Body 中 eventId 相同，用作接收方幂等键。
+      description: 回调事件唯一标识，用作接收方幂等键；录音回调中与 Body 的 eventId 相同。
       schema: { type: string, format: uuid }
     CallbackTimestamp:
       name: X-Timestamp
@@ -877,7 +620,9 @@ components:
             - INSUFFICIENT_BALANCE
             - PHONE_INVALID
             - PHONE_DUPLICATED
+            - GUID_DUPLICATED
             - DATA_CATEGORY_NOT_FOUND
+            - DATA_CATEGORY_AMBIGUOUS
             - DATA_CATEGORY_SCRIPT_UNBOUND
             - DATA_CATEGORY_SCRIPT_CONFLICT
             - DATA_CATEGORY_LINE_CONFLICT
@@ -890,7 +635,6 @@ components:
             - RECORDING_NOT_ARCHIVED
             - RECORDING_EXPIRED
             - RECORDING_OBJECT_UNAVAILABLE
-            - RATE_LIMITED
             - SERVICE_TEMPORARILY_UNAVAILABLE
         message: { type: string, minLength: 1, maxLength: 1000 }
         requestId: { type: string, minLength: 1, maxLength: 128 }
@@ -898,66 +642,158 @@ components:
     SourceSystem:
       type: string
       enum: [ERP, CRM]
-    DecimalAmount:
-      type: string
-      pattern: '^-?(?:0|[1-9]\d*)(?:\.\d{1,6})?$'
-      description: 最多 6 位小数的定点十进制字符串；禁止使用 JSON number 传输金额。
-      examples: ['0.480000']
-    NonNegativeAmount:
-      type: string
-      pattern: '^(?:0|[1-9]\d*)(?:\.\d{1,6})?$'
-      examples: ['0.960000']
-    OutboundCustomer:
+    DynamicCustomerVariableV2:
+      description: 单个动态变量值；null 表示不向百应导入该值。
+      oneOf:
+        - { type: string, maxLength: 8192 }
+        - { type: number }
+        - { type: boolean }
+        - { type: 'null' }
+    OutboundCustomerInfoV2:
       type: object
-      additionalProperties: false
-      required: [externalCustomerId, phone, dataCategoryId, fields]
+      required: [phone, guid]
       properties:
-        externalCustomerId: { type: string, minLength: 1, maxLength: 128 }
-        name: { type: string, minLength: 1, maxLength: 200 }
         phone:
           type: string
           pattern: '^\+?[1-9]\d{6,14}$'
-          description: 7～15 位国际号码格式；同一任务中归一化后不得重复。
-        dataCategoryId: { type: string, minLength: 1, maxLength: 256 }
-        fields:
-          type: object
-          maxProperties: 100
-          propertyNames: { minLength: 1, maxLength: 128 }
-          additionalProperties:
-            oneOf:
-              - { type: string, maxLength: 2000 }
-              - { type: number }
-              - { type: boolean }
-              - { type: 'null' }
-          description: 仅传来源系统的业务字段；平台按已发布映射转换为百应 properties。
-    CreateOutboundTaskRequest:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          schemaVersion,
-          externalRequestId,
-          sourceSystem,
-          mcCode,
-          customers,
-        ]
-      properties:
-        schemaVersion: { const: '1.0' }
-        externalRequestId: { type: string, minLength: 1, maxLength: 128 }
-        sourceSystem: { $ref: '#/components/schemas/SourceSystem' }
-        mcCode: { type: string, minLength: 1, maxLength: 64 }
-        taskName:
+          description: 批次内归一化后不可重复。
+        guid:
           type: string
           minLength: 1
-          maxLength: 200
-          deprecated: true
-          description: 兼容旧调用保留；平台忽略该值，并按北京时间日期、任务真实数据分类和当日五位序号自动生成任务名称。
-        customers:
+          maxLength: 128
+          description: 本次业务发起的号码唯一值；以后再次发起同一号码时必须生成新 GUID。
+        customer_name: { type: [string, 'null'], maxLength: 200 }
+      additionalProperties:
+        $ref: '#/components/schemas/DynamicCustomerVariableV2'
+      description: |
+        除 phone、guid、customer_name 外均视为动态业务变量，不限定为示例中的六个字段，也不设业务字段数量上限。
+        平台仍执行单变量名 128 UTF-8 字节、单值 8 KiB、单号码变量总量 128 KiB 的安全限制；
+        sx_*、__proto__、constructor、prototype 为保留名，不允许调用方传入。
+    OutboundCustomerGroupV2:
+      type: object
+      additionalProperties: false
+      required: [c_level, c_info_list]
+      properties:
+        c_level: { type: string, maxLength: 128 }
+        c_info_list:
           type: array
           minItems: 1
           maxItems: 10000
-          items: { $ref: '#/components/schemas/OutboundCustomer' }
-      description: 整个 JSON 请求体 UTF-8 编码后不得超过 25 MiB。
+          items: { $ref: '#/components/schemas/OutboundCustomerInfoV2' }
+    CreateOutboundBatchRequestV2:
+      type: object
+      additionalProperties: false
+      required:
+        [main_category, sub_category, source, company_code, customer_list]
+      properties:
+        main_category: { type: string, minLength: 1, maxLength: 200 }
+        sub_category: { type: string, minLength: 1, maxLength: 200 }
+        source:
+          type: integer
+          enum: [0, 1]
+          description: 0=ERP，1=CRM；必须与请求 Token 的来源一致。
+        company_code:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: 影楼 MC code；只用于识别发起影楼。
+        customer_list:
+          type: array
+          minItems: 1
+          maxItems: 10000
+          items: { $ref: '#/components/schemas/OutboundCustomerGroupV2' }
+      description: |
+        main_category、sub_category、c_level 组成三级分类。整个批次最多 10000 个号码，
+        GUID 和归一化手机号均须在批次内唯一；整个 JSON 请求体不得超过 25 MiB。
+    BatchTaskSummaryV2:
+      type: object
+      additionalProperties: false
+      required: [task_id, task_no, phone_count, status_url]
+      properties:
+        task_id: { type: string, format: uuid }
+        task_no: { type: string, pattern: '^PT-\d{8}-\d{5,}$' }
+        phone_count: { type: integer, minimum: 1, maximum: 10000 }
+        status_url: { type: string, pattern: '^/openapi/v1/outbound/tasks/' }
+    BatchAcceptedV2:
+      type: object
+      additionalProperties: false
+      required:
+        [batch_id, execution_status, phone_count, task_count, tasks, status_url]
+      properties:
+        batch_id: { type: string, format: uuid }
+        execution_status: { const: ACCEPTED }
+        phone_count: { type: integer, minimum: 1, maximum: 10000 }
+        task_count: { type: integer, minimum: 1 }
+        tasks:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/BatchTaskSummaryV2' }
+        status_url: { type: string, pattern: '^/openapi/v2/outbound/batches/' }
+    BatchAcceptedEnvelopeV2:
+      type: object
+      additionalProperties: false
+      required: [code, message, request_id, data]
+      properties:
+        code: { const: BATCH_ACCEPTED }
+        message: { type: string }
+        request_id: { type: string }
+        data: { $ref: '#/components/schemas/BatchAcceptedV2' }
+    IntakeBatchStatusV2:
+      enum:
+        [
+          ACCEPTED,
+          PREPARING,
+          RUNNING,
+          PARTIAL_FAILED,
+          COMPLETED,
+          FAILED,
+          CANCELLED,
+        ]
+    BatchDetailV2:
+      type: object
+      additionalProperties: false
+      required:
+        - batch_id
+        - source
+        - company_code
+        - main_category
+        - sub_category
+        - execution_status
+        - phone_count
+        - task_count
+        - tasks
+        - created_at
+        - completed_at
+      properties:
+        batch_id: { type: string, format: uuid }
+        source: { type: integer, enum: [0, 1] }
+        company_code: { type: string, maxLength: 64 }
+        main_category: { type: string, maxLength: 200 }
+        sub_category: { type: string, maxLength: 200 }
+        execution_status: { $ref: '#/components/schemas/IntakeBatchStatusV2' }
+        phone_count: { type: integer, minimum: 1, maximum: 10000 }
+        task_count: { type: integer, minimum: 1 }
+        tasks:
+          type: array
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/BatchTaskSummaryV2' }
+              - type: object
+                required: [execution_status]
+                properties:
+                  execution_status:
+                    { $ref: '#/components/schemas/TaskExecutionStatus' }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+    BatchDetailEnvelopeV2:
+      type: object
+      additionalProperties: false
+      required: [code, message, request_id, data]
+      properties:
+        code: { const: OK }
+        message: { const: success }
+        request_id: { type: string }
+        data: { $ref: '#/components/schemas/BatchDetailV2' }
     TaskExecutionStatus:
       type: string
       enum:
@@ -977,376 +813,6 @@ components:
         - START_FAILED
         - CANCELLED
         - TERMINATED
-    TaskDisplayStatus:
-      type: string
-      enum: [执行中, 呼叫中, 执行完成, 执行失败, 已终止]
-    TaskStatusSummary:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          execution,
-          display,
-          resultDelivery,
-          recordingArchive,
-          recordingDelivery,
-          billing,
-        ]
-      properties:
-        execution: { $ref: '#/components/schemas/TaskExecutionStatus' }
-        display: { $ref: '#/components/schemas/TaskDisplayStatus' }
-        resultDelivery: { enum: [PENDING, DELIVERING, SUCCEEDED, FAILED] }
-        recordingArchive:
-          {
-            enum:
-              [PENDING, DOWNLOADING, ARCHIVED, PARTIAL, FAILED, NOT_AVAILABLE],
-          }
-        recordingDelivery:
-          { enum: [PENDING, DELIVERING, SUCCEEDED, FAILED, NOT_APPLICABLE] }
-        billing: { enum: [RESERVED, SETTLING, SETTLED, FAILED] }
-    TaskAccepted:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          taskId,
-          taskNo,
-          executionStatus,
-          displayStatus,
-          phoneCount,
-          reservedAmount,
-          currency,
-          statusUrl,
-        ]
-      properties:
-        taskId: { type: string, format: uuid }
-        taskNo: { type: string, pattern: '^PT-\d{8}-\d{5,}$' }
-        taskName:
-          type: string
-          minLength: 1
-          maxLength: 200
-          description: 平台生成的任务名称，格式为 YYYYMMDD + 真实数据分类 + - + 当日五位序号。
-        executionStatus: { const: ACCEPTED }
-        displayStatus: { const: 执行中 }
-        phoneCount: { type: integer, minimum: 1, maximum: 10000 }
-        reservedAmount: { $ref: '#/components/schemas/NonNegativeAmount' }
-        currency: { const: CNY }
-        statusUrl: { type: string, pattern: '^/openapi/v1/outbound/tasks/' }
-    TaskAcceptedEnvelope:
-      type: object
-      additionalProperties: false
-      required: [code, message, requestId, data]
-      properties:
-        code: { const: TASK_ACCEPTED }
-        message: { type: string }
-        requestId: { type: string }
-        data: { $ref: '#/components/schemas/TaskAccepted' }
-    TaskFailure:
-      type: object
-      additionalProperties: false
-      required: [stage, code, message, retryable, occurredAt]
-      properties:
-        stage:
-          {
-            enum:
-              [
-                VALIDATION,
-                BAIYING_CREATE,
-                BAIYING_IMPORT,
-                BAIYING_START,
-                RECONCILIATION,
-              ],
-          }
-        code: { type: string, minLength: 1, maxLength: 128 }
-        message: { type: string, minLength: 1, maxLength: 1000 }
-        retryable: { type: boolean }
-        occurredAt: { type: string, format: date-time }
-    ImportSummary:
-      type: object
-      additionalProperties: false
-      required: [requested, succeeded, failed, repeated]
-      properties:
-        requested: { type: integer, minimum: 0 }
-        succeeded: { type: integer, minimum: 0 }
-        failed: { type: integer, minimum: 0 }
-        repeated: { type: integer, minimum: 0 }
-    TaskBillingSummary:
-      type: object
-      additionalProperties: false
-      required:
-        - currency
-        - customerRate
-        - frozenMinutes
-        - reservedAmount
-        - customerCharge
-        - platformRate
-        - platformRateStatus
-        - platformCost
-        - profit
-        - studioBalance
-        - availableBalance
-        - status
-      properties:
-        currency: { const: CNY }
-        customerRate: { $ref: '#/components/schemas/NonNegativeAmount' }
-        frozenMinutes: { type: integer, minimum: 1 }
-        reservedAmount: { $ref: '#/components/schemas/NonNegativeAmount' }
-        customerCharge: { $ref: '#/components/schemas/NonNegativeAmount' }
-        platformRate:
-          oneOf:
-            - { $ref: '#/components/schemas/NonNegativeAmount' }
-            - { type: 'null' }
-        platformRateStatus: { enum: [PROVISIONAL, FINAL, NOT_AVAILABLE] }
-        platformCost:
-          oneOf:
-            - { $ref: '#/components/schemas/NonNegativeAmount' }
-            - { type: 'null' }
-        profit:
-          oneOf:
-            - { $ref: '#/components/schemas/DecimalAmount' }
-            - { type: 'null' }
-        studioBalance: { $ref: '#/components/schemas/DecimalAmount' }
-        availableBalance: { $ref: '#/components/schemas/DecimalAmount' }
-        status: { enum: [RESERVED, SETTLING, SETTLED, FAILED] }
-    TaskDetail:
-      type: object
-      additionalProperties: false
-      required:
-        - taskId
-        - taskNo
-        - externalRequestId
-        - sourceSystem
-        - mcCode
-        - studioId
-        - studioName
-        - taskName
-        - phoneCount
-        - dataCategories
-        - script
-        - line
-        - mapping
-        - baiyingCallJobId
-        - providerStatus
-        - statuses
-        - importSummary
-        - counts
-        - durations
-        - billing
-        - failure
-        - timestamps
-      properties:
-        taskId: { type: string, format: uuid }
-        taskNo: { type: string, pattern: '^PT-\d{8}-\d{5,}$' }
-        externalRequestId: { type: string, minLength: 1, maxLength: 128 }
-        sourceSystem: { $ref: '#/components/schemas/SourceSystem' }
-        mcCode: { type: string, minLength: 1, maxLength: 64 }
-        studioId: { type: string, minLength: 1, maxLength: 128 }
-        studioName: { type: string, minLength: 1, maxLength: 200 }
-        taskName: { type: string, minLength: 1, maxLength: 200 }
-        phoneCount: { type: integer, minimum: 1, maximum: 10000 }
-        dataCategories:
-          type: array
-          minItems: 1
-          items:
-            type: object
-            additionalProperties: false
-            required: [id, path]
-            properties:
-              id: { type: string }
-              path: { type: string }
-        script:
-          type: object
-          additionalProperties: false
-          required: [robotDefId, name]
-          properties:
-            robotDefId: { type: string }
-            name: { type: string }
-        line:
-          type: object
-          additionalProperties: false
-          required: [userPhoneId, name]
-          properties:
-            userPhoneId: { type: string }
-            name: { type: string }
-        mapping:
-          type: object
-          additionalProperties: false
-          required: [version, variableCount]
-          properties:
-            version: { type: integer, minimum: 1 }
-            variableCount: { type: integer, minimum: 0 }
-        baiyingCallJobId: { type: [string, 'null'] }
-        providerStatus:
-          type: object
-          additionalProperties: false
-          required: [code, description]
-          properties:
-            code: { type: [integer, 'null'] }
-            description: { type: [string, 'null'], maxLength: 128 }
-        statuses: { $ref: '#/components/schemas/TaskStatusSummary' }
-        importSummary: { $ref: '#/components/schemas/ImportSummary' }
-        counts:
-          type: object
-          additionalProperties: false
-          required:
-            [
-              imported,
-              callInstances,
-              recordingsDiscovered,
-              recordingsArchived,
-              recordingsDelivered,
-            ]
-          properties:
-            imported: { type: integer, minimum: 0 }
-            callInstances: { type: integer, minimum: 0 }
-            recordingsDiscovered: { type: integer, minimum: 0 }
-            recordingsArchived: { type: integer, minimum: 0 }
-            recordingsDelivered: { type: integer, minimum: 0 }
-        durations:
-          type: object
-          additionalProperties: false
-          required: [totalSeconds, billingMinutes]
-          properties:
-            totalSeconds: { type: integer, minimum: 0 }
-            billingMinutes: { type: integer, minimum: 0 }
-        billing: { $ref: '#/components/schemas/TaskBillingSummary' }
-        failure:
-          oneOf:
-            - { $ref: '#/components/schemas/TaskFailure' }
-            - { type: 'null' }
-        timestamps:
-          type: object
-          additionalProperties: false
-          required:
-            [
-              createdAt,
-              acceptedAt,
-              startedAt,
-              providerCompletedAt,
-              reconciledAt,
-              closedAt,
-            ]
-          properties:
-            createdAt: { type: string, format: date-time }
-            acceptedAt: { type: string, format: date-time }
-            startedAt: { type: [string, 'null'], format: date-time }
-            providerCompletedAt: { type: [string, 'null'], format: date-time }
-            reconciledAt: { type: [string, 'null'], format: date-time }
-            closedAt: { type: [string, 'null'], format: date-time }
-    TaskDetailEnvelope:
-      type: object
-      additionalProperties: false
-      required: [code, message, requestId, data]
-      properties:
-        code: { const: OK }
-        message: { const: success }
-        requestId: { type: string }
-        data: { $ref: '#/components/schemas/TaskDetail' }
-    TaskCommandRequest:
-      type: object
-      additionalProperties: false
-      required: [command, reason]
-      properties:
-        command: { enum: [START, RESUME, PAUSE, TERMINATE] }
-        reason: { type: string, minLength: 1, maxLength: 500 }
-    TaskCommandAccepted:
-      type: object
-      additionalProperties: false
-      required: [operationId, taskNo, command, operationStatus, acceptedAt]
-      properties:
-        operationId: { type: string, format: uuid }
-        taskNo: { type: string, pattern: '^PT-\d{8}-\d{5,}$' }
-        command: { enum: [START, RESUME, PAUSE, TERMINATE] }
-        operationStatus: { const: PENDING }
-        acceptedAt: { type: string, format: date-time }
-    TaskCommandAcceptedEnvelope:
-      type: object
-      additionalProperties: false
-      required: [code, message, requestId, data]
-      properties:
-        code: { const: COMMAND_ACCEPTED }
-        message: { type: string }
-        requestId: { type: string }
-        data: { $ref: '#/components/schemas/TaskCommandAccepted' }
-    OutboundCallDetail:
-      type: object
-      additionalProperties: false
-      required:
-        - platformCallId
-        - externalCustomerId
-        - baiyingCallInstanceId
-        - phoneMasked
-        - callStatus
-        - finishStatus
-        - durationSeconds
-        - billingMinutes
-        - customerCharge
-        - collectProperties
-        - recording
-        - resultDeliveryStatus
-        - calledAt
-        - completedAt
-      properties:
-        platformCallId: { type: string, format: uuid }
-        externalCustomerId: { type: string, minLength: 1, maxLength: 128 }
-        baiyingCallInstanceId: { type: string, minLength: 1, maxLength: 64 }
-        phoneMasked: { type: string, minLength: 1, maxLength: 32 }
-        callStatus:
-          { enum: [ANSWERED, NO_ANSWER, BUSY, REJECTED, FAILED, UNKNOWN] }
-        finishStatus: { type: [integer, 'null'] }
-        durationSeconds: { type: integer, minimum: 0 }
-        billingMinutes: { type: integer, minimum: 0 }
-        customerCharge: { $ref: '#/components/schemas/NonNegativeAmount' }
-        collectProperties: { type: object, additionalProperties: true }
-        recording:
-          type: object
-          additionalProperties: false
-          required: [status, recordingId, expiresAt]
-          properties:
-            status:
-              {
-                enum:
-                  [
-                    PENDING,
-                    DOWNLOADING,
-                    ARCHIVED,
-                    PARTIAL,
-                    FAILED,
-                    NOT_AVAILABLE,
-                  ],
-              }
-            recordingId: { type: [string, 'null'], format: uuid }
-            expiresAt: { type: [string, 'null'], format: date-time }
-        resultDeliveryStatus: { enum: [PENDING, DELIVERING, SUCCEEDED, FAILED] }
-        calledAt: { type: [string, 'null'], format: date-time }
-        completedAt: { type: [string, 'null'], format: date-time }
-    CallPage:
-      type: object
-      additionalProperties: false
-      required: [items, nextCursor]
-      properties:
-        items:
-          type: array
-          items: { $ref: '#/components/schemas/OutboundCallDetail' }
-        nextCursor: { type: [string, 'null'] }
-    CallPageEnvelope:
-      type: object
-      additionalProperties: false
-      required: [code, message, requestId, data]
-      properties:
-        code: { const: OK }
-        message: { const: success }
-        requestId: { type: string }
-        data: { $ref: '#/components/schemas/CallPage' }
-    CallDetailEnvelope:
-      type: object
-      additionalProperties: false
-      required: [code, message, requestId, data]
-      properties:
-        code: { const: OK }
-        message: { const: success }
-        requestId: { type: string }
-        data: { $ref: '#/components/schemas/OutboundCallDetail' }
     RecordingDeliveryItem:
       type: object
       additionalProperties: false
@@ -1372,109 +838,6 @@ components:
         sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
         downloadUrl: { type: string, format: uri, pattern: '^https://' }
         expiresAt: { type: string, format: date-time }
-    RecordingDownloadUrl:
-      type: object
-      additionalProperties: false
-      required: [recordingId, downloadUrl, expiresAt, sha256]
-      properties:
-        recordingId: { type: string, format: uuid }
-        downloadUrl: { type: string, format: uri, pattern: '^https://' }
-        expiresAt: { type: string, format: date-time }
-        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
-    RecordingDownloadUrlEnvelope:
-      type: object
-      additionalProperties: false
-      required: [code, message, requestId, data]
-      properties:
-        code: { const: OK }
-        message: { const: success }
-        requestId: { type: string, minLength: 1, maxLength: 128 }
-        data: { $ref: '#/components/schemas/RecordingDownloadUrl' }
-    StudioBalance:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          mcCode,
-          currency,
-          balance,
-          activeHoldAmount,
-          availableBalance,
-          accountStatus,
-          updatedAt,
-        ]
-      properties:
-        mcCode: { type: string, minLength: 1, maxLength: 64 }
-        currency: { const: CNY }
-        balance: { $ref: '#/components/schemas/DecimalAmount' }
-        activeHoldAmount: { $ref: '#/components/schemas/NonNegativeAmount' }
-        availableBalance: { $ref: '#/components/schemas/DecimalAmount' }
-        accountStatus: { enum: [ACTIVE, LOW_BALANCE, OVERDUE, DISABLED] }
-        updatedAt: { type: string, format: date-time }
-    StudioBalanceEnvelope:
-      type: object
-      additionalProperties: false
-      required: [code, message, requestId, data]
-      properties:
-        code: { const: OK }
-        message: { const: success }
-        requestId: { type: string }
-        data: { $ref: '#/components/schemas/StudioBalance' }
-    LedgerEntry:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          ledgerId,
-          occurredAt,
-          type,
-          amount,
-          balanceAfter,
-          taskNo,
-          platformCallId,
-          businessKey,
-          remark,
-        ]
-      properties:
-        ledgerId: { type: string, format: uuid }
-        occurredAt: { type: string, format: date-time }
-        type:
-          {
-            enum:
-              [
-                TOP_UP,
-                TASK_HOLD,
-                TASK_HOLD_RELEASE,
-                CALL_CHARGE,
-                OVERAGE_DEBIT,
-                REFUND,
-                ADJUSTMENT,
-              ],
-          }
-        amount: { $ref: '#/components/schemas/DecimalAmount' }
-        balanceAfter: { $ref: '#/components/schemas/DecimalAmount' }
-        taskNo: { type: [string, 'null'], pattern: '^PT-\d{8}-\d{5,}$' }
-        platformCallId: { type: [string, 'null'], format: uuid }
-        businessKey: { type: string, minLength: 1, maxLength: 256 }
-        remark: { type: [string, 'null'], maxLength: 500 }
-    LedgerPage:
-      type: object
-      additionalProperties: false
-      required: [items, nextCursor]
-      properties:
-        items:
-          type: array
-          items: { $ref: '#/components/schemas/LedgerEntry' }
-        nextCursor: { type: [string, 'null'] }
-    LedgerPageEnvelope:
-      type: object
-      additionalProperties: false
-      required: [code, message, requestId, data]
-      properties:
-        code: { const: OK }
-        message: { const: success }
-        requestId: { type: string }
-        data: { $ref: '#/components/schemas/LedgerPage' }
     PlatformEventBase:
       type: object
       required:
@@ -1495,68 +858,41 @@ components:
         sourceSystem: { $ref: '#/components/schemas/SourceSystem' }
         mcCode: { type: string, minLength: 1, maxLength: 64 }
         taskNo: { type: string, pattern: '^PT-\d{8}-\d{5,}$' }
-    TaskStartedEvent:
-      allOf:
-        - { $ref: '#/components/schemas/PlatformEventBase' }
-        - type: object
-          required: [eventType, baiyingCallJobId, executionStatus, startedAt]
-          properties:
-            eventType: { const: OUTBOUND_TASK_STARTED }
-            baiyingCallJobId: { type: string, minLength: 1, maxLength: 64 }
-            executionStatus: { const: CALLING }
-            startedAt: { type: string, format: date-time }
-    TaskStartFailedEvent:
-      allOf:
-        - { $ref: '#/components/schemas/PlatformEventBase' }
-        - type: object
-          required: [eventType, baiyingCallJobId, executionStatus, failure]
-          properties:
-            eventType: { const: OUTBOUND_TASK_START_FAILED }
-            baiyingCallJobId: { type: [string, 'null'], maxLength: 64 }
-            executionStatus:
-              { enum: [CREATE_FAILED, IMPORT_FAILED, START_FAILED] }
-            failure: { $ref: '#/components/schemas/TaskFailure' }
-    OutboundCallResult:
+    OutboundCallResultV2:
       type: object
       additionalProperties: false
       required:
+        - guid
         - externalCustomerId
-        - platformCallId
-        - baiyingCallInstanceId
-        - phoneMasked
-        - callStatus
-        - finishStatus
-        - durationSeconds
-        - billingMinutes
-        - customerCharge
-        - collectProperties
+        - phone_masked
+        - call_status
+        - finish_status
+        - result_complete
+        - collected_variables
+        - task_results
       properties:
-        externalCustomerId: { type: string, minLength: 1, maxLength: 128 }
-        platformCallId: { type: string, format: uuid }
-        baiyingCallInstanceId: { type: string, minLength: 1, maxLength: 64 }
-        phoneMasked: { type: string, minLength: 1, maxLength: 32 }
-        callStatus:
+        guid: { type: string, minLength: 1, maxLength: 128 }
+        externalCustomerId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          deprecated: true
+          description: 临时兼容字段，当前必须与 guid 相同，兼容窗口结束后移除。
+        phone_masked: { type: string, minLength: 1, maxLength: 32 }
+        call_status:
           { enum: [ANSWERED, NO_ANSWER, BUSY, REJECTED, FAILED, UNKNOWN] }
-        finishStatus: { type: [integer, 'null'] }
-        durationSeconds: { type: integer, minimum: 0 }
-        billingMinutes: { type: integer, minimum: 0 }
-        customerCharge: { $ref: '#/components/schemas/NonNegativeAmount' }
-        collectProperties: { type: object, additionalProperties: true }
-    CallResultBatchEvent:
-      allOf:
-        - { $ref: '#/components/schemas/PlatformEventBase' }
-        - type: object
-          required: [eventType, baiyingCallJobId, batchNo, isLastBatch, calls]
-          properties:
-            eventType: { const: OUTBOUND_CALL_RESULT_BATCH }
-            baiyingCallJobId: { type: string, minLength: 1, maxLength: 64 }
-            batchNo: { type: integer, minimum: 1 }
-            isLastBatch: { type: boolean }
-            calls:
-              type: array
-              minItems: 1
-              maxItems: 200
-              items: { $ref: '#/components/schemas/OutboundCallResult' }
+        finish_status: { type: [integer, 'null'] }
+        result_complete:
+          type: boolean
+          description: true=百应真实完成回调；false=补偿/对账形成的不完整最终结果。
+        collected_variables:
+          type: object
+          additionalProperties: true
+          description: 仅来自百应 callInstance.collectProperties，不混入导入参数。
+        task_results:
+          type: array
+          items: { type: object, additionalProperties: true }
+          description: 来自百应 data.taskResult。
     RecordingAvailableBatchEvent:
       allOf:
         - { $ref: '#/components/schemas/PlatformEventBase' }
@@ -1573,41 +909,6 @@ components:
               minItems: 1
               maxItems: 100
               items: { $ref: '#/components/schemas/RecordingDeliveryItem' }
-    TaskCompletedEvent:
-      allOf:
-        - { $ref: '#/components/schemas/PlatformEventBase' }
-        - type: object
-          required:
-            [eventType, baiyingCallJobId, executionStatus, summary, completedAt]
-          properties:
-            eventType: { const: OUTBOUND_TASK_COMPLETED }
-            baiyingCallJobId: { type: string, minLength: 1, maxLength: 64 }
-            executionStatus: { const: COMPLETED }
-            summary:
-              type: object
-              additionalProperties: false
-              required:
-                - phoneCount
-                - importedCount
-                - callInstanceCount
-                - answeredCount
-                - totalDurationSeconds
-                - billingMinutes
-                - customerCharge
-                - recordingDiscoveredCount
-                - recordingArchivedCount
-              properties:
-                phoneCount: { type: integer, minimum: 0 }
-                importedCount: { type: integer, minimum: 0 }
-                callInstanceCount: { type: integer, minimum: 0 }
-                answeredCount: { type: integer, minimum: 0 }
-                totalDurationSeconds: { type: integer, minimum: 0 }
-                billingMinutes: { type: integer, minimum: 0 }
-                customerCharge:
-                  { $ref: '#/components/schemas/NonNegativeAmount' }
-                recordingDiscoveredCount: { type: integer, minimum: 0 }
-                recordingArchivedCount: { type: integer, minimum: 0 }
-            completedAt: { type: string, format: date-time }
     CallbackAck:
       type: object
       additionalProperties: false
@@ -1647,7 +948,9 @@ components:
         erpField: { type: [string, 'null'], maxLength: 128 }
         crmField: { type: [string, 'null'], maxLength: 128 }
         transformConfig: { $ref: '#/components/schemas/TransformConfig' }
-        emptyPolicy: { enum: [BLOCK, DEFAULT] }
+        emptyPolicy:
+          enum: [BLOCK, DEFAULT, OMIT]
+          description: 空值阻断、采用版本化默认值或省略该百应变量。
         defaultValue: { type: [string, 'null'], maxLength: 1000 }
       anyOf:
         - required: [erpField]
@@ -1849,35 +1152,62 @@ components:
           type: object
           additionalProperties: true
   examples:
-    ErpCreateTaskRequest:
-      summary: ERP 创建一个立即执行的外呼任务
+    ErpCreateBatchRequestV2:
+      summary: ERP 按三级分类提交一个平台批次
       value:
-        schemaVersion: '1.0'
-        externalRequestId: ERP-REQ-20260906-0001
-        sourceSystem: ERP
-        mcCode: MC-ZTY-001
-        customers:
-          - externalCustomerId: ERP-C-10001
-            name: 王女士
-            phone: '13800000000'
-            dataCategoryId: SS1
-            fields:
-              wedding_date: '2026-10-18'
-              package_interest: A
-              consultant_name: 李梅
-    TaskAcceptedResponse:
-      summary: 平台已完成本地事务并异步受理
+        main_category: 排档
+        sub_category: 孕妈
+        source: 0
+        company_code: '5903679116'
+        customer_list:
+          - c_level: ''
+            c_info_list:
+              - phone: '13500000001'
+                guid: '11111111-1111-4111-8111-111111111101'
+                customer_name: 测试客户A
+                photoshop: 湖滨店
+              - phone: '19900000002'
+                guid: '11111111-1111-4111-8111-111111111102'
+                customer_name: 测试客户B
+          - c_level: SR3
+            c_info_list:
+              - phone: '18300000003'
+                guid: '11111111-1111-4111-8111-111111111103'
+                customer_name: 测试客户C
+                自定义扩展变量: 可继续增加，不限于示例字段
+    BatchAcceptedResponseV2:
+      summary: 一个逻辑批次按两条实际路由拆成两个百应执行任务
       value:
-        code: TASK_ACCEPTED
-        message: 任务已受理，正在创建百应外呼任务
-        requestId: 9bba018d-36b2-478d-af0a-af3f7d573937
+        code: BATCH_ACCEPTED
+        message: 外呼批次已受理
+        request_id: 9bba018d-36b2-478d-af0a-af3f7d573937
         data:
-          taskId: c5f1d5e0-1c67-4d02-a7a3-58666ea55792
-          taskNo: PT-20260906-00025
-          taskName: 20260906邀约百天SS1-00025
-          executionStatus: ACCEPTED
-          displayStatus: 执行中
-          phoneCount: 1
-          reservedAmount: '0.960000'
-          currency: CNY
-          statusUrl: /openapi/v1/outbound/tasks/PT-20260906-00025
+          batch_id: 4f4f0d65-8d01-48c9-b87f-71569344cb63
+          execution_status: ACCEPTED
+          phone_count: 3
+          task_count: 2
+          tasks:
+            - task_id: c5f1d5e0-1c67-4d02-a7a3-58666ea55792
+              task_no: PT-20260909-00025
+              phone_count: 2
+              status_url: /openapi/v1/outbound/tasks/PT-20260909-00025
+            - task_id: 0871e61e-7749-4684-9cb6-aad28c220a5a
+              task_no: PT-20260909-00026
+              phone_count: 1
+              status_url: /openapi/v1/outbound/tasks/PT-20260909-00026
+          status_url: /openapi/v2/outbound/batches/4f4f0d65-8d01-48c9-b87f-71569344cb63
+    OutboundCallResultV2:
+      summary: 单个 GUID 的最终业务回调
+      value:
+        guid: '11111111-1111-4111-8111-111111111101'
+        externalCustomerId: '11111111-1111-4111-8111-111111111101'
+        phone_masked: 135****0001
+        call_status: ANSWERED
+        finish_status: 0
+        result_complete: true
+        collected_variables:
+          预约门店: 湖滨店
+          预约日期: '2026-09-20'
+        task_results:
+          - resultName: 客户意向等级
+            resultValue: A

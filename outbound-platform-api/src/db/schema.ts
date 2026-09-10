@@ -44,7 +44,7 @@ export const mappingRuleStatus = pgEnum('mapping_rule_status', [
   'PUBLISHED',
   'REMOVED',
 ]);
-export const emptyPolicy = pgEnum('empty_policy', ['BLOCK', 'DEFAULT']);
+export const emptyPolicy = pgEnum('empty_policy', ['BLOCK', 'DEFAULT', 'OMIT']);
 export const studioStatus = pgEnum('studio_status', ['ACTIVE', 'DISABLED']);
 export const integrationClientStatus = pgEnum('integration_client_status', [
   'ACTIVE',
@@ -187,6 +187,14 @@ export const callbackProcessStatus = pgEnum('callback_process_status', [
   'SUCCEEDED',
   'FAILED',
 ]);
+export const taskReconciliationStatus = pgEnum('task_reconciliation_status', [
+  'PENDING',
+  'RUNNING',
+  'STABLE_ONCE',
+  'RECONCILED',
+  'MANUAL_REVIEW',
+  'FAILED',
+]);
 export const recordingKind = pgEnum('recording_kind', ['FULL', 'USER_ONLY']);
 export const deliveryTarget = pgEnum('delivery_target', [
   'RESULT',
@@ -220,6 +228,20 @@ export const idempotencyProcessingStatus = pgEnum(
   'idempotency_processing_status',
   ['PENDING', 'COMPLETED', 'FAILED'],
 );
+export const intakeBatchStatus = pgEnum('intake_batch_status', [
+  'ACCEPTED',
+  'PREPARING',
+  'RUNNING',
+  'PARTIAL_FAILED',
+  'COMPLETED',
+  'FAILED',
+  'CANCELLED',
+]);
+export const callbackMatchMethod = pgEnum('callback_match_method', [
+  'ITEM_TOKEN',
+  'ITEM_PHONE',
+  'PHONE_FALLBACK',
+]);
 
 export const baiyingScenes = pgTable('baiying_scene', {
   sceneDefId: varchar('scene_def_id', { length: 128 }).primaryKey(),
@@ -413,6 +435,30 @@ export const auditLogs = pgTable('audit_log', {
     .notNull()
     .defaultNow(),
 });
+
+export const operationalMetricEvents = pgTable(
+  'operational_metric_event',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    metricCode: varchar('metric_code', { length: 128 }).notNull(),
+    sourceSystem: varchar('source_system', { length: 32 }),
+    requestId: varchar('request_id', { length: 128 }),
+    objectRef: varchar('object_ref', { length: 512 }),
+    detail: jsonb('detail_json')
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    occurredAt: timestamp('occurred_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index('operational_metric_code_time_idx').on(
+      table.metricCode,
+      table.occurredAt,
+    ),
+  ],
+);
 
 export const sourceDataCategories = pgTable(
   'source_data_category',
@@ -611,6 +657,7 @@ export const integrationClients = pgTable(
     clientId: varchar('client_id', { length: 128 }).notNull(),
     sourceSystem: varchar('source_system', { length: 32 }).notNull(),
     displayName: varchar('display_name', { length: 200 }).notNull(),
+    accessToken: varchar('access_token', { length: 128 }).notNull(),
     secretRef: varchar('secret_ref', { length: 500 }).notNull(),
     status: integrationClientStatus('status').notNull().default('ACTIVE'),
     rateLimitPerMinute: integer('rate_limit_per_minute').notNull().default(60),
@@ -624,6 +671,7 @@ export const integrationClients = pgTable(
   },
   (table) => [
     uniqueIndex('integration_client_client_id_uq').on(table.clientId),
+    uniqueIndex('integration_client_access_token_uq').on(table.accessToken),
     check(
       'integration_client_source_ck',
       sql`${table.sourceSystem} IN ('ERP', 'CRM')`,
@@ -956,11 +1004,70 @@ export const scriptCategoryBindings = pgTable(
   ],
 );
 
+export const intakeBatches = pgTable(
+  'intake_batch',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sourceSystem: varchar('source_system', { length: 32 }).notNull(),
+    integrationClientId: uuid('integration_client_id')
+      .notNull()
+      .references(() => integrationClients.id, { onDelete: 'restrict' }),
+    studioId: uuid('studio_id')
+      .notNull()
+      .references(() => studios.id, { onDelete: 'restrict' }),
+    mcCodeSnapshot: varchar('mc_code_snapshot', { length: 64 }).notNull(),
+    mainCategory: varchar('main_category', { length: 200 }).notNull(),
+    subCategory: varchar('sub_category', { length: 200 }).notNull(),
+    idempotencyKey: varchar('idempotency_key', { length: 128 }).notNull(),
+    requestBodySha256: char('request_body_sha256', { length: 64 }).notNull(),
+    phoneCount: integer('phone_count').notNull(),
+    taskCount: integer('task_count').notNull(),
+    executionStatus: intakeBatchStatus('execution_status')
+      .notNull()
+      .default('ACCEPTED'),
+    failureCode: varchar('failure_code', { length: 128 }),
+    failureMessage: text('failure_message'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (table) => [
+    index('intake_batch_idempotency_idx').on(
+      table.integrationClientId,
+      table.idempotencyKey,
+    ),
+    index('intake_batch_studio_created_idx').on(
+      table.studioId,
+      table.createdAt,
+    ),
+    index('intake_batch_status_idx').on(table.executionStatus, table.updatedAt),
+    check(
+      'intake_batch_source_ck',
+      sql`${table.sourceSystem} IN ('ERP', 'CRM')`,
+    ),
+    check(
+      'intake_batch_counts_ck',
+      sql`${table.phoneCount} > 0 AND ${table.phoneCount} <= 10000 AND ${table.taskCount} > 0`,
+    ),
+  ],
+);
+
 export const platformTasks = pgTable(
   'platform_task',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     taskNo: varchar('task_no', { length: 64 }).notNull(),
+    batchId: uuid('batch_id').references(() => intakeBatches.id, {
+      onDelete: 'cascade',
+    }),
+    routeKey: char('route_key', { length: 64 }),
+    contractVersion: varchar('contract_version', { length: 16 })
+      .notNull()
+      .default('1.0'),
     externalRequestId: varchar('external_request_id', {
       length: 128,
     }).notNull(),
@@ -1089,6 +1196,9 @@ export const platformTasks = pgTable(
       table.integrationClientId,
       table.externalRequestId,
     ),
+    uniqueIndex('platform_task_batch_route_uq')
+      .on(table.batchId, table.routeKey)
+      .where(sql`${table.batchId} IS NOT NULL`),
     uniqueIndex('platform_task_baiying_job_uq')
       .on(table.baiyingCompanyId, table.baiyingCallJobId)
       .where(sql`${table.baiyingCallJobId} IS NOT NULL`),
@@ -1165,18 +1275,27 @@ export const taskCallItems = pgTable(
     taskId: uuid('task_id')
       .notNull()
       .references(() => platformTasks.id, { onDelete: 'cascade' }),
+    batchId: uuid('batch_id').references(() => intakeBatches.id, {
+      onDelete: 'cascade',
+    }),
     ordinal: integer('ordinal').notNull(),
     externalCustomerId: varchar('external_customer_id', {
       length: 128,
     }).notNull(),
     dataCategoryId: varchar('data_category_id', { length: 256 }).notNull(),
     categoryPath: varchar('category_path', { length: 500 }).notNull(),
+    categorySnapshot: jsonb('category_snapshot_json').$type<{
+      mainCategory: string;
+      subCategory: string;
+      cLevel: string;
+    }>(),
     phoneCiphertext: text('phone_ciphertext').notNull(),
     phoneHmac: char('phone_hmac', { length: 64 }).notNull(),
     phoneTail4: char('phone_tail4', { length: 4 }).notNull(),
     customerNameCiphertext: text('customer_name_ciphertext'),
     sourceFieldsCiphertext: text('source_fields_ciphertext').notNull(),
     mappedPropertiesCiphertext: text('mapped_properties_ciphertext').notNull(),
+    resultEventId: uuid('result_event_id'),
     importStatus: taskImportStatus('import_status')
       .notNull()
       .default('PENDING'),
@@ -1203,6 +1322,15 @@ export const taskCallItems = pgTable(
       table.externalCustomerId,
     ),
     uniqueIndex('task_call_item_phone_uq').on(table.taskId, table.phoneHmac),
+    uniqueIndex('task_call_item_batch_customer_uq')
+      .on(table.batchId, table.externalCustomerId)
+      .where(sql`${table.batchId} IS NOT NULL`),
+    uniqueIndex('task_call_item_batch_phone_uq')
+      .on(table.batchId, table.phoneHmac)
+      .where(sql`${table.batchId} IS NOT NULL`),
+    uniqueIndex('task_call_item_result_event_uq')
+      .on(table.resultEventId)
+      .where(sql`${table.resultEventId} IS NOT NULL`),
     index('task_call_item_status_idx').on(table.taskId, table.callStatus),
     check('task_call_item_ordinal_ck', sql`${table.ordinal} > 0`),
     check(
@@ -1256,6 +1384,9 @@ export const callbackInbox = pgTable(
     provider: varchar('provider', { length: 64 }).notNull().default('BAIYING'),
     callbackType: varchar('callback_type', { length: 128 }).notNull(),
     eventKey: varchar('event_key', { length: 512 }).notNull(),
+    companyId: varchar('company_id', { length: 128 }),
+    callJobId: varchar('call_job_id', { length: 128 }),
+    callInstanceId: varchar('call_instance_id', { length: 128 }),
     rawBodyCiphertext: text('raw_body_ciphertext').notNull(),
     rawBodySha256: char('raw_body_sha256', { length: 64 }).notNull(),
     headers: jsonb('headers_json')
@@ -1292,6 +1423,11 @@ export const callbackInbox = pgTable(
     ),
     index('callback_inbox_lock_idx').on(table.lockedAt, table.lockedBy),
     index('callback_inbox_body_sha_idx').on(table.rawBodySha256),
+    index('callback_inbox_task_idx').on(
+      table.companyId,
+      table.callJobId,
+      table.processStatus,
+    ),
     check('callback_inbox_attempts_ck', sql`${table.processAttempts} >= 0`),
   ],
 );
@@ -1325,6 +1461,12 @@ export const callInstances = pgTable(
       .$type<Record<string, unknown>>()
       .notNull()
       .default(sql`'{}'::jsonb`),
+    taskResults: jsonb('task_results_json')
+      .$type<Array<Record<string, unknown>>>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    resultComplete: boolean('result_complete').notNull().default(true),
+    matchMethod: callbackMatchMethod('match_method'),
     providerOccurredAt: timestamp('provider_occurred_at', {
       withTimezone: true,
     }),
@@ -1344,6 +1486,55 @@ export const callInstances = pgTable(
     check(
       'call_instance_duration_ck',
       sql`${table.durationSeconds} >= 0 AND ${table.billingMinutes} >= 0 AND ${table.customerCharge} >= 0`,
+    ),
+  ],
+);
+
+export const taskReconciliations = pgTable(
+  'task_reconciliation',
+  {
+    taskId: uuid('task_id')
+      .primaryKey()
+      .references(() => platformTasks.id, { onDelete: 'cascade' }),
+    status: taskReconciliationStatus('status').notNull().default('PENDING'),
+    providerState: varchar('provider_state', { length: 32 }),
+    expectedCallCount: integer('expected_call_count').notNull(),
+    providerCallCount: integer('provider_call_count'),
+    platformCallCount: integer('platform_call_count').notNull().default(0),
+    pendingInboxCount: integer('pending_inbox_count').notNull().default(0),
+    stableRounds: integer('stable_rounds').notNull().default(0),
+    mismatchSince: timestamp('mismatch_since', { withTimezone: true }),
+    lastCheckedAt: timestamp('last_checked_at', { withTimezone: true }),
+    nextCheckAt: timestamp('next_check_at', {
+      withTimezone: true,
+    }).defaultNow(),
+    lastSuccessfulAt: timestamp('last_successful_at', { withTimezone: true }),
+    lastProviderRequestId: varchar('last_provider_request_id', { length: 128 }),
+    failureAttempts: integer('failure_attempts').notNull().default(0),
+    lastError: text('last_error'),
+    manualReviewAt: timestamp('manual_review_at', { withTimezone: true }),
+    repairCount: integer('repair_count').notNull().default(0),
+    lastRepairRequestedAt: timestamp('last_repair_requested_at', {
+      withTimezone: true,
+    }),
+    lockedAt: timestamp('locked_at', { withTimezone: true }),
+    lockedBy: varchar('locked_by', { length: 128 }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index('task_reconciliation_pending_idx').on(
+      table.status,
+      table.nextCheckAt,
+      table.lockedAt,
+    ),
+    check(
+      'task_reconciliation_counts_ck',
+      sql`${table.expectedCallCount} >= 0 AND ${table.providerCallCount} >= 0 AND ${table.platformCallCount} >= 0 AND ${table.pendingInboxCount} >= 0 AND ${table.stableRounds} >= 0 AND ${table.failureAttempts} >= 0 AND ${table.repairCount} >= 0`,
     ),
   ],
 );

@@ -23,4 +23,16 @@ describe('local data protector', () => {
       protector.phoneHmac('13800138001'),
     );
   });
+
+  it('creates deterministic correlation signatures with a separate key', () => {
+    expect(protector.correlationHmac('task\0item\0phone-hmac')).toBe(
+      protector.correlationHmac('task\0item\0phone-hmac'),
+    );
+    expect(protector.correlationHmac('task\0item\0phone-hmac')).not.toBe(
+      protector.correlationHmac('task\0other-item\0phone-hmac'),
+    );
+    expect(protector.correlationHmac('13800138000')).not.toBe(
+      protector.phoneHmac('13800138000'),
+    );
+  });
 });

@@ -29,8 +29,12 @@ export type BaiyingCallResult = {
   customerTelephone: string | null;
   durationSeconds: number;
   callStatus: NormalizedCallStatus;
+  importedProperties: Record<string, unknown>;
   collectProperties: Record<string, unknown>;
+  taskResults: Record<string, unknown>[];
+  resultComplete: boolean;
   platformItemId: string | null;
+  correlationToken: string | null;
   providerOccurredAt: Date | null;
   recordingUrls: {
     full: string | null;
@@ -68,6 +72,10 @@ const callInstanceSchema = z
     customerTelephone: z.string().trim().min(1).max(64).optional(),
     duration: providerIntegerSchema.max(604_800).optional().default(0),
     properties: z.unknown().optional(),
+    collectProperties: z.unknown().optional(),
+    // Internal reconciliation explicitly marks a synthesized result as
+    // incomplete. Baiying's real completed-call callback omits this field.
+    resultComplete: z.boolean().optional(),
     startTime: z.union([z.string(), z.number()]).optional(),
     endTime: z.union([z.string(), z.number()]).optional(),
     luyinOssUrl: z.string().trim().max(8_192).optional(),
@@ -129,12 +137,11 @@ export function parseBaiyingCallback(rawBody: string): ParsedBaiyingCallback {
         `CALL_INSTANCE_RESULT 缺少有效通话字段：${z.prettifyError(result.error)}`,
       );
     }
-    const properties = parseProperties(result.data.properties);
-    const taskResult = asObjectArray(envelope.data.data.data.taskResult);
-    const collectProperties = {
-      ...properties,
-      ...(taskResult.length ? { taskResult } : {}),
-    };
+    const importedProperties = parseProperties(result.data.properties);
+    const collectProperties = filterCollectedProperties(
+      parseProperties(result.data.collectProperties),
+    );
+    const taskResults = asObjectArray(envelope.data.data.data.taskResult);
     return {
       callbackType: 'CALL_INSTANCE_RESULT',
       companyId: result.data.companyId,
@@ -146,8 +153,12 @@ export function parseBaiyingCallback(rawBody: string): ParsedBaiyingCallback {
       customerTelephone: result.data.customerTelephone ?? null,
       durationSeconds: result.data.duration,
       callStatus: normalizeCallStatus(result.data.finishStatus),
+      importedProperties: filterCollectedProperties(importedProperties),
       collectProperties,
-      platformItemId: readPlatformItemId(properties),
+      taskResults,
+      resultComplete: result.data.resultComplete ?? true,
+      platformItemId: readPlatformItemId(importedProperties),
+      correlationToken: readCorrelationToken(importedProperties),
       providerOccurredAt: parseProviderDate(
         result.data.endTime ?? result.data.startTime,
       ),
@@ -188,6 +199,9 @@ export function inspectBaiyingCallback(rawBody: string): {
   callbackType: string;
   eventKey: string;
   rawBodySha256: string;
+  companyId: string | null;
+  callJobId: string | null;
+  callInstanceId: string | null;
 } {
   const rawBodySha256 = createHash('sha256')
     .update(rawBody, 'utf8')
@@ -200,6 +214,9 @@ export function inspectBaiyingCallback(rawBody: string): {
       callbackType: 'INVALID_JSON',
       eventKey: `BAIYING:INVALID_JSON:${rawBodySha256}`,
       rawBodySha256,
+      companyId: null,
+      callJobId: null,
+      callInstanceId: null,
     };
   }
   const root = asRecord(value);
@@ -209,12 +226,13 @@ export function inspectBaiyingCallback(rawBody: string): {
   const callbackType = truncateIdentity(
     stringValue(envelope?.callbackType ?? envelope?.dataType) ?? 'UNKNOWN',
   );
-  const companyId = stringValue(call?.companyId ?? body?.companyId) ?? '-';
-  const callJobId = stringValue(call?.callJobId ?? body?.callJobId) ?? '-';
+  const companyId = stringValue(call?.companyId ?? body?.companyId);
+  const callJobId = stringValue(call?.callJobId ?? body?.callJobId);
+  const callInstanceId = stringValue(call?.callInstanceId);
   const discriminator =
     callbackType === 'CALL_INSTANCE_RESULT'
       ? [
-          stringValue(call?.callInstanceId) ?? '-',
+          callInstanceId ?? '-',
           stringValue(call?.finishStatus) ?? '-',
           stringValue(call?.calledTimes) ?? '-',
         ]
@@ -223,8 +241,8 @@ export function inspectBaiyingCallback(rawBody: string): {
         : [];
   const identity = [
     callbackType,
-    truncateIdentity(companyId),
-    truncateIdentity(callJobId),
+    truncateIdentity(companyId ?? '-'),
+    truncateIdentity(callJobId ?? '-'),
     ...discriminator.map(truncateIdentity),
     rawBodySha256,
   ].join('\u0000');
@@ -232,6 +250,9 @@ export function inspectBaiyingCallback(rawBody: string): {
     callbackType,
     eventKey: `BAIYING:${callbackType}:${createHash('sha256').update(identity, 'utf8').digest('hex')}`,
     rawBodySha256,
+    companyId: companyId ? truncateIdentity(companyId) : null,
+    callJobId: callJobId ? truncateIdentity(callJobId) : null,
+    callInstanceId: callInstanceId ? truncateIdentity(callInstanceId) : null,
   };
 }
 
@@ -281,6 +302,32 @@ function readPlatformItemId(
   return typeof value === 'string' && value.trim()
     ? value.trim().slice(0, 128)
     : null;
+}
+
+function readCorrelationToken(
+  properties: Record<string, unknown>,
+): string | null {
+  const value = properties.sx_correlation_token;
+  return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value.trim())
+    ? value.trim().toLowerCase()
+    : null;
+}
+
+function filterCollectedProperties(
+  properties: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(properties).filter(([name]) => {
+      const normalized = name.trim().toLowerCase();
+      return (
+        normalized &&
+        !normalized.startsWith('sx_') &&
+        normalized !== '__proto__' &&
+        normalized !== 'constructor' &&
+        normalized !== 'prototype'
+      );
+    }),
+  );
 }
 
 function asObjectArray(value: unknown): Record<string, unknown>[] {

@@ -12,6 +12,16 @@ const configSchema = z.object({
   BAIYING_COMPANY_ID: z.string().regex(/^\d+$/).optional(),
   BAIYING_APP_KEY: z.string().optional(),
   BAIYING_APP_SECRET: z.string().optional(),
+  BAIYING_WRITE_ENABLED: z.preprocess(
+    (value) => value === true || value === 'true',
+    z.boolean(),
+  ),
+  BAIYING_REQUEST_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(100)
+    .max(60_000)
+    .default(10_000),
   SX_ERP_CATEGORY_URL: z
     .url()
     .default('http://testmc.6161520.cn:8083/SAi/Sx_AllCategoryLevel'),
@@ -24,6 +34,21 @@ const configSchema = z.object({
   VARIABLE_SYNC_QUEUE_NAME: z.string().default('variable-sync-queue'),
   TASK_ORCHESTRATION_QUEUE_NAME: z.string().default('task-orchestration-queue'),
   CALLBACK_DELIVERY_QUEUE_NAME: z.string().default('callback-delivery-queue'),
+  RECONCILIATION_WORKER_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(1_000)
+    .default(5_000),
+  RECONCILIATION_STALE_TASK_MS: z.coerce
+    .number()
+    .int()
+    .min(60_000)
+    .default(300_000),
+  RECONCILIATION_MANUAL_REVIEW_MS: z.coerce
+    .number()
+    .int()
+    .min(60_000)
+    .default(900_000),
   RECORDING_LOCAL_ROOT: z.string().min(1).default('.local-recordings'),
   RECORDING_LOCAL_BUCKET: z
     .string()
@@ -33,6 +58,7 @@ const configSchema = z.object({
   RECORDING_CALLBACK_BASE_URL: z
     .url()
     .default('https://recordings.mock.invalid'),
+  RECORDING_SOURCE_ALLOWED_HOSTS: z.string().default(''),
   RECORDING_DOWNLOAD_TTL_SECONDS: z.coerce
     .number()
     .int()
@@ -51,6 +77,8 @@ const configSchema = z.object({
     .min(1)
     .max(3_650)
     .default(180),
+  CONSOLE_ADMIN_USERNAME: z.string().min(1).default('fc6j1'),
+  CONSOLE_ADMIN_PASSWORD: z.string().min(8).default('fc6j18888'),
   WORKER_SHARED_SECRET: z.string().min(24),
 });
 

@@ -32,6 +32,9 @@ export interface CallbackInboxRepository {
   save(input: {
     callbackType: string;
     eventKey: string;
+    companyId: string | null;
+    callJobId: string | null;
+    callInstanceId: string | null;
     rawBodyCiphertext: string;
     rawBodySha256: string;
     headers: Record<string, string>;

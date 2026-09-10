@@ -1,8 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { BaiyingLineClient, BaiyingRobotClient, BaiyingWorkflowClient } from '../baiying/client.js';
+import type {
+  BaiyingLineClient,
+  BaiyingRobotClient,
+  BaiyingWorkflowClient,
+} from '../baiying/client.js';
 import { LineSyncFailure, type LineRepository } from '../line/repository.js';
 import type { MappingRepository } from '../mapping/repository.js';
-import type { PlannedTaskRepository, SourceDataCategory } from '../planned-task/repository.js';
+import type {
+  PlannedTaskRepository,
+  SourceDataCategory,
+} from '../planned-task/repository.js';
 import type { ScriptRepository } from '../script/repository.js';
 import { calculateBillingMinutes, createApp } from './app.js';
 
@@ -41,31 +48,52 @@ function createPlannedTaskDependencies(categories: SourceDataCategory[] = []) {
     updatedBy: 'admin-1',
     updatedAt: '2026-09-03T14:00:00.000Z',
   };
-  const listWorkflows = vi.fn<BaiyingWorkflowClient['listWorkflows']>(async () => ({
+  const listWorkflows = vi.fn<BaiyingWorkflowClient['listWorkflows']>(
+    async () => ({
       total: 1,
       pages: 1,
       pageNum: 0,
       pageSize: 20,
-      workflows: [{
-        id: '115315720',
-        name: '非常六加一-百天-0528-测试',
-        workflowExecuteStatus: 'FINISH' as const,
-        workflowType: 'OUT_TRIGGER',
-        startTime: '2026-05-28 09:57:32',
-        endTime: '2099-01-01 00:00:01',
-      }],
-    }));
+      workflows: [
+        {
+          id: '115315720',
+          name: '非常六加一-百天-0528-测试',
+          workflowExecuteStatus: 'FINISH' as const,
+          workflowType: 'OUT_TRIGGER',
+          startTime: '2026-05-28 09:57:32',
+          endTime: '2099-01-01 00:00:01',
+        },
+      ],
+    }),
+  );
   const workflowClient: BaiyingWorkflowClient = { listWorkflows };
-  const saveBinding = vi.fn<PlannedTaskRepository['saveBinding']>(async (input, actorId) => ({ ...input, updatedBy: actorId, updatedAt: binding.updatedAt }));
-  const syncSourceCategories = vi.fn<PlannedTaskRepository['syncSourceCategories']>(async () => []);
-  const listSourceCategories = vi.fn<PlannedTaskRepository['listSourceCategories']>(async () => categories);
+  const saveBinding = vi.fn<PlannedTaskRepository['saveBinding']>(
+    async (input, actorId) => ({
+      ...input,
+      updatedBy: actorId,
+      updatedAt: binding.updatedAt,
+    }),
+  );
+  const syncSourceCategories = vi.fn<
+    PlannedTaskRepository['syncSourceCategories']
+  >(async () => []);
+  const listSourceCategories = vi.fn<
+    PlannedTaskRepository['listSourceCategories']
+  >(async () => categories);
   const plannedTaskRepository: PlannedTaskRepository = {
     listBindings: vi.fn(async () => [binding]),
     saveBinding,
     listSourceCategories,
     syncSourceCategories,
   };
-  return { workflowClient, plannedTaskRepository, listWorkflows, saveBinding, listSourceCategories, syncSourceCategories };
+  return {
+    workflowClient,
+    plannedTaskRepository,
+    listWorkflows,
+    saveBinding,
+    listSourceCategories,
+    syncSourceCategories,
+  };
 }
 
 function createScriptDependencies() {
@@ -83,16 +111,24 @@ function createScriptDependencies() {
     updatedBy: 'admin-1',
     updatedAt: '2026-09-04T02:00:00.000Z',
   };
-  const listRobots = vi.fn<BaiyingRobotClient['listRobots']>(async () => [{
-    robotDefId: '4845020',
-    robotName: '开放平台演示话术',
-    robotStatus: 5,
-    industryOneName: '大金融',
-    industryTwoName: '银行',
-    deployTime: '2026-07-24 15:04:38',
-  }]);
+  const listRobots = vi.fn<BaiyingRobotClient['listRobots']>(async () => [
+    {
+      robotDefId: '4845020',
+      robotName: '开放平台演示话术',
+      robotStatus: 5,
+      industryOneName: '大金融',
+      industryTwoName: '银行',
+      deployTime: '2026-07-24 15:04:38',
+    },
+  ]);
   const robotClient: BaiyingRobotClient = { listRobots };
-  const saveBinding = vi.fn<ScriptRepository['saveBinding']>(async (input, actorId) => ({ ...input, updatedBy: actorId, updatedAt: binding.updatedAt }));
+  const saveBinding = vi.fn<ScriptRepository['saveBinding']>(
+    async (input, actorId) => ({
+      ...input,
+      updatedBy: actorId,
+      updatedAt: binding.updatedAt,
+    }),
+  );
   const scriptRepository: ScriptRepository = {
     listAllBindings: vi.fn(async () => [binding]),
     listBindings: vi.fn(async () => [binding]),
@@ -114,7 +150,9 @@ function createLineDependencies() {
     lineAmount: 2,
     billPeriod: 60,
   };
-  const listPhones = vi.fn<BaiyingLineClient['listPhones']>(async () => [sourceLine]);
+  const listPhones = vi.fn<BaiyingLineClient['listPhones']>(async () => [
+    sourceLine,
+  ]);
   const lineClient: BaiyingLineClient = { listPhones };
   const binding = {
     userPhoneId: '1788320',
@@ -123,29 +161,47 @@ function createLineDependencies() {
     updatedBy: 'admin-1',
     updatedAt: '2026-09-04T02:00:00.000Z',
   };
-  const saveBindings = vi.fn<LineRepository['saveBindings']>(async (input, actorId) => input.studios.map((studio) => ({
-    userPhoneId: input.userPhoneId,
-    ...studio,
-    updatedBy: actorId,
-    updatedAt: binding.updatedAt,
-  })));
-  const synchronizeManagedLines = vi.fn<LineRepository['synchronizeManagedLines']>(async (lines) => lines.map((line) => ({
-    ...line,
-    isActive: true,
-    syncedAt: '2026-09-04T02:00:00.000Z',
-  })));
-  const listManagedLines = vi.fn<LineRepository['listManagedLines']>(async () => [{
-    ...sourceLine,
-    isActive: true,
-    syncedAt: '2026-09-04T02:00:00.000Z',
-  }]);
+  const saveBindings = vi.fn<LineRepository['saveBindings']>(
+    async (input, actorId) =>
+      input.studios.map((studio) => ({
+        userPhoneId: input.userPhoneId,
+        ...studio,
+        updatedBy: actorId,
+        updatedAt: binding.updatedAt,
+      })),
+  );
+  const synchronizeManagedLines = vi.fn<
+    LineRepository['synchronizeManagedLines']
+  >(async (lines) =>
+    lines.map((line) => ({
+      ...line,
+      isActive: true,
+      syncedAt: '2026-09-04T02:00:00.000Z',
+    })),
+  );
+  const listManagedLines = vi.fn<LineRepository['listManagedLines']>(
+    async () => [
+      {
+        ...sourceLine,
+        isActive: true,
+        syncedAt: '2026-09-04T02:00:00.000Z',
+      },
+    ],
+  );
   const lineRepository: LineRepository = {
     synchronizeManagedLines,
     listManagedLines,
     listBindings: vi.fn(async () => [binding]),
     saveBindings,
   };
-  return { lineClient, lineRepository, listPhones, synchronizeManagedLines, listManagedLines, saveBindings };
+  return {
+    lineClient,
+    lineRepository,
+    listPhones,
+    synchronizeManagedLines,
+    listManagedLines,
+    saveBindings,
+  };
 }
 
 describe('mapping API', () => {
@@ -155,9 +211,12 @@ describe('mapping API', () => {
     [59, 1],
     [60, 1],
     [61, 2],
-  ])('rounds a %i-second callback duration to %i billing minute(s)', (durationSeconds, expectedMinutes) => {
-    expect(calculateBillingMinutes(durationSeconds)).toBe(expectedMinutes);
-  });
+  ])(
+    'rounds a %i-second callback duration to %i billing minute(s)',
+    (durationSeconds, expectedMinutes) => {
+      expect(calculateBillingMinutes(durationSeconds)).toBe(expectedMinutes);
+    },
+  );
 
   it('persists a Baiying callback before returning the required acknowledgement', async () => {
     const ingest = vi.fn(async () => ({
@@ -197,11 +256,14 @@ describe('mapping API', () => {
       resultMsg: '成功',
     };
 
-    const response = await app.request('/api/v1/callbacks/baiying/call-instance', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json;charset=utf-8' },
-      body: JSON.stringify(callback),
-    });
+    const response = await app.request(
+      '/api/v1/callbacks/baiying/call-instance',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json;charset=utf-8' },
+        body: JSON.stringify(callback),
+      },
+    );
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ code: 200 });
@@ -268,7 +330,11 @@ describe('mapping API', () => {
       }),
     });
     expect(response.status).toBe(201);
-    expect(saveDraft).toHaveBeenCalledWith(expect.objectContaining({ baiyingVariableName: '预算范围' }), 'admin-1', fixedId);
+    expect(saveDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ baiyingVariableName: '预算范围' }),
+      'admin-1',
+      fixedId,
+    );
   });
 
   it('queues an asynchronous Baiying variable sync', async () => {
@@ -299,11 +365,14 @@ describe('mapping API', () => {
       workerSharedSecret: 'a-worker-secret-longer-than-24-characters',
       createId: () => fixedId,
     });
-    const response = await app.request('/api/v1/internal/scene-variable-observations', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ observations: [] }),
-    });
+    const response = await app.request(
+      '/api/v1/internal/scene-variable-observations',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ observations: [] }),
+      },
+    );
     expect(response.status).toBe(401);
   });
 
@@ -317,14 +386,18 @@ describe('mapping API', () => {
       createId: () => fixedId,
     });
 
-    const response = await app.request('/api/v1/planned-tasks?pageNum=0&pageSize=20&status=ALL');
+    const response = await app.request(
+      '/api/v1/planned-tasks?pageNum=0&pageSize=20&status=ALL',
+    );
     expect(response.status).toBe(200);
     const payload = await response.json();
     expect(payload.data.tasks[0]).toMatchObject({
       id: '115315720',
       categoryBinding: { sourceSystem: 'ERP', categoryPath: '邀约-百天-SS1' },
     });
-    expect(planned.listWorkflows).toHaveBeenCalledWith(expect.objectContaining({ workflowExecuteStatus: 'ALL' }));
+    expect(planned.listWorkflows).toHaveBeenCalledWith(
+      expect.objectContaining({ workflowExecuteStatus: 'ALL' }),
+    );
   });
 
   it('saves a planned task category binding with the current actor', async () => {
@@ -336,13 +409,28 @@ describe('mapping API', () => {
       workerSharedSecret: 'a-worker-secret-longer-than-24-characters',
       createId: () => fixedId,
     });
-    const response = await app.request('/api/v1/planned-task-category-bindings', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-actor-id': 'admin-1' },
-      body: JSON.stringify({ workflowId: '115315720', sourceSystem: 'ERP', sourceCategoryId: 'SS1', categoryPath: '邀约-百天-SS1' }),
-    });
+    const response = await app.request(
+      '/api/v1/planned-task-category-bindings',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-actor-id': 'admin-1',
+        },
+        body: JSON.stringify({
+          workflowId: '115315720',
+          sourceSystem: 'ERP',
+          sourceCategoryId: 'SS1',
+          categoryPath: '邀约-百天-SS1',
+        }),
+      },
+    );
     expect(response.status).toBe(201);
-    expect(planned.saveBinding).toHaveBeenCalledWith(expect.objectContaining({ categoryPath: '邀约-百天-SS1' }), 'admin-1', fixedId);
+    expect(planned.saveBinding).toHaveBeenCalledWith(
+      expect.objectContaining({ categoryPath: '邀约-百天-SS1' }),
+      'admin-1',
+      fixedId,
+    );
   });
 
   it('returns Baiying scripts with the fields and platform binding used by cards', async () => {
@@ -356,7 +444,9 @@ describe('mapping API', () => {
       createId: () => fixedId,
     });
 
-    const response = await app.request('/api/v1/scripts?robotStatus=2&pageNum=0&pageSize=20');
+    const response = await app.request(
+      '/api/v1/scripts?robotStatus=2&pageNum=0&pageSize=20',
+    );
     expect(response.status).toBe(200);
     const payload = await response.json();
     expect(payload.data.scripts[0]).toMatchObject({
@@ -371,7 +461,9 @@ describe('mapping API', () => {
   it('aggregates Baiying account balances and seat overview without coupling section failures', async () => {
     const accountClient = {
       getCommunicationBalance: vi.fn(async () => ({ amount: 2680.45 })),
-      getAiBalance: vi.fn(async () => { throw new Error('AI 余额接口超时'); }),
+      getAiBalance: vi.fn(async () => {
+        throw new Error('AI 余额接口超时');
+      }),
       getSeatOverview: vi.fn(async () => ({
         companyUsingCallSeat: 3,
         companyCallSeatDetail: { valid: 4 },
@@ -426,29 +518,77 @@ describe('mapping API', () => {
       }),
     });
     expect(response.status).toBe(201);
-    expect(scripts.saveBinding).toHaveBeenCalledWith(expect.objectContaining({
-      categories: [
-        { sourceCategoryId: 'SS1', categoryPath: '邀约-百天-SS1' },
-        { sourceCategoryId: 'SS2', categoryPath: '邀约-百天-SS2' },
-      ],
-      studioId: 'YL-001', lineId: 'LINE-01',
-    }), 'admin-1', fixedId);
+    expect(scripts.saveBinding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        categories: [
+          { sourceCategoryId: 'SS1', categoryPath: '邀约-百天-SS1' },
+          { sourceCategoryId: 'SS2', categoryPath: '邀约-百天-SS2' },
+        ],
+        studioId: 'YL-001',
+        lineId: 'LINE-01',
+      }),
+      'admin-1',
+      fixedId,
+    );
+  });
+
+  it('accepts script bindings with more than 100 data categories', async () => {
+    const scripts = createScriptDependencies();
+    const app = createApp({
+      mappingRepository: createRepository().repository,
+      ...scripts,
+      baiyingCompanyId: '263120',
+      consoleOrigin: 'http://localhost:4173',
+      workerSharedSecret: 'a-worker-secret-longer-than-24-characters',
+      createId: () => fixedId,
+    });
+    const categories = Array.from({ length: 101 }, (_, index) => ({
+      sourceCategoryId: `CATEGORY-${index + 1}`,
+      categoryPath: `邀约-分类-${index + 1}`,
+    }));
+
+    const response = await app.request('/api/v1/script-bindings', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-actor-id': 'admin-1' },
+      body: JSON.stringify({
+        robotDefId: '4845020',
+        sourceSystem: 'ERP',
+        categories,
+        studioId: 'YL-001',
+        studioName: '紫藤影像',
+        lineId: 'LINE-01',
+        lineName: '华东主线路',
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(scripts.saveBinding).toHaveBeenCalledWith(
+      expect.objectContaining({ categories }),
+      'admin-1',
+      fixedId,
+    );
   });
 
   it('returns cached ERP categories with the scripts bound for the selected studio', async () => {
     const scripts = createScriptDependencies();
-    const planned = createPlannedTaskDependencies([{
-      sourceSystem: 'ERP',
-      externalId: 'SS1',
-      name: '百天邀约',
-      categoryPath: '邀约-百天-SS1',
-      level: 3,
-      parentId: 'BT',
-      active: true,
-      fields: { CategoryID: 'SS1', CategoryName: '百天邀约' },
+    const planned = createPlannedTaskDependencies([
+      {
+        sourceSystem: 'ERP',
+        externalId: 'SS1',
+        name: '百天邀约',
+        categoryPath: '邀约-百天-SS1',
+        level: 3,
+        parentId: 'BT',
+        active: true,
+        fields: { CategoryID: 'SS1', CategoryName: '百天邀约' },
+        syncedAt: '2026-09-04T02:00:00.000Z',
+      },
+    ]);
+    const sync = vi.fn(async () => ({
+      sourceSystem: 'ERP' as const,
+      count: 1,
       syncedAt: '2026-09-04T02:00:00.000Z',
-    }]);
-    const sync = vi.fn(async () => ({ sourceSystem: 'ERP' as const, count: 1, syncedAt: '2026-09-04T02:00:00.000Z' }));
+    }));
     const app = createApp({
       mappingRepository: createRepository().repository,
       ...scripts,
@@ -461,7 +601,9 @@ describe('mapping API', () => {
       clock: () => new Date('2026-09-04T02:00:00.000Z'),
     });
 
-    const response = await app.request('/api/v1/data-categories?sourceSystem=ERP&studioId=YL-001');
+    const response = await app.request(
+      '/api/v1/data-categories?sourceSystem=ERP&studioId=YL-001',
+    );
     expect(response.status).toBe(200);
     const payload = await response.json();
     expect(payload.data.categories[0]).toMatchObject({
@@ -473,7 +615,9 @@ describe('mapping API', () => {
     expect(sync).not.toHaveBeenCalled();
     expect(planned.syncSourceCategories).not.toHaveBeenCalled();
 
-    const allStudiosResponse = await app.request('/api/v1/data-categories?sourceSystem=ERP');
+    const allStudiosResponse = await app.request(
+      '/api/v1/data-categories?sourceSystem=ERP',
+    );
     expect(allStudiosResponse.status).toBe(200);
     await expect(allStudiosResponse.json()).resolves.toMatchObject({
       data: {
@@ -485,7 +629,11 @@ describe('mapping API', () => {
 
   it('runs ERP synchronization only through the dedicated command endpoint', async () => {
     const planned = createPlannedTaskDependencies();
-    const sync = vi.fn(async () => ({ sourceSystem: 'ERP' as const, count: 469, syncedAt: '2026-09-04T02:00:00.000Z' }));
+    const sync = vi.fn(async () => ({
+      sourceSystem: 'ERP' as const,
+      count: 469,
+      syncedAt: '2026-09-04T02:00:00.000Z',
+    }));
     const app = createApp({
       mappingRepository: createRepository().repository,
       plannedTaskRepository: planned.plannedTaskRepository,
@@ -501,7 +649,9 @@ describe('mapping API', () => {
       body: JSON.stringify({ sourceSystem: 'ERP' }),
     });
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ data: { sourceSystem: 'ERP', count: 469 } });
+    await expect(response.json()).resolves.toMatchObject({
+      data: { sourceSystem: 'ERP', count: 469 },
+    });
     expect(sync).toHaveBeenCalledOnce();
   });
 
@@ -520,13 +670,21 @@ describe('mapping API', () => {
     expect(response.status).toBe(200);
     const payload = await response.json();
     expect(payload.data.lines[0]).toMatchObject({
-      userPhoneId: '1788320', phoneName: '华东测试线路', isActive: true, studios: [{ studioName: '紫藤影像' }],
+      userPhoneId: '1788320',
+      phoneName: '华东测试线路',
+      isActive: true,
+      studios: [{ studioName: '紫藤影像' }],
     });
-    expect(payload.data.sync).toMatchObject({ status: 'LIVE', errorCode: null });
+    expect(payload.data.sync).toMatchObject({
+      status: 'LIVE',
+      errorCode: null,
+    });
     expect(lines.listPhones).toHaveBeenCalledWith('263120');
-    expect(lines.synchronizeManagedLines).toHaveBeenCalledWith(expect.arrayContaining([
-      expect.objectContaining({ userPhoneId: '1788320' }),
-    ]));
+    expect(lines.synchronizeManagedLines).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ userPhoneId: '1788320' }),
+      ]),
+    );
   });
 
   it('returns cached phone lines with stale metadata when Baiying is unavailable', async () => {
@@ -561,10 +719,12 @@ describe('mapping API', () => {
 
   it('reports a safe conflict code while serving cached phone lines', async () => {
     const lines = createLineDependencies();
-    lines.synchronizeManagedLines.mockRejectedValueOnce(new LineSyncFailure(
-      'LINE_SYNC_CONFLICT',
-      '线路同步与现有业务数据冲突，请联系管理员处理',
-    ));
+    lines.synchronizeManagedLines.mockRejectedValueOnce(
+      new LineSyncFailure(
+        'LINE_SYNC_CONFLICT',
+        '线路同步与现有业务数据冲突，请联系管理员处理',
+      ),
+    );
     const app = createApp({
       mappingRepository: createRepository().repository,
       ...lines,
@@ -621,7 +781,9 @@ describe('mapping API', () => {
     expect(response.status).toBe(200);
     const payload = await response.json();
     expect(payload.data.lines[0]).toMatchObject({
-      userPhoneId: '1788320', phoneName: '华东测试线路', studios: [{ studioName: '紫藤影像' }],
+      userPhoneId: '1788320',
+      phoneName: '华东测试线路',
+      studios: [{ studioName: '紫藤影像' }],
     });
     expect(lines.listManagedLines).toHaveBeenCalledOnce();
     expect(lines.listPhones).not.toHaveBeenCalled();
@@ -650,11 +812,15 @@ describe('mapping API', () => {
       }),
     });
     expect(response.status).toBe(201);
-    expect(lines.saveBindings).toHaveBeenCalledWith(expect.objectContaining({
-      studios: expect.arrayContaining([
-        expect.objectContaining({ studioId: 'YL-001' }),
-        expect.objectContaining({ studioId: 'YL-002' }),
-      ]),
-    }), 'admin-1', fixedId);
+    expect(lines.saveBindings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        studios: expect.arrayContaining([
+          expect.objectContaining({ studioId: 'YL-001' }),
+          expect.objectContaining({ studioId: 'YL-002' }),
+        ]),
+      }),
+      'admin-1',
+      fixedId,
+    );
   });
 });

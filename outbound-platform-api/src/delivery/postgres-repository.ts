@@ -16,6 +16,10 @@ import {
   type DeliveryRepository,
   type MaterializedDeliveryEvent,
 } from './repository.js';
+import {
+  CallbackTargetValidationError,
+  parseCallbackTargetUrl,
+} from './callback-url.js';
 
 type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 
@@ -456,7 +460,7 @@ async function resolveReplayedDeadLetter(
     );
 }
 
-async function refreshTaskDeliverySummary(
+export async function refreshTaskDeliverySummary(
   tx: Transaction,
   taskId: string,
   target: 'RESULT' | 'RECORDING',
@@ -471,6 +475,8 @@ async function refreshTaskDeliverySummary(
     executionStatus: string;
     completionSucceeded: number;
     failureSucceeded: number;
+    contractVersion: string;
+    phoneCount: number;
   }>(sql`
     SELECT
       count(event.id)::int AS total,
@@ -479,6 +485,8 @@ async function refreshTaskDeliverySummary(
       count(event.id) FILTER (WHERE event.status = 'SUCCEEDED')::int AS succeeded,
       count(event.id) FILTER (WHERE event.status = 'DEAD_LETTERED')::int AS "deadLettered",
       task.execution_status AS "executionStatus",
+      task.contract_version AS "contractVersion",
+      task.phone_count AS "phoneCount",
       count(event.id) FILTER (
         WHERE event.event_type = 'OUTBOUND_TASK_COMPLETED'
           AND event.status = 'SUCCEEDED'
@@ -502,13 +510,23 @@ async function refreshTaskDeliverySummary(
 
   if (target === 'RESULT') {
     const terminalDelivered =
-      counts?.executionStatus === 'COMPLETED'
-        ? Number(counts.completionSucceeded) > 0
-        : ['CREATE_FAILED', 'IMPORT_FAILED', 'START_FAILED'].includes(
-              counts?.executionStatus ?? '',
-            )
-          ? Number(counts?.failureSucceeded ?? 0) > 0
-          : false;
+      counts?.contractVersion === '2.0'
+        ? [
+            'COMPLETED',
+            'CREATE_FAILED',
+            'IMPORT_FAILED',
+            'START_FAILED',
+            'CANCELLED',
+            'TERMINATED',
+          ].includes(counts.executionStatus) &&
+          succeeded >= Number(counts.phoneCount)
+        : counts?.executionStatus === 'COMPLETED'
+          ? Number(counts.completionSucceeded) > 0
+          : ['CREATE_FAILED', 'IMPORT_FAILED', 'START_FAILED'].includes(
+                counts?.executionStatus ?? '',
+              )
+            ? Number(counts?.failureSucceeded ?? 0) > 0
+            : false;
     const status =
       deadLettered > 0
         ? 'FAILED'
@@ -571,6 +589,9 @@ async function refreshTaskDeliverySummary(
 }
 
 function buildEventKey(taskId: string, event: OutboundCallbackEvent): string {
+  if (event.eventType === 'OUTBOUND_CALL_RESULT_V2') {
+    return `${event.eventType}:${taskId}:${event.result.guid}`;
+  }
   if (event.eventType === 'OUTBOUND_CALL_RESULT_BATCH') {
     return `${event.eventType}:${taskId}:${identityHash(
       event.calls.map((call) => call.platformCallId),
@@ -594,26 +615,15 @@ function identityHash(values: readonly string[]): string {
 }
 
 export function validateCallbackUrl(rawUrl: string): URL {
-  let url: URL;
   try {
-    url = new URL(rawUrl);
-  } catch {
-    throw new DeliveryMaterializationError('回调目标不是有效 URL');
-  }
-  if (
-    url.protocol !== 'https:' ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash ||
-    (url.port && url.port !== '443') ||
-    rawUrl.length > 2_048
-  ) {
+    return parseCallbackTargetUrl(rawUrl);
+  } catch (error) {
     throw new DeliveryMaterializationError(
-      '回调目标必须是无凭证、无查询串、无片段的标准 HTTPS 地址',
+      error instanceof CallbackTargetValidationError
+        ? error.message
+        : '回调目标不是有效 URL',
     );
   }
-  return url;
 }
 
 function stableJson(value: unknown): string {

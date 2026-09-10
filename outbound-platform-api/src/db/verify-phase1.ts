@@ -234,6 +234,7 @@ async function insertFixture(db: Database, fixture: Fixture): Promise<void> {
       clientId: `client-${fixture.businessCode}`,
       sourceSystem: 'ERP',
       displayName: '阶段 1 验证客户端',
+      accessToken: `verify-token-${fixture.businessCode}`,
       secretRef: 'kms://phase1-verifier/not-a-secret',
       createdBy: 'phase1-verifier',
     });

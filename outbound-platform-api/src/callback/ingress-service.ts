@@ -37,6 +37,9 @@ export class BaiyingCallbackIngressService implements BaiyingCallbackIngress {
     const saved = await this.repository.save({
       callbackType: inspected.callbackType,
       eventKey: inspected.eventKey,
+      companyId: inspected.companyId,
+      callJobId: inspected.callJobId,
+      callInstanceId: inspected.callInstanceId,
       rawBodyCiphertext: this.protector.encryptUtf8(input.rawBody),
       rawBodySha256: inspected.rawBodySha256,
       headers: safeHeaderSummary(input.headers),

@@ -23,10 +23,45 @@
 9. 执行 `npm run backend:dev`，默认监听 `http://localhost:8788`。
 10. 另开终端执行 `npm run stage2:send:erp` 或 `npm run stage2:send:crm`，发送一条签名后的本地模拟任务。
 11. 另开终端执行 `npm run baiying:worker --workspace @outbound/platform-api`，消费页面“同步百应变量”写入的本地 outbox 任务。
-12. 执行 `npm run db:verify:stage4` 验证本地回调、幂等计费和结算闭环；需要持续消费 Inbox 时运行 `npm run stage4:worker:local`。
+12. 执行 `npm run db:verify:stage4b` 验证本地回调、幂等计费、分页补偿、稳定核对和人工修复闭环；需要持续消费 Inbox 时运行 `npm run stage4:worker:local`，持续补偿时运行 `npm run stage4b:worker`。
 13. 执行 `npm run db:verify:stage5a` 验证本地录音归档、重试、死信和重放；需要持续消费模拟录音时运行 `npm run stage5:worker:local`。
 
 本机实际密码保存在忽略提交的 `.env.postgres.local` 和 `outbound-platform-api/.env`，示例文件不包含真实密钥。
+
+## 真实百应任务联调
+
+真实百应写操作默认关闭。完成 OAuth 配置后，先执行不会创建任务或拨号的传输层验收：
+
+```bash
+BAIYING_LIVE_TEST_SCOPE=transport npm run baiying:verify:live
+```
+
+指定既有百应任务可同时验证完成通话分页接口；该操作只读，不创建任务或拨号：
+
+```bash
+BAIYING_LIVE_TEST_SCOPE=transport \
+BAIYING_LIVE_COMPLETED_CALL_JOB_ID=277868620 \
+npm run baiying:verify:live
+```
+
+真实创建、导入、启动、暂停、恢复和终止必须使用明确授权的测试号码，并通过双重环境变量确认：
+
+```bash
+BAIYING_LIVE_TEST_SCOPE=all \
+BAIYING_LIVE_TEST_CONFIRM=CALL_REAL_TEST_NUMBER \
+BAIYING_LIVE_TEST_PHONE=13800000000 \
+npm run baiying:verify:live
+```
+
+脚本默认优先选择名称包含“【测试】”的百应话术和首条可用线路，也可通过 `BAIYING_LIVE_TEST_ROBOT_ID`、`BAIYING_LIVE_TEST_LINE_ID` 明确指定。真实限流探针只有设置 `BAIYING_LIVE_RATE_LIMIT_REQUESTS=1..25` 才会执行；未授权时不会为了制造 `429` 冲击真实账号。
+
+平台 Outbox 使用真实百应编排时，显式设置 `BAIYING_WRITE_ENABLED=true` 并运行：
+
+```bash
+npm run baiying:task-worker
+```
+
+开发环境未开启该开关时继续使用零网络模拟命令；生产环境在 KMS `DataProtector` 接入前拒绝启动真实任务 Worker。
 
 ## 阶段 1 数据底座
 
@@ -51,13 +86,13 @@ npm run db:verify:phase1
 阶段 2A 已实现：
 
 - `POST /openapi/v1/outbound/tasks`，完成 25 MiB、Schema、10,000 客户、手机号与重复值校验。
-- ERP/CRM HMAC-SHA256、5 分钟时间窗、Nonce 防重放、客户端权限和每分钟限流。
+- ERP/CRM 通过固定 `X-Access-Token` 认证，并按来源和 MC code 校验访问范围。
 - MC code、启用影楼、回调端点、价格、余额、分类、话术、线路、场景和映射预检。
 - 在单一 PostgreSQL 事务中保存任务、加密客户明细、配置快照、资金冻结、账本、幂等响应和 `TASK_ACCEPTED` Outbox。
 - 同幂等键同业务报文返回原任务；同键不同报文返回 `IDEMPOTENCY_CONFLICT`。
 - `GET /openapi/v1/outbound/tasks/{taskNo}` 与通话分页查询；百应编排尚未开始前通话页为空。
 
-本地客户端为 `erp-local-01` 和 `crm-local-01`，只授权 `MC-ZTY-001`。密钥通过 `WORKER_SHARED_SECRET` 派生，模拟端点使用 `.invalid` 域名，任务场景标记为 `LOCAL-MOCK`。本地密钥提供器和数据加密器在 `NODE_ENV=production` 时会拒绝启动；阿里云部署时必须换成 KMS `SecretProvider`，配置真实 ERP/CRM 凭证和回调地址后再启用生产入口。
+本地客户端为 `erp-local-01` 和 `crm-local-01`，请求 Token 分别为 `erp-local-access-token` 和 `crm-local-access-token`，只授权 `MC-ZTY-001`。Token 可在影楼管理详情中查看和复制；模拟端点使用 `.invalid` 域名，任务场景标记为 `LOCAL-MOCK`。
 
 从仓库根目录运行完整验证：
 
@@ -67,7 +102,18 @@ npm run db:bootstrap:stage2-local
 npm run db:verify:stage2
 ```
 
-开发/测试环境需要撤销 0009 时，可使用 `drizzle/rollback/0009_stage2_local_intake.down.sql`。它只删除 Nonce 防重放表；生产环境不执行该破坏性回滚。
+## ERP/CRM v2 批次、GUID 与最小结果回调
+
+- `POST /openapi/v2/outbound/tasks` 接收 snake_case 三级分类结构；`source=0/1` 分别对应 ERP/CRM，并与 `X-Access-Token` 识别出的来源交叉校验。
+- 一个请求生成一个 `intake_batch`；执行层按实际百应公司、话术、线路、场景和映射版本形成 1～N 个 `platform_task`。
+- 批次内归一化手机号和 `guid` 均唯一；跨批次允许同一手机号，但每次新业务发起必须使用新 `guid`。HTTP 重试必须复用原 GUID、原幂等键和原正文。
+- 号码动态变量不限定为六个示例字段，也没有业务字段数量上限；null 按映射的 `OMIT` 省略，强依赖项使用版本化 `DEFAULT`，同时保留字节数和 `sx_*` 命名空间保护。
+- 所有子任务完成创建和导入后，批次启动屏障才放行；部分启动失败会形成 `FAILED/PARTIAL_FAILED` 并唤醒其他子任务执行补偿终止。
+- 百应号码属性同时携带 `sx_platform_item_id` 和签名 `sx_correlation_token`。v2 实时/补偿回调禁止仅凭手机号匹配，并将 `properties`、`collectProperties`、`taskResult` 分开处理。
+- v2 任务完成后先等待 `RECONCILIATION_STALE_TASK_MS` 真实回调宽限期，再用完成通话分页补缺，避免不完整补偿结果抢先占用 GUID 的唯一最终结果。
+- 每个 `guid` 只生成一次 `OUTBOUND_CALL_RESULT_V2`；投递时去掉内部事件信封，业务 Body 仅含 GUID、脱敏号码、状态、完整性、实际采集变量和任务结果。兼容期 `externalCustomerId` 与 `guid` 同值。
+- `GET /openapi/v2/outbound/batches/{batchId}` 查询批次及执行子任务；0020 为扩展式迁移，紧急回退优先关闭 v2 路由，保留已写数据。
+- ERP/CRM 结果与录音回传地址同时支持固定 `http://` 和 `https://` URL，包括 HTTP 非标准端口。两种协议共用 HMAC、事件幂等、超时重试和脱敏日志，网络投递不跟随 3xx 跳转。百应录音源的下载安全规则不变，仍仅允许 HTTPS。
 
 ## 阶段 4A 本地回调与计费闭环
 
@@ -89,6 +135,21 @@ npm run stage4:worker:local
 ```
 
 开发/测试环境需要撤销 0010 时，可使用 `drizzle/rollback/0010_callback_inbox_worker.down.sql`。生产环境继续采用 expand → backfill → switch → contract，不执行破坏性 down 脚本。
+
+## 阶段 4B 完成通话分页补偿与人工修复
+
+- Reconciliation Worker 只在百应任务完成后读取完成通话列表，固定每页 500 条，并通过 Callback Inbox 复用 4A 的加密、幂等、计费和录音发现链路。
+- 百应数、平台数和未处理 Inbox 连续两轮保持一致后才标记 `RECONCILED`；差异持续 15 分钟转为 `MANUAL_REVIEW`。
+- `GET /api/v1/reconciliations` 提供运营查询；`POST /api/v1/outbound-tasks/{taskNo}/reconciliation/repair` 要求操作人、至少 8 字原因和 UUID 幂等键，原子恢复任务内失败 Callback Inbox 与对应死信。
+- 异常中心只对 `MANUAL_REVIEW` 和 `FAILED` 展示可执行修复，其余状态由 Worker 自动推进。
+
+```bash
+npm run db:migrate
+npm run db:verify:stage4b
+npm run stage4b:worker
+```
+
+0019 为扩展式迁移；生产环境不通过破坏性 down 回滚。当前本地加密器在 `NODE_ENV=production` 下会拒绝启动，接入 KMS `DataProtector` 前部署环境应保持受控开发模式。
 
 ## 阶段 5A 本地录音归档闭环
 
@@ -276,6 +337,6 @@ npm run stage7b:verify:ui
 
 ## 当前交付范围
 
-阶段 0 契约、阶段 1 数据底座、阶段 2A 本地任务受理、阶段 3A 本地百应编排、阶段 4A 本地回调计费、阶段 5A/5B 本地录音归档与回传、阶段 6A/6B 真实运营后台，以及阶段 7A/7B 本地容量、并发和供应商月结验收均已完成，包括配置版本、任务模型、账户账本、双人复核、外部 HMAC/Nonce/限流、原子受理、可恢复的 Callback Inbox、录音发现、投递/死信、人工重放、规范化话术绑定、PostgreSQL Outbox 安全领取与重试、10,000 条容量和回调突发恢复能力，以及可审计、可幂等、可检测迟到数据的月度成本封账。
+阶段 0 契约、阶段 1 数据底座、阶段 2A 本地任务受理、阶段 3A 本地百应编排、阶段 4A 本地回调计费、阶段 5A/5B 本地录音归档与回传、阶段 6A/6B 真实运营后台，以及阶段 7A/7B 本地容量、并发和供应商月结验收均已完成，包括配置版本、任务模型、账户账本、双人复核、外部固定 Token 认证、原子受理、可恢复的 Callback Inbox、录音发现、投递/死信、人工重放、规范化话术绑定、PostgreSQL Outbox 安全领取与重试、10,000 条容量和回调突发恢复能力，以及可审计、可幂等、可检测迟到数据的月度成本封账。
 
 百应最新 OAuth v2 鉴权、公司发现、机器人/话术发现和话术变量查询已接入。可执行 `npm run baiying:check` 做只读链路检查，或执行 `npm run baiying:sync` 将真实变量快照幂等写入本地 PostgreSQL。真实 ERP/CRM 凭证、回调地址和阿里云 KMS 适配归入阶段 2B；真实百应写接口、回调联调和完成通话分页补偿归入阶段 3B/4B，当前不会拨号或调用真实 ERP/CRM。生产队列首期使用 PostgreSQL Outbox/Inbox Worker，达到方案阈值后接入阿里云 RocketMQ 5.x，事务 Outbox 与持久 Inbox 始终保留。

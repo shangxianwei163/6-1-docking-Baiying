@@ -4,8 +4,10 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Building2,
+  Check,
   CheckCircle2,
   CircleDollarSign,
+  Copy,
   KeyRound,
   LoaderCircle,
   Pencil,
@@ -603,11 +605,30 @@ function StudioDetail({
   studio: OperatorStudio | null;
   onClose: () => void;
 }) {
+  const [copiedClientId, setCopiedClientId] = useState<string | null>(null);
+
+  const copyToken = async (clientId: string, token: string) => {
+    try {
+      await navigator.clipboard.writeText(token);
+      setCopiedClientId(clientId);
+      window.setTimeout(() => {
+        setCopiedClientId((current) =>
+          current === clientId ? null : current,
+        );
+      }, 1600);
+    } catch {
+      setCopiedClientId(null);
+    }
+  };
+
   return (
     <Dialog
       open={Boolean(studio)}
       onOpenChange={(open) => {
-        if (!open) onClose();
+        if (!open) {
+          setCopiedClientId(null);
+          onClose();
+        }
       }}
     >
       <DialogContent className="ops-dialog ops-studio-detail-dialog">
@@ -652,6 +673,55 @@ function StudioDetail({
                 <DetailPair label="创建人" value={studio.createdBy} />
               </DetailCard>
             </div>
+            <section className="ops-token-section">
+              <header>
+                <div>
+                  <span>REQUEST TOKENS</span>
+                  <b>ERP / CRM 请求 Token</b>
+                </div>
+                <small>复制后直接提供给对应系统开发人员</small>
+              </header>
+              {studio.requestTokens.length ? (
+                <div className="ops-token-list">
+                  {studio.requestTokens.map((item) => (
+                    <article key={item.clientId}>
+                      <div className="ops-token-meta">
+                        <Status
+                          tone={
+                            item.sourceSystem === 'ERP' ? 'green' : 'blue'
+                          }
+                        >
+                          {item.sourceSystem}
+                        </Status>
+                        <span>{item.clientId}</span>
+                      </div>
+                      <code>{item.token}</code>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void copyToken(item.clientId, item.token)
+                        }
+                      >
+                        {copiedClientId === item.clientId ? (
+                          <Check aria-hidden="true" size={12} />
+                        ) : (
+                          <Copy aria-hidden="true" size={12} />
+                        )}
+                        {copiedClientId === item.clientId
+                          ? '已复制'
+                          : '复制 Token'}
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="ops-empty is-compact">
+                  <KeyRound aria-hidden="true" size={20} />
+                  <b>尚无请求 Token</b>
+                  <p>当前影楼尚未绑定 ERP 或 CRM 客户端。</p>
+                </div>
+              )}
+            </section>
             <section className="ops-endpoint-section">
               <header>
                 <div>
@@ -689,7 +759,7 @@ function StudioDetail({
                         code
                       />
                       <DetailPair
-                        label="HMAC 密钥"
+                        label="回调签名密钥"
                         value={
                           endpoint.secretConfigured
                             ? '已配置密钥引用'
@@ -840,7 +910,7 @@ function StudioEditor({
                 onChange={(event) =>
                   onFormChange({ ...form, erpResultUrl: event.target.value })
                 }
-                placeholder="https://erp.example.com/callback"
+                placeholder="http(s)://erp.example.com/callback"
               />
             </label>
             <label className="ops-field">
@@ -854,7 +924,7 @@ function StudioEditor({
                     erpRecordingUrl: event.target.value,
                   })
                 }
-                placeholder="https://erp.example.com/recording-callback"
+                placeholder="http(s)://erp.example.com/recording-callback"
               />
             </label>
             <div className="ops-endpoint-form-heading ops-field-wide">
@@ -872,7 +942,7 @@ function StudioEditor({
                 onChange={(event) =>
                   onFormChange({ ...form, crmResultUrl: event.target.value })
                 }
-                placeholder="https://crm.example.com/callback"
+                placeholder="http(s)://crm.example.com/callback"
               />
             </label>
             <label className="ops-field">
@@ -886,7 +956,7 @@ function StudioEditor({
                     crmRecordingUrl: event.target.value,
                   })
                 }
-                placeholder="https://crm.example.com/recording-callback"
+                placeholder="http(s)://crm.example.com/recording-callback"
               />
             </label>
             <div className="ops-form-note">
@@ -1125,10 +1195,19 @@ function endpointDraftsFromForm(
       ['录音回传地址', endpoint.recordingUrl],
     ] as const) {
       try {
-        if (new URL(value).protocol !== 'https:') throw new Error();
+        const url = new URL(value);
+        if (
+          (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+          url.username ||
+          url.password ||
+          url.search ||
+          url.hash
+        ) {
+          throw new Error();
+        }
       } catch {
         throw new Error(
-          `${endpoint.sourceSystem} ${label}必须是完整的 HTTPS 地址`,
+          `${endpoint.sourceSystem} ${label}必须是完整的 HTTP 或 HTTPS 地址，且不能包含凭证、查询串或片段`,
         );
       }
     }

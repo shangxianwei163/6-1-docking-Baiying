@@ -67,7 +67,7 @@ export function SupplierPricingEditor({
 }) {
   const [open, setOpen] = useState(false);
   const [tiers, setTiers] = useState<EditableTier[]>([]);
-  const [effectiveMonth, setEffectiveMonth] = useState(nextShanghaiMonth);
+  const [effectiveMonth, setEffectiveMonth] = useState(currentShanghaiMonth);
   const [reason, setReason] = useState('根据海南人像最新供应报价调整月度成本');
   const [preview, setPreview] = useState<SupplierPricingPreview | null>(null);
   const [preparedInput, setPreparedInput] =
@@ -125,7 +125,7 @@ export function SupplierPricingEditor({
     setEffectiveMonth(
       scheduledTiers[0]
         ? shanghaiMonth(scheduledTiers[0].effectiveFrom)
-        : nextShanghaiMonth(),
+        : currentShanghaiMonth(),
     );
     setPreview(null);
     setPreparedInput(null);
@@ -267,7 +267,7 @@ export function SupplierPricingEditor({
                   <UnifiedDatePicker
                     ariaLabel="供应价格生效月份"
                     mode="month"
-                    min={nextShanghaiMonth()}
+                    min={currentShanghaiMonth()}
                     value={effectiveMonth}
                     popupLabel="选择供应价格生效月份"
                     ariaInvalid={
@@ -639,7 +639,7 @@ function supplierPricingValidationFeedback(
   if (section === 'effectiveFrom') {
     return {
       title: '请选择生效月份',
-      detail: '供应价格新版本只能从未来自然月开始生效。',
+      detail: '供应价格新版本可从当前自然月或未来自然月开始生效。',
       field: 'effectiveMonth',
     };
   }
@@ -664,11 +664,10 @@ function nextTierCode(tiers: EditableTier[]): string {
   return `tier-${sequence}`;
 }
 
-function nextShanghaiMonth(): string {
+function currentShanghaiMonth(): string {
   const shanghai = new Date(Date.now() + 8 * 60 * 60 * 1_000);
-  const nextMonth = shanghai.getUTCMonth() + 1;
-  const year = shanghai.getUTCFullYear() + Math.floor(nextMonth / 12);
-  const month = (nextMonth % 12) + 1;
+  const year = shanghai.getUTCFullYear();
+  const month = shanghai.getUTCMonth() + 1;
   return `${year}-${String(month).padStart(2, '0')}`;
 }
 

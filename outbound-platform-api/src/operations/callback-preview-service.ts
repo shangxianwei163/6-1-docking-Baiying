@@ -6,7 +6,7 @@ import {
   type CallbackPreview,
   type CallbackPreviewInput,
 } from '@outbound/contracts';
-import { sha256Hex } from '../security/request-signature.js';
+import { sha256Hex } from '../security/sha256.js';
 
 export interface CallbackPreviewService {
   generate(input: CallbackPreviewInput): CallbackPreview;

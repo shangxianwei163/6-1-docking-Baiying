@@ -33,6 +33,7 @@ const localSources = [
   {
     sourceSystem: 'ERP' as const,
     clientId: 'erp-local-01',
+    accessToken: 'erp-local-access-token',
     categoryId: 'LOCAL-ERP-WEDDING',
     categoryPath: '本地联调/ERP/婚礼邀约',
     robotDefId: 'LOCAL-ROBOT-ERP-001',
@@ -41,6 +42,7 @@ const localSources = [
   {
     sourceSystem: 'CRM' as const,
     clientId: 'crm-local-01',
+    accessToken: 'crm-local-access-token',
     categoryId: 'LOCAL-CRM-WEDDING',
     categoryPath: '本地联调/CRM/婚礼邀约',
     robotDefId: 'LOCAL-ROBOT-CRM-001',
@@ -116,6 +118,7 @@ export async function bootstrapStage2Local(db: Database, now = new Date()) {
           clientId: source.clientId,
           sourceSystem: source.sourceSystem,
           displayName: `${source.sourceSystem} 本地模拟客户端`,
+          accessToken: source.accessToken,
           secretRef: `local-hkdf://${source.clientId}`,
           status: 'ACTIVE',
           rateLimitPerMinute: 120,
@@ -128,6 +131,7 @@ export async function bootstrapStage2Local(db: Database, now = new Date()) {
           set: {
             sourceSystem: source.sourceSystem,
             displayName: `${source.sourceSystem} 本地模拟客户端`,
+            accessToken: source.accessToken,
             secretRef: `local-hkdf://${source.clientId}`,
             status: 'ACTIVE',
             rateLimitPerMinute: 120,

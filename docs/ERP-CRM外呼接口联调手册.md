@@ -1,310 +1,304 @@
 # ERP / CRM 外呼接口联调手册
 
-> 契约版本：1.0.0  
-> 文档日期：2026-09-06  
-> 状态：阶段 0 联调基线，待 ERP、CRM 双方签字确认  
-> 机器可读契约：`outbound-contracts/openapi/openapi.yaml`
+> 契约版本：2.0.0
+> 文档日期：2026-09-10
+> 适用系统：ERP、CRM 及百应外呼调度平台
+> 生产地址：`https://scheduling.paiyide.cc`
 
-## 1. 联调目标
+## 1. 接口清单
 
-ERP 和 CRM 使用同一套接口创建外呼任务、查询任务及通话结果、控制任务，并查询所属影楼账户。平台异步调用百应，随后把启动结果、通话结果、录音清单和完成摘要投递到任务来源系统。
+| 方向           | 方法与地址                                   | 用途                             |
+| -------------- | -------------------------------------------- | -------------------------------- |
+| ERP/CRM → 平台 | `POST /openapi/v2/outbound/tasks`            | 新增一个外呼业务批次             |
+| ERP/CRM → 平台 | `GET /openapi/v2/outbound/batches/{batchId}` | 查询批次及执行任务状态           |
+| 平台 → ERP/CRM | 运营端配置的结果回传地址                     | 每个 `guid` 回传一次最终业务结果 |
+| 平台 → ERP/CRM | 运营端配置的录音回传地址                     | 录音归档后回传下载信息           |
 
-本契约固定以下语义：
+新增接入只使用本手册中的接口和字段，不使用其他历史请求结构。
 
-- 创建成功表示平台已完成本地校验、余额冻结和任务持久化，不表示百应已经开始呼叫。
-- 每个来源请求只生成一个平台任务和一个百应 `callJobId`。
-- 一个请求中的所有数据分类必须解析到同一话术和同一线路，否则整个请求被拒绝。
-- 百应客户导入必须全量成功才允许启动；部分成功按整个任务启动失败处理。
-- 调用和回调均采用至少一次投递，双方必须实现幂等。
-- 金额使用最多 6 位小数的十进制字符串；禁止使用 JSON number 传金额。
+## 2. 整体流转
 
-## 2. 固定容量与默认值
+1. ERP/CRM 每次发起外呼时，为每个号码生成新的 `guid`。
+2. ERP/CRM 把一级分类、二级分类和按三级分类分组的客户列表一次提交给平台。
+3. 平台校验请求 Token、影楼、分类、话术、线路、变量映射、价格和余额。
+4. 平台生成一个 `batch_id`，再按实际命中的话术、线路和场景拆成 1～N 个执行任务。
+5. 每个执行任务对应一个百应任务。所有百应任务创建并完成号码导入后，平台才统一放行启动。
+6. 百应回调后，平台使用内部关联令牌和号码摘要双重核验，定位本次发起对应的 `guid`。
+7. 平台把每个 `guid` 的最终结果可靠投递到原 ERP 或 CRM。
+8. 有录音时，平台完成归档后再向录音地址投递下载信息。
 
-| 项目                  | 1.0 固定值                              |
-| --------------------- | --------------------------------------- |
-| 单任务客户数          | 1～10,000                               |
-| 单客户 `fields` 数量  | 最多 100                                |
-| `fields` 键长度       | 1～128 字符                             |
-| `fields` 字符串值     | 最多 2,000 字符                         |
-| 创建任务 Body         | UTF-8 编码后最多 25 MiB                 |
-| 通话结果事件          | 每批最多 200 条，或最多等待 5 秒聚合    |
-| 录音事件              | 每批最多 100 条                         |
-| 查询通话默认/最大页数 | 200 / 500                               |
-| 账本默认/最大页数     | 100 / 500                               |
-| 请求时间偏差          | 最多 ±5 分钟                            |
-| Nonce 防重放窗口      | 至少 10 分钟                            |
-| 幂等记录保留          | 至少 7 天                               |
-| 录音下载 URL          | 默认 15 分钟有效                        |
-| 平台录音保存          | 默认 180 天，正式上线前由业务与法务确认 |
+不同 `c_level` 不一定产生不同百应任务：只有实际命中的话术、线路、场景或映射版本不同才拆分；实际路由相同则合并为一个任务。
 
-超过 10,000 个客户时，来源系统应按业务批次主动拆分请求，并为每批使用不同的 `externalRequestId` 与 `Idempotency-Key`。
+## 3. 身份认证
 
-## 3. 环境与凭证
+平台为 ERP 和 CRM 分别提供：
 
-联调开始前，平台分别向 ERP 和 CRM 提供：
+- 固定请求 Token
+- 允许访问的 MC code
+- 结果回传地址和录音回传地址
+- 回调验签密钥 `callbackSecret`
 
-| 配置             | 说明                                      |
-| ---------------- | ----------------------------------------- |
-| `baseUrl`        | 联调环境 API 地址                         |
-| `clientId`       | 来源系统客户端 ID                         |
-| `clientSecret`   | Base64 编码的 32 字节随机密钥，只展示一次 |
-| `allowedMcCodes` | 当前凭证可访问的 MC code 清单             |
-| 结果回调 URL     | 接收启动、失败、通话结果和完成事件        |
-| 录音回调 URL     | 接收录音可下载事件                        |
-| `callbackSecret` | Base64 编码的回调验签密钥，只展示一次     |
+请求 Token 可直接在运营后台的影楼管理详情中查看和复制。ERP Token 只能提交 `source=0`，CRM Token 只能提交 `source=1`；调用方只能访问 Token 已授权的 `company_code`。
 
-ERP 凭证只能提交 `sourceSystem=ERP`，CRM 凭证只能提交 `sourceSystem=CRM`。客户端也只能访问授权 MC code 下的数据。
-
-## 4. 请求签名
-
-### 4.1 请求头
-
-所有 `/openapi/v1` 请求必须包含：
+### 3.1 请求头
 
 ```http
-X-Client-Id: erp-uat-01
-X-Timestamp: 1788660000000
-X-Nonce: 4164c09726074d3f9598b393250fed22
-X-Signature: nZ4i...base64...
+X-Access-Token: erp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 X-Request-Id: 9bba018d-36b2-478d-af0a-af3f7d573937
 Content-Type: application/json
 ```
 
-所有有副作用的接口还必须包含：
+新增批次还必须发送：
 
 ```http
-Idempotency-Key: erp-order-batch-20260906-001
+Idempotency-Key: erp-call-20260909-0001
 ```
 
-### 4.2 签名原文
+`X-Request-Id` 可省略，`X-Access-Token` 必须发送。ERP/CRM 不需要计算签名，也不需要生成时间戳或 Nonce。
 
-```text
-UPPERCASE_HTTP_METHOD + "\n" +
-CANONICAL_TARGET + "\n" +
-X_TIMESTAMP + "\n" +
-X_NONCE + "\n" +
-LOWERCASE_HEX_SHA256(RAW_BODY_BYTES)
-```
-
-`CANONICAL_TARGET` 的规则：
-
-1. 只包含 URL path 与规范化 query，不包含 scheme、host、fragment。
-2. 没有 query 时就是原始 path，例如 `/openapi/v1/outbound/tasks`。
-3. 有 query 时，键和值先按 RFC 3986 进行百分号编码，再按编码后的键、值升序排列，保留重复键，以 `&` 连接。
-4. 空 Body 的 SHA-256 固定为 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`。
-5. Body Hash 基于实际发送的原始字节；平台不会重新格式化 JSON 后再验签。
-6. 使用 Base64 解码后的 `clientSecret` 字节作为 HMAC-SHA256 Key，结果再做标准 Base64 编码。
-
-例如：
-
-```text
-GET
-/openapi/v1/outbound/tasks/PT-20260906-00025/calls?cursor=abc%2B123&limit=200
-1788660000000
-4164c09726074d3f9598b393250fed22
-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-```
-
-### 4.3 ERP（C#）签名示例
-
-```csharp
-using System.Net.Http.Headers;
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
-
-static string Encode(string value) => Uri.EscapeDataString(value);
-
-static string CanonicalTarget(
-    string path,
-    IEnumerable<KeyValuePair<string, string>> query)
-{
-    var encoded = query
-        .Select(x => (Key: Encode(x.Key), Value: Encode(x.Value)))
-        .OrderBy(x => x.Key, StringComparer.Ordinal)
-        .ThenBy(x => x.Value, StringComparer.Ordinal)
-        .Select(x => $"{x.Key}={x.Value}");
-    var queryString = string.Join("&", encoded);
-    return queryString.Length == 0 ? path : $"{path}?{queryString}";
-}
-
-static string Sign(
-    string method,
-    string target,
-    string timestamp,
-    string nonce,
-    byte[] body,
-    string secretBase64)
-{
-    var bodyHash = Convert.ToHexString(SHA256.HashData(body)).ToLowerInvariant();
-    var canonical = $"{method.ToUpperInvariant()}\n{target}\n{timestamp}\n{nonce}\n{bodyHash}";
-    var key = Convert.FromBase64String(secretBase64);
-    return Convert.ToBase64String(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(canonical)));
-}
-
-var path = "/openapi/v1/outbound/tasks";
-var target = CanonicalTarget(path, Array.Empty<KeyValuePair<string, string>>());
-var body = JsonSerializer.SerializeToUtf8Bytes(requestDto);
-var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
-var nonce = Guid.NewGuid().ToString("N");
-var signature = Sign("POST", target, timestamp, nonce, body, clientSecretBase64);
-
-using var request = new HttpRequestMessage(HttpMethod.Post, baseUrl + target);
-request.Headers.Add("X-Client-Id", clientId);
-request.Headers.Add("X-Timestamp", timestamp);
-request.Headers.Add("X-Nonce", nonce);
-request.Headers.Add("X-Signature", signature);
-request.Headers.Add("X-Request-Id", Guid.NewGuid().ToString());
-request.Headers.Add("Idempotency-Key", idempotencyKey);
-request.Content = new ByteArrayContent(body);
-request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-```
-
-### 4.4 CRM（PHP）签名示例
-
-```php
-<?php
-
-function canonicalTarget(string $path, array $query = []): string
-{
-    ksort($query, SORT_STRING);
-    $queryString = http_build_query($query, '', '&', PHP_QUERY_RFC3986);
-    return $queryString === '' ? $path : $path . '?' . $queryString;
-}
-
-function signRequest(
-    string $method,
-    string $target,
-    string $timestamp,
-    string $nonce,
-    string $body,
-    string $secretBase64
-): string {
-    $key = base64_decode($secretBase64, true);
-    if ($key === false) {
-        throw new RuntimeException('clientSecret 不是合法 Base64');
-    }
-    $canonical = strtoupper($method) . "\n"
-        . $target . "\n"
-        . $timestamp . "\n"
-        . $nonce . "\n"
-        . hash('sha256', $body);
-    return base64_encode(hash_hmac('sha256', $canonical, $key, true));
-}
-
-$path = '/openapi/v1/outbound/tasks';
-$target = canonicalTarget($path);
-$body = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
-$timestamp = (string) floor(microtime(true) * 1000);
-$nonce = bin2hex(random_bytes(16));
-$signature = signRequest('POST', $target, $timestamp, $nonce, $body, $clientSecretBase64);
-
-$headers = [
-    'Content-Type: application/json',
-    'X-Client-Id: ' . $clientId,
-    'X-Timestamp: ' . $timestamp,
-    'X-Nonce: ' . $nonce,
-    'X-Signature: ' . $signature,
-    'X-Request-Id: ' . bin2hex(random_bytes(16)),
-    'Idempotency-Key: ' . $idempotencyKey,
-];
-```
-
-PHP 示例的 query 使用唯一键；如未来接口允许重复 query 键，调用方必须使用可保留重复键的键值对列表实现规范化。
-
-## 5. 创建任务
+## 4. 新增外呼批次
 
 ```http
-POST /openapi/v1/outbound/tasks
+POST /openapi/v2/outbound/tasks
 ```
 
-ERP 和 CRM 请求样例分别位于：
+### 4.1 请求字段
 
-- `outbound-contracts/examples/erp-create-task.request.json`
-- `outbound-contracts/examples/crm-create-task.request.json`
+| 字段                          | 类型                       | 必传 | 说明                                     |
+| ----------------------------- | -------------------------- | ---- | ---------------------------------------- |
+| `main_category`               | string                     | 是   | 一级分类                                 |
+| `sub_category`                | string                     | 是   | 二级分类                                 |
+| `source`                      | integer                    | 是   | `0=ERP`，`1=CRM`，必须与请求 Token 一致  |
+| `company_code`                | string                     | 是   | 发起影楼的 MC code                       |
+| `customer_list`               | array                      | 是   | 按三级分类分组的客户列表                 |
+| `customer_list[].c_level`     | string                     | 是   | 三级分类，允许空字符串                   |
+| `customer_list[].c_info_list` | array                      | 是   | 当前三级分类下的号码列表                 |
+| `phone`                       | string                     | 是   | 7～15 位国际号码格式；同一批次内不可重复 |
+| `guid`                        | string                     | 是   | 本次发起的号码唯一值，建议使用 UUID      |
+| `customer_name`               | string/null                | 否   | 客户称呼                                 |
+| 其他字段                      | string/number/boolean/null | 否   | 当前号码自己的动态业务变量               |
 
-成功返回 HTTP `202 Accepted`。响应中的 `reservedAmount` 是本次冻结金额，`statusUrl` 可立即查询：
+号码对象除 `phone`、`guid` 和 `customer_name` 外，其他字段都按动态变量处理，不限定变量名称和固定数量。平台保留以下技术限制：
+
+- 单变量名最多 128 UTF-8 字节。
+- 单变量值最多 8 KiB。
+- 单号码动态变量 JSON 最多 128 KiB。
+- 整个请求最多 10,000 个号码、25 MiB。
+- `sx_*`、`__proto__`、`constructor`、`prototype` 是平台保留名称，调用方不能使用。
+- 动态变量为 `null` 时不导入百应；话术强依赖变量由平台已发布映射提供默认值。
+
+### 4.2 请求示例
 
 ```json
 {
-  "code": "TASK_ACCEPTED",
-  "message": "任务已受理，正在创建百应外呼任务",
-  "requestId": "9bba018d-36b2-478d-af0a-af3f7d573937",
+  "main_category": "排档",
+  "sub_category": "孕妈",
+  "source": 0,
+  "company_code": "5903679116",
+  "customer_list": [
+    {
+      "c_level": "",
+      "c_info_list": [
+        {
+          "phone": "13500000001",
+          "guid": "11111111-1111-4111-8111-111111111101",
+          "customer_name": "测试客户A",
+          "photoshop": "湖滨店",
+          "photodate": "2026-09-20",
+          "selectshop": null
+        }
+      ]
+    },
+    {
+      "c_level": "SR3",
+      "c_info_list": [
+        {
+          "phone": "18300000003",
+          "guid": "11111111-1111-4111-8111-111111111103",
+          "customer_name": "测试客户B",
+          "自定义扩展变量": "可继续增加"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### 4.3 成功响应
+
+HTTP 状态码：`202 Accepted`
+
+```json
+{
+  "code": "BATCH_ACCEPTED",
+  "message": "外呼批次已受理",
+  "request_id": "9bba018d-36b2-478d-af0a-af3f7d573937",
   "data": {
-    "taskId": "c5f1d5e0-1c67-4d02-a7a3-58666ea55792",
-    "taskNo": "PT-20260906-00025",
-    "executionStatus": "ACCEPTED",
-    "displayStatus": "执行中",
-    "phoneCount": 1,
-    "reservedAmount": "0.960000",
-    "currency": "CNY",
-    "statusUrl": "/openapi/v1/outbound/tasks/PT-20260906-00025"
+    "batch_id": "4f4f0d65-8d01-48c9-b87f-71569344cb63",
+    "execution_status": "ACCEPTED",
+    "phone_count": 2,
+    "task_count": 2,
+    "tasks": [
+      {
+        "task_id": "c5f1d5e0-1c67-4d02-a7a3-58666ea55792",
+        "task_no": "PT-20260909-00025",
+        "phone_count": 1,
+        "status_url": "/openapi/v1/outbound/tasks/PT-20260909-00025"
+      },
+      {
+        "task_id": "0871e61e-7749-4684-9cb6-aad28c220a5a",
+        "task_no": "PT-20260909-00026",
+        "phone_count": 1,
+        "status_url": "/openapi/v1/outbound/tasks/PT-20260909-00026"
+      }
+    ],
+    "status_url": "/openapi/v2/outbound/batches/4f4f0d65-8d01-48c9-b87f-71569344cb63"
   }
 }
 ```
 
-### 5.1 幂等规则
+`202` 只表示平台已经完整受理，不表示百应已经拨号。`task_count` 可能为 1，也可能大于 1。
 
-`externalRequestId` 是来源系统业务关联号；`Idempotency-Key` 是 HTTP 重试幂等键，两者不能互相替代。
+### 4.4 GUID 与幂等规则
 
-| 场景                                 | 平台行为                                               |
-| ------------------------------------ | ------------------------------------------------------ |
-| 同客户端、同幂等键、相同原始业务报文 | 返回第一次的状态码和任务结果，不重复冻结、不重复建任务 |
-| 同客户端、同幂等键、不同业务报文     | HTTP 409，`IDEMPOTENCY_CONFLICT`                       |
-| 调用方超时、不确定是否受理           | 使用原幂等键和完全相同的 Body 重试                     |
-| 确认要创建另一个任务                 | 使用新的 `externalRequestId` 和新的幂等键              |
+| 场景                 | 调用要求                                                                              | 平台行为                        |
+| -------------------- | ------------------------------------------------------------------------------------- | ------------------------------- |
+| HTTP 超时后重试      | 复用原 GUID、原 `Idempotency-Key`、原 Token 和字节完全一致的 Body                     | 返回原批次，不重复建任务        |
+| 同幂等键但 Body 不同 | 禁止                                                                                  | 返回 `409 IDEMPOTENCY_CONFLICT` |
+| 同一号码以后再次发起 | 使用新 GUID 和新 `Idempotency-Key`                                                    | 创建新批次，允许再次呼叫        |
+| 同批次 GUID 重复     | 禁止                                                                                  | 整批返回 `422 GUID_DUPLICATED`  |
+| 同批次手机号重复     | 禁止                                                                                  | 整批返回 `422 PHONE_DUPLICATED` |
 
-平台以解析后的业务 Payload 生成稳定哈希用于幂等冲突判断；签名仍以实际发送的原始 Body 字节计算。
+平台生成 `batch_id`，ERP/CRM 不需要传业务批次号。幂等记录在批次未结束时不会过期，批次结束后至少保留 180 天。
 
-### 5.2 同步错误与异步失败
-
-- 请求格式、权限、余额、分类、话术、线路或映射问题在创建请求中同步返回 `4xx`，不会创建任务。
-- 返回 `202` 后发生的百应创建、导入或启动失败，通过 `OUTBOUND_TASK_START_FAILED` 事件和任务查询接口返回。
-- 创建阶段失败时百应 ID 可能尚不存在，所以失败事件中的 `baiyingCallJobId` 允许为 `null`。
-
-## 6. 查询与控制接口
-
-| 接口                                                              | 用途                                                     |
-| ----------------------------------------------------------------- | -------------------------------------------------------- |
-| `GET /openapi/v1/outbound/tasks/{taskNo}`                         | 查询任务、配置快照、导入统计、五条状态线、计费与失败信息 |
-| `GET /openapi/v1/outbound/tasks/{taskNo}/calls`                   | 用游标分页查询脱敏通话明细                               |
-| `GET /openapi/v1/outbound/tasks/{taskNo}/calls/{callId}`          | 查询单条通话、计费和录音状态                             |
-| `POST /openapi/v1/outbound/tasks/{taskNo}/commands`               | 提交 `START`、`RESUME`、`PAUSE`、`TERMINATE`             |
-| `POST /openapi/v1/outbound/recordings/{recordingId}/download-url` | 重新签发短期录音 URL                                     |
-| `GET /openapi/v1/studios/{mcCode}/balance`                        | 查询余额、冻结和可用余额                                 |
-| `GET /openapi/v1/studios/{mcCode}/ledger`                         | 查询充值、冻结、扣费、释放、退款和调整流水               |
-
-所有分页 `cursor` 都是不透明字符串。调用方只能原样带回，不能解析、拼接或长期缓存。
-
-命令接口返回 `202` 和 `operationStatus=PENDING`，不承诺百应已完成该操作。调用方应等待状态回调或查询任务终态。
-
-## 7. 平台向 ERP/CRM 投递事件
-
-结果回调地址接收：
-
-- `OUTBOUND_TASK_STARTED`
-- `OUTBOUND_TASK_START_FAILED`
-- `OUTBOUND_CALL_RESULT_BATCH`
-- `OUTBOUND_TASK_COMPLETED`
-
-录音回调地址只接收：
-
-- `OUTBOUND_RECORDING_AVAILABLE_BATCH`
-
-完整样例位于 `outbound-contracts/examples/*.event.json`。
-
-### 7.1 回调签名
-
-平台发送：
+## 5. 查询外呼批次
 
 ```http
-X-Platform-Event-Id: 11111111-1111-4111-8111-111111111113
+GET /openapi/v2/outbound/batches/{batchId}
+```
+
+请求使用与新增接口相同的 `X-Access-Token`，但 GET 不需要 `Idempotency-Key`。
+
+```json
+{
+  "code": "OK",
+  "message": "success",
+  "request_id": "9bba018d-36b2-478d-af0a-af3f7d573937",
+  "data": {
+    "batch_id": "4f4f0d65-8d01-48c9-b87f-71569344cb63",
+    "source": 0,
+    "company_code": "5903679116",
+    "main_category": "排档",
+    "sub_category": "孕妈",
+    "execution_status": "RUNNING",
+    "phone_count": 2,
+    "task_count": 2,
+    "tasks": [
+      {
+        "task_id": "c5f1d5e0-1c67-4d02-a7a3-58666ea55792",
+        "task_no": "PT-20260909-00025",
+        "phone_count": 1,
+        "execution_status": "CALLING",
+        "status_url": "/openapi/v1/outbound/tasks/PT-20260909-00025"
+      }
+    ],
+    "created_at": "2026-09-09T10:00:00+08:00",
+    "completed_at": null
+  }
+}
+```
+
+批次状态：`ACCEPTED`、`PREPARING`、`RUNNING`、`PARTIAL_FAILED`、`COMPLETED`、`FAILED`、`CANCELLED`。
+
+## 6. 业务结果回传
+
+平台向影楼当前来源配置的结果地址发送 HTTP POST。地址同时支持 HTTP 和 HTTPS，可以使用非标准端口；平台不接受新增任务请求临时指定回调地址，也不跟随 HTTP 3xx 跳转。
+
+### 6.1 请求头
+
+```http
+X-Platform-Event-Id: 22222222-2222-4222-8222-222222222222
 X-Timestamp: 1788661800000
-X-Signature: 6q5h...base64...
+X-Signature: Base64-HMAC-SHA256-Signature
+X-Contract-Version: 2.0
 Content-Type: application/json
 ```
 
-回调签名原文：
+### 6.2 请求 Body
+
+```json
+{
+  "guid": "11111111-1111-4111-8111-111111111101",
+  "externalCustomerId": "11111111-1111-4111-8111-111111111101",
+  "phone_masked": "135****0001",
+  "call_status": "ANSWERED",
+  "finish_status": 0,
+  "result_complete": true,
+  "collected_variables": {
+    "预约门店": "湖滨店",
+    "预约日期": "2026-09-20"
+  },
+  "task_results": [
+    {
+      "resultName": "客户意向等级",
+      "resultValue": "A"
+    }
+  ]
+}
+```
+
+字段说明：
+
+| 字段                  | 类型         | 说明                                                             |
+| --------------------- | ------------ | ---------------------------------------------------------------- |
+| `guid`                | string       | ERP/CRM 本次发起时传入的 GUID                                    |
+| `externalCustomerId`  | string       | 短期过渡字段，值与 `guid` 完全相同；新接入只读取 `guid`          |
+| `phone_masked`        | string       | 脱敏号码                                                         |
+| `call_status`         | enum         | `ANSWERED`、`NO_ANSWER`、`BUSY`、`REJECTED`、`FAILED`、`UNKNOWN` |
+| `finish_status`       | integer/null | 百应结束状态码                                                   |
+| `result_complete`     | boolean      | 是否取得完整最终结果                                             |
+| `collected_variables` | object       | 仅来自百应本次通话实际采集结果                                   |
+| `task_results`        | array        | 仅来自百应本次通话实际产生的任务结果                             |
+
+每个 `guid` 只投递一个最终业务结果。Body 不包含完整手机号、呼叫前原始动态变量、批次号、任务号、百应任务 ID 或平台内部 `sx_*` 字段。
+
+## 7. 录音回传
+
+有录音时，平台归档完成后向影楼当前来源配置的录音地址发送 HTTP POST。没有实际拨号或百应没有生成录音时，不发送录音回调。
+
+```json
+{
+  "schemaVersion": "1.0",
+  "eventId": "33333333-3333-4333-8333-333333333333",
+  "eventType": "OUTBOUND_RECORDING_AVAILABLE_BATCH",
+  "occurredAt": "2026-09-09T10:31:00+08:00",
+  "sourceSystem": "ERP",
+  "mcCode": "5903679116",
+  "taskNo": "PT-20260909-00025",
+  "baiyingCallJobId": "279131720",
+  "batchNo": 1,
+  "isLastBatch": true,
+  "recordings": [
+    {
+      "recordingId": "44444444-4444-4444-8444-444444444444",
+      "platformCallId": "55555555-5555-4555-8555-555555555555",
+      "baiyingCallInstanceId": "3891451944180",
+      "kind": "FULL",
+      "contentType": "audio/mpeg",
+      "sizeBytes": 384210,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "downloadUrl": "https://scheduling.paiyide.cc/api/v1/recordings/44444444-4444-4444-8444-444444444444/content?exp=1788662760&aud=...&sig=...",
+      "expiresAt": "2026-09-09T10:46:00+08:00"
+    }
+  ]
+}
+```
+
+接收方应在 `expiresAt` 前下载录音并使用 `sha256` 校验文件完整性。录音下载地址不得写入普通日志、监控告警或工单。
+
+## 8. 回调验签与 ACK
+
+业务结果和录音回调使用相同签名算法：
 
 ```text
 POST + "\n" +
@@ -314,99 +308,57 @@ X_PLATFORM_EVENT_ID + "\n" +
 LOWERCASE_HEX_SHA256(RAW_BODY_BYTES)
 ```
 
-使用 Base64 解码后的 `callbackSecret` 作为 HMAC Key。接收方应先验证：时间偏差、Header 事件 ID 与 Body `eventId` 相等、HMAC 使用常量时间比较；再以 `eventId` 唯一落库，最后 ACK。
+接收方处理顺序：
 
-### 7.2 ACK 与幂等
+1. 校验时间戳允许范围。
+2. 使用当前回调地址对应的 `callbackSecret` 校验 HMAC-SHA256 签名。
+3. 以 `X-Platform-Event-Id` 唯一落库。
+4. 完成原始 Body 持久化后立即返回任意 `2xx`。
+5. 重复事件不重复处理业务，但仍返回成功。
 
-标准 ACK：
+联调统一 ACK：
 
-```http
-HTTP/1.1 200 OK
-Content-Type: application/json
-
-{"code":200,"message":"success"}
+```json
+{
+  "code": 200,
+  "message": "success"
+}
 ```
 
-平台把任意 HTTP `2xx` 视为成功，但双方联调测试统一使用上述 JSON。重复事件必须返回同样的成功响应，不能因为数据库唯一键冲突返回 `409`。
+网络错误、`408`、`429` 和 `5xx` 会进入退避重试；其他 `4xx` 视为不可重试错误并进入人工处理。
 
-接收方应按如下顺序处理：
+## 9. 常见错误
 
-1. 保留原始 Body 字节并验签。
-2. 开启本地数据库事务。
-3. 以 `eventId` 插入 Inbox；已存在时直接标记为重复。
-4. 原始事件可靠落库后提交事务。
-5. 返回 ACK。
-6. 在接收方自己的异步任务中更新业务数据，不要在 HTTP 回调链路做耗时操作。
+| HTTP | code                                                               | 说明                                                     |
+| ---- | ------------------------------------------------------------------ | -------------------------------------------------------- |
+| 400  | `INVALID_REQUEST`                                                  | JSON、请求头、幂等键或字段格式不合法                     |
+| 401  | `AUTHENTICATION_FAILED`                                            | `X-Access-Token` 缺失或无效                              |
+| 403  | `AUTHENTICATION_FAILED`                                            | 来源与请求 Token 不一致，或当前 Token 无权访问影楼       |
+| 404  | `STUDIO_NOT_FOUND` / `TASK_NOT_FOUND`                              | 影楼或批次不存在                                         |
+| 409  | `IDEMPOTENCY_CONFLICT` / `INSUFFICIENT_BALANCE`                    | 幂等冲突或可用余额不足                                   |
+| 413  | `INVALID_REQUEST`                                                  | 请求体超过 25 MiB                                        |
+| 422  | `GUID_DUPLICATED` / `PHONE_DUPLICATED` / `DATA_CATEGORY_NOT_FOUND` | 批次内 GUID 或手机号重复，或分类、话术、线路、映射未通过 |
+| 503  | `SERVICE_TEMPORARILY_UNAVAILABLE`                                  | 平台或依赖暂时不可用，使用原幂等键重试                   |
 
-事件可能重复或乱序。`OUTBOUND_TASK_COMPLETED` 表示通话结果已完成对账，不表示录音回传已经完成；录音事件可以稍后到达。
+错误响应示例：
 
-### 7.3 事件重试
-
-非 `2xx`、网络错误和超时按以下节奏重试：
-
-```text
-1 分钟 → 5 分钟 → 15 分钟 → 30 分钟 → 1 小时 → 2 小时 → 4 小时 → 8 小时
+```json
+{
+  "code": "GUID_DUPLICATED",
+  "message": "同一批次内 guid 不可重复",
+  "requestId": "9bba018d-36b2-478d-af0a-af3f7d573937"
+}
 ```
-
-重试沿用原 `eventId` 和原 Body。`408`、`429`、`5xx` 默认可重试；其他 `4xx` 默认进入死信并触发人工处理。
-
-## 8. 录音下载
-
-平台回调提供的 `downloadUrl` 指向私有阿里云 OSS 对象的短期签名 URL，不是百应临时地址。调用方应：
-
-1. 在 `expiresAt` 前下载，不在日志、监控或工单中记录完整 URL。
-2. 下载后计算 SHA-256，并与事件中的 `sha256` 小写十六进制值比较。
-3. URL 过期或即将过期时，调用重新签发接口；不要直接重试旧 URL。
-4. 以 `recordingId` 幂等保存文件，避免重复事件产生重复附件。
-
-重新签发请求必须携带 8～128 字符的 `Idempotency-Key`。网络超时后以新 Nonce、时间戳和签名重试，但沿用原幂等键；平台返回第一次签发的 URL，并携带 `Idempotent-Replayed: true`。同一幂等键改用于其他 `recordingId` 会返回 `409 IDEMPOTENCY_CONFLICT`。若第一次 URL 已过期，需要换一个新的幂等键重新签发。
-
-## 9. 重试决策
-
-| 结果                       | 调用方动作                              |
-| -------------------------- | --------------------------------------- |
-| `202` / `200`              | 保存响应，等待回调或按 `statusUrl` 查询 |
-| 网络断开/超时              | 原 `Idempotency-Key`、原业务 Body 重试  |
-| `400` / `404` / `422`      | 修正业务数据，不自动重试                |
-| `401`                      | 校时并检查凭证；不得无限重试            |
-| `409 REPLAY_DETECTED`      | 新建 Nonce 和时间戳后重签；幂等键不变   |
-| `409 IDEMPOTENCY_CONFLICT` | 停止重试并人工检查调用方键管理          |
-| `409 INSUFFICIENT_BALANCE` | 充值或调整任务后使用新业务请求          |
-| `429` / `503`              | 指数退避并加随机抖动，原幂等键重试      |
 
 ## 10. 联调验收清单
 
-### 10.1 平台提供
-
-- [ ] 联调环境域名、ERP/CRM 独立凭证和 MC code 权限。
-- [ ] 测试影楼、价格、余额、数据分类、话术、线路和映射。
-- [ ] 百应测试公司、Token、回调配置和可拨打测试号码。
-- [ ] OpenAPI 1.0.0 及本目录中的固定样例。
-
-### 10.2 ERP 与 CRM 分别确认
-
-- [ ] 可接受 `202 + 查询/异步回调`，不会把 `202` 当作呼叫已开始。
-- [ ] 能生成并校验本文 HMAC 签名，服务器时间已同步。
-- [ ] 创建超时后能复用原幂等键与业务 Body。
-- [ ] 能以 `eventId` 幂等保存回调并在持久化后快速 ACK。
-- [ ] 能接收每批 200 条通话结果和每批 100 条录音清单。
-- [ ] 能从短期 HTTPS URL 下载录音并校验 SHA-256。
-- [ ] 已确认结果 URL、录音 URL、联系人和故障通知方式。
-
-### 10.3 必测用例
-
-- [ ] ERP 正常任务与 CRM 正常任务各一条完整闭环。
-- [ ] 同幂等键、同 Body 重试只产生一个任务和一笔冻结。
-- [ ] 同幂等键、不同 Body 返回 `IDEMPOTENCY_CONFLICT`。
-- [ ] 无效签名、过期时间戳和重复 Nonce 均被拒绝。
-- [ ] 重复回调只落一份业务结果，且每次都快速 ACK。
-- [ ] 任务启动失败时能处理 `baiyingCallJobId=null`。
-- [ ] 录音 URL 过期后可重新签发并成功下载。
-- [ ] 余额不足、分类冲突、线路冲突和映射缺失返回约定错误码。
-
-## 11. 契约变更规则
-
-- `schemaVersion=1.0` 内只允许增加可选字段；接收方应忽略未知字段。新增枚举值必须先做兼容性评审。
-- 删除字段、修改字段含义、把可选改必填、改变签名算法均属于破坏性变更，必须发布新版本。
-- OpenAPI、TypeScript/Zod Schema、固定 JSON 样例和本手册必须在同一次变更中更新并通过校验。
-- 双方联调通过后记录确认人、确认日期和契约 Git commit；正式实现只以该冻结版本为准。
+- ERP 使用 `source=0`，CRM 使用 `source=1`，错误来源会被拒绝。
+- `company_code` 能匹配正确影楼和对应回调地址。
+- 同一路由的多个 `c_level` 合并为一个任务，不同路由自动拆成多个任务。
+- 同批次重复 GUID、重复手机号都会在调用百应前整批拒绝。
+- 同一次超时重试不会重复创建批次、冻结金额或导入号码。
+- 同一号码在新批次中使用新 GUID 后允许再次发起。
+- 不同号码的动态变量不会串号；`null` 不导入百应。
+- 百应重复或乱序回调不会造成重复计费或重复结果回传。
+- ERP/CRM 收到的 `guid` 与发起记录一致，且只收到脱敏号码和实际采集结果。
+- 结果回调地址能够返回 `2xx`；有录音时录音地址能够下载并校验文件。

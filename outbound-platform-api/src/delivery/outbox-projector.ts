@@ -16,6 +16,7 @@ const externalEventTypes = [
   'OUTBOUND_TASK_START_FAILED',
   'OUTBOUND_CALL_RESULT_BATCH',
   'OUTBOUND_TASK_COMPLETED',
+  'OUTBOUND_CALL_RESULT_V2',
 ] as const;
 const recordingInternalEventType = 'RECORDING_ARCHIVED_FOR_DELIVERY';
 

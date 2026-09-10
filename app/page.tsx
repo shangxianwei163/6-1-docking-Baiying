@@ -12,6 +12,7 @@ import {
   FileCog,
   Gauge,
   PhoneCall,
+  LogOut,
   Settings2,
   ShieldAlert,
   ShieldCheck,
@@ -25,7 +26,13 @@ import {
   ScriptListView,
   TaskView,
 } from '@/components/platform/views';
-import { loadOutboundTasks } from '@/lib/platform-api';
+import {
+  loadOperatorSession,
+  loadOutboundTasks,
+  logoutOperator,
+  PlatformApiError,
+  type OperatorSession,
+} from '@/lib/platform-api';
 import { PricingOperationsConsole } from '@/components/platform/pricing-operations-console';
 import { RechargeLedgerConsole } from '@/components/platform/recharge-ledger-console';
 import { StudioOperationsConsole } from '@/components/platform/studio-operations-console';
@@ -34,6 +41,10 @@ import { OperationsOverviewConsole } from '@/components/platform/operations-over
 import { IntegrationLogConsole } from '@/components/platform/integration-log-console';
 import { RecoveryOperationsConsole } from '@/components/platform/recovery-operations-console';
 import { CallbackPreviewConsole } from '@/components/platform/callback-preview-console';
+import {
+  OperatorLogin,
+  OperatorLoginLoading,
+} from '@/components/platform/operator-login';
 
 export type PlatformSection =
   | '总览'
@@ -73,10 +84,39 @@ const navigation: Array<{
 ];
 
 export default function Home() {
+  const [session, setSession] = useState<OperatorSession | null>();
   const [activeSection, setActiveSection] = useState<PlatformSection>('总览');
   const [taskCount, setTaskCount] = useState<number | null>(null);
+  const [loggingOut, setLoggingOut] = useState(false);
   const environmentLabel = import.meta.env.DEV ? '本地联调环境' : '生产环境';
+
   useEffect(() => {
+    let cancelled = false;
+    void loadOperatorSession()
+      .then((current) => {
+        if (!cancelled) setSession(current);
+      })
+      .catch((caught) => {
+        if (
+          !cancelled &&
+          caught instanceof PlatformApiError &&
+          caught.code === 'UNAUTHORIZED'
+        ) {
+          setSession(null);
+        } else if (!cancelled) {
+          setSession(null);
+        }
+      });
+    const expire = () => setSession(null);
+    window.addEventListener('operator-session-expired', expire);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('operator-session-expired', expire);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
     let cancelled = false;
     void loadOutboundTasks({ pageNum: 0, pageSize: 1 })
       .then((result) => {
@@ -88,7 +128,29 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [session]);
+
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    try {
+      await logoutOperator();
+    } finally {
+      setTaskCount(null);
+      setSession(null);
+      setLoggingOut(false);
+    }
+  };
+
+  if (session === undefined) return <OperatorLoginLoading />;
+  if (session === null) {
+    return (
+      <OperatorLogin
+        environmentLabel={environmentLabel}
+        onAuthenticated={setSession}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#f5f5f1] text-[#182a27]">
       <div className="app-shell">
@@ -98,7 +160,10 @@ export default function Home() {
               <span className="signal-dot" />
               INTELLIGENT OUTBOUND
             </div>
-            <h1>百应外呼调度台</h1>
+            <h1>
+              <span>图形AI</span>
+              <span>外呼调度平台</span>
+            </h1>
             <p>ERP / CRM / 百应 · 统一运营后台</p>
           </div>
           <nav className="nav-list" aria-label="平台功能菜单">
@@ -126,12 +191,25 @@ export default function Home() {
             })}
           </nav>
           <div className="operator-card">
-            <div className="operator-avatar">王</div>
-            <div>
-              <b>平台管理员</b>
-              <p>华东运营中心 · 在线</p>
+            <div className="operator-identity">
+              <div className="operator-avatar">
+                {session.displayName.slice(0, 1)}
+              </div>
+              <div className="operator-copy">
+                <b>{session.displayName}</b>
+                <p>{session.organization} · 在线</p>
+              </div>
+              <span className="online-state" aria-label="在线" />
             </div>
-            <span className="online-state" aria-label="在线" />
+            <button
+              type="button"
+              className="operator-logout"
+              disabled={loggingOut}
+              onClick={() => void handleLogout()}
+            >
+              <LogOut aria-hidden="true" size={14} />
+              <span>{loggingOut ? '正在退出' : '退出登录'}</span>
+            </button>
           </div>
         </aside>
         <main className="content-area">
@@ -142,7 +220,9 @@ export default function Home() {
             </p>
             <p className="topbar-right">PostgreSQL 实时读取 · CST</p>
           </header>
-          {renderSection(activeSection, setActiveSection)}
+          <div className="section-viewport">
+            {renderSection(activeSection, setActiveSection)}
+          </div>
         </main>
       </div>
     </div>

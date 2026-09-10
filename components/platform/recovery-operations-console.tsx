@@ -17,11 +17,16 @@ import type {
   OperatorDeadLetterPage,
   OperatorDeadLetterSourceType,
   OperatorDeadLetterStatus,
+  TaskReconciliation,
+  TaskReconciliationPage,
+  TaskReconciliationStatus,
 } from '@outbound/contracts';
 import {
   ignoreDeadLetter,
   loadDeadLetters,
+  loadTaskReconciliations,
   PlatformApiError,
+  repairTaskReconciliation,
   replayDeadLetter,
 } from '@/lib/platform-api';
 import {
@@ -54,6 +59,14 @@ const emptyPage: OperatorDeadLetterPage = {
   items: [],
 };
 
+const emptyReconciliationPage: TaskReconciliationPage = {
+  total: 0,
+  pages: 0,
+  pageNum: 0,
+  pageSize: 20,
+  items: [],
+};
+
 const statusMeta: Record<
   OperatorDeadLetterStatus,
   { label: string; tone: 'red' | 'amber' | 'green' | 'gray' }
@@ -62,6 +75,18 @@ const statusMeta: Record<
   REPLAYING: { label: '重放中', tone: 'amber' },
   RESOLVED: { label: '已解决', tone: 'green' },
   IGNORED: { label: '已忽略', tone: 'gray' },
+};
+
+const reconciliationStatusMeta: Record<
+  TaskReconciliationStatus,
+  { label: string; tone: 'red' | 'amber' | 'green' | 'gray' }
+> = {
+  PENDING: { label: '待核对', tone: 'gray' },
+  RUNNING: { label: '核对中', tone: 'amber' },
+  STABLE_ONCE: { label: '一次稳定', tone: 'amber' },
+  RECONCILED: { label: '已一致', tone: 'green' },
+  MANUAL_REVIEW: { label: '人工复核', tone: 'red' },
+  FAILED: { label: '核对失败', tone: 'red' },
 };
 
 export function RecoveryOperationsConsole() {
@@ -78,6 +103,16 @@ export function RecoveryOperationsConsole() {
   const [error, setError] = useState('');
   const [refreshToken, setRefreshToken] = useState(0);
   const [detail, setDetail] = useState<OperatorDeadLetter | null>(null);
+  const [reconciliationPage, setReconciliationPage] = useState(
+    emptyReconciliationPage,
+  );
+  const [reconciliationStatus, setReconciliationStatus] = useState<
+    TaskReconciliationStatus | 'ALL'
+  >('ALL');
+  const [reconciliationLoading, setReconciliationLoading] = useState(true);
+  const [reconciliationError, setReconciliationError] = useState('');
+  const [reconciliationDetail, setReconciliationDetail] =
+    useState<TaskReconciliation | null>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -125,6 +160,39 @@ export function RecoveryOperationsConsole() {
     };
   }, [keyword, pageNum, pageSize, refreshToken, sourceType, status]);
 
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        setReconciliationLoading(true);
+        setReconciliationError('');
+      }
+    });
+    void loadTaskReconciliations({
+      status: reconciliationStatus === 'ALL' ? undefined : reconciliationStatus,
+      pageSize: 20,
+    })
+      .then((result) => {
+        if (cancelled) return;
+        setReconciliationPage(result);
+        setReconciliationDetail((current) =>
+          current
+            ? (result.items.find((item) => item.taskId === current.taskId) ??
+              current)
+            : current,
+        );
+      })
+      .catch((caught) => {
+        if (!cancelled) setReconciliationError(apiErrorMessage(caught));
+      })
+      .finally(() => {
+        if (!cancelled) setReconciliationLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reconciliationStatus, refreshToken]);
+
   return (
     <div className="recovery-console">
       <header className="ops-page-intro recovery-intro">
@@ -138,12 +206,12 @@ export function RecoveryOperationsConsole() {
         <button
           type="button"
           className="ops-icon-button"
-          disabled={loading}
+          disabled={loading || reconciliationLoading}
           onClick={() => setRefreshToken((current) => current + 1)}
         >
           <RefreshCw
             aria-hidden="true"
-            className={loading ? 'is-spinning' : ''}
+            className={loading || reconciliationLoading ? 'is-spinning' : ''}
             size={14}
           />
           刷新异常
@@ -180,6 +248,118 @@ export function RecoveryOperationsConsole() {
           tone="green"
         />
       </section>
+
+      <Panel
+        title="通话记录核对"
+        meta={
+          reconciliationLoading
+            ? '正在读取…'
+            : `${reconciliationPage.total} 个任务`
+        }
+        className="ops-panel recovery-panel reconciliation-panel"
+      >
+        <div className="recovery-guardrail reconciliation-guardrail">
+          <RefreshCw aria-hidden="true" size={14} />
+          <span>
+            系统按百应完成通话接口逐页补偿，每页最多 500 条；连续两轮数量一致且
+            Inbox 已排空才会标记完成。持续不一致 15 分钟后进入人工复核。
+          </span>
+        </div>
+        <div className="ops-toolbar recovery-toolbar reconciliation-toolbar">
+          <div className="reconciliation-toolbar-copy">
+            <b>漏回调核对队列</b>
+            <small>平台记录 / 百应记录 / 待处理 Inbox 三方比对</small>
+          </div>
+          <UnifiedSelect
+            ariaLabel="核对状态"
+            value={reconciliationStatus}
+            className="filter-button"
+            popupLabel="按核对状态筛选"
+            options={[
+              { value: 'ALL', label: '全部核对状态' },
+              { value: 'MANUAL_REVIEW', label: '人工复核' },
+              { value: 'FAILED', label: '核对失败' },
+              { value: 'RUNNING', label: '核对中' },
+              { value: 'STABLE_ONCE', label: '一次稳定' },
+              { value: 'RECONCILED', label: '已一致' },
+              { value: 'PENDING', label: '待核对' },
+            ]}
+            onValueChange={(value) =>
+              setReconciliationStatus(value as TaskReconciliationStatus | 'ALL')
+            }
+          />
+        </div>
+
+        {reconciliationError ? (
+          <div className="ops-error-banner" role="alert">
+            <TriangleAlert aria-hidden="true" size={14} />
+            {reconciliationError}
+          </div>
+        ) : null}
+
+        <div className="table-wrap">
+          <table className="data-table recovery-table reconciliation-table">
+            <thead>
+              <tr>
+                <th>任务</th>
+                <th>核对状态</th>
+                <th>计划号码</th>
+                <th>百应完成</th>
+                <th>平台记录</th>
+                <th>待处理 Inbox</th>
+                <th>稳定轮次</th>
+                <th>最后核对</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reconciliationPage.items.map((item) => (
+                <tr key={item.taskId}>
+                  <td>
+                    <b className="table-primary">{item.taskName}</b>
+                    <small className="table-meta">{item.taskNo}</small>
+                  </td>
+                  <td>
+                    <Status tone={reconciliationStatusMeta[item.status].tone}>
+                      {reconciliationStatusMeta[item.status].label}
+                    </Status>
+                  </td>
+                  <td>{item.expectedCallCount}</td>
+                  <td>{item.providerCallCount ?? '—'}</td>
+                  <td>{item.platformCallCount}</td>
+                  <td>{item.pendingInboxCount}</td>
+                  <td>{item.stableRounds} / 2</td>
+                  <td>
+                    {item.lastCheckedAt
+                      ? formatDateTime(item.lastCheckedAt)
+                      : '尚未核对'}
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="table-action"
+                      onClick={() => setReconciliationDetail(item)}
+                    >
+                      <Eye aria-hidden="true" size={12} />
+                      查看 / 修复
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {!reconciliationLoading && !reconciliationPage.items.length ? (
+                <tr>
+                  <td colSpan={9}>
+                    <div className="monitoring-table-empty">
+                      <CircleCheck aria-hidden="true" size={18} />
+                      当前筛选条件下没有待核对任务
+                    </div>
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
 
       <Panel
         title="死信事件"
@@ -363,7 +543,180 @@ export function RecoveryOperationsConsole() {
           setRefreshToken((current) => current + 1);
         }}
       />
+      <ReconciliationDialog
+        key={reconciliationDetail?.taskId ?? 'reconciliation-closed'}
+        item={reconciliationDetail}
+        onClose={() => setReconciliationDetail(null)}
+        onChanged={(updated) => {
+          setReconciliationDetail(updated);
+          setRefreshToken((current) => current + 1);
+        }}
+      />
     </div>
+  );
+}
+
+function ReconciliationDialog({
+  item,
+  onClose,
+  onChanged,
+}: {
+  item: TaskReconciliation | null;
+  onClose: () => void;
+  onChanged: (item: TaskReconciliation) => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const repairable =
+    item?.status === 'MANUAL_REVIEW' || item?.status === 'FAILED';
+
+  const repair = async () => {
+    if (!item || reason.trim().length < 8) {
+      setError('请填写至少 8 个字的核对结论或修复原因');
+      return;
+    }
+    setSubmitting(true);
+    setError('');
+    setMessage('');
+    try {
+      const result = await repairTaskReconciliation(item.taskNo, {
+        reason: reason.trim(),
+        idempotencyKey: window.crypto.randomUUID(),
+      });
+      setMessage(
+        `${result.message}；恢复 ${result.replayedInboxCount} 条 Inbox`,
+      );
+      onChanged(result.reconciliation);
+    } catch (caught) {
+      setError(apiErrorMessage(caught));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={Boolean(item)} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="ops-dialog recovery-detail-dialog">
+        <DialogHeader>
+          <DialogTitle>通话记录核对</DialogTitle>
+          <DialogDescription>
+            查看百应与平台记录差异；人工修复会恢复失败 Inbox
+            并安排立即重新分页核对。
+          </DialogDescription>
+        </DialogHeader>
+        {item ? (
+          <div className="recovery-detail reconciliation-detail">
+            <div className="recovery-detail-heading">
+              <div>
+                <span>CALL RECORD RECONCILIATION</span>
+                <b>{item.taskName}</b>
+                <small>{item.taskNo}</small>
+              </div>
+              <Status tone={reconciliationStatusMeta[item.status].tone}>
+                {reconciliationStatusMeta[item.status].label}
+              </Status>
+            </div>
+            {item.lastError ? (
+              <section className="recovery-error-card">
+                <TriangleAlert aria-hidden="true" size={15} />
+                <div>
+                  <b>核对问题</b>
+                  <p>{item.lastError}</p>
+                  <small>
+                    {item.mismatchSince
+                      ? `差异始于 ${formatDateTime(item.mismatchSince, true)}`
+                      : '系统会按退避策略自动重试'}
+                  </small>
+                </div>
+              </section>
+            ) : null}
+            <dl className="recovery-detail-facts reconciliation-facts">
+              <div>
+                <dt>计划号码</dt>
+                <dd>{item.expectedCallCount}</dd>
+              </div>
+              <div>
+                <dt>百应完成</dt>
+                <dd>{item.providerCallCount ?? '尚未返回'}</dd>
+              </div>
+              <div>
+                <dt>平台记录</dt>
+                <dd>{item.platformCallCount}</dd>
+              </div>
+              <div>
+                <dt>待处理 Inbox</dt>
+                <dd>{item.pendingInboxCount}</dd>
+              </div>
+              <div>
+                <dt>稳定轮次</dt>
+                <dd>{item.stableRounds} / 2</dd>
+              </div>
+              <div>
+                <dt>失败次数</dt>
+                <dd>{item.failureAttempts}</dd>
+              </div>
+              <div>
+                <dt>修复次数</dt>
+                <dd>{item.repairCount}</dd>
+              </div>
+              <div>
+                <dt>最后核对</dt>
+                <dd>
+                  {item.lastCheckedAt
+                    ? formatDateTime(item.lastCheckedAt, true)
+                    : '尚未核对'}
+                </dd>
+              </div>
+            </dl>
+            {repairable ? (
+              <label className="ops-field recovery-reason">
+                <span>人工核对结论 / 修复原因</span>
+                <textarea
+                  value={reason}
+                  maxLength={500}
+                  onChange={(event) => setReason(event.target.value)}
+                  placeholder="例如：已确认百应任务结束，批准恢复失败回调并重新分页补偿"
+                />
+              </label>
+            ) : (
+              <div className="reconciliation-passive-note">
+                当前状态由 Worker 自动推进，无需人工操作。
+              </div>
+            )}
+            {error ? (
+              <div className="ops-error-banner" role="alert">
+                <TriangleAlert aria-hidden="true" size={13} />
+                {error}
+              </div>
+            ) : null}
+            {message ? (
+              <output className="recovery-success-banner">
+                <CircleCheck aria-hidden="true" size={13} />
+                {message}
+              </output>
+            ) : null}
+          </div>
+        ) : null}
+        <DialogFooter className="recovery-dialog-actions">
+          <button type="button" className="secondary-button" onClick={onClose}>
+            关闭
+          </button>
+          {repairable ? (
+            <button
+              type="button"
+              className="primary-button"
+              disabled={submitting}
+              onClick={() => void repair()}
+            >
+              <RotateCcw aria-hidden="true" size={13} />
+              {submitting ? '正在安排修复…' : '恢复并立即复查'}
+            </button>
+          ) : null}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

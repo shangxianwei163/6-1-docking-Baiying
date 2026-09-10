@@ -5,8 +5,14 @@ import { inArray } from 'drizzle-orm';
 import { readConfig } from '../config.js';
 import { PostgresIntegrationLogService } from '../operations/integration-log-service.js';
 import { PostgresOperationsOverviewService } from '../operations/overview-service.js';
+import { PostgresCallbackInboxRepository } from '../callback/postgres-repository.js';
 import { createDatabase } from './client.js';
-import { callbackInbox, deadLetterEvents, queueOutbox } from './schema.js';
+import {
+  callbackInbox,
+  deadLetterEvents,
+  operationalMetricEvents,
+  queueOutbox,
+} from './schema.js';
 
 const config = readConfig();
 if (config.NODE_ENV === 'production') {
@@ -17,7 +23,8 @@ const database = createDatabase(config.DATABASE_URL);
 const now = new Date();
 const staleAt = new Date(now.getTime() - 12 * 60 * 1000);
 const marker = `stage6b3-${randomUUID()}`;
-const callbackIds = [randomUUID(), randomUUID()];
+const callbackIds: string[] = [randomUUID(), randomUUID()];
+const categoryMetricId = randomUUID();
 const outboxId = randomUUID();
 const deadLetterId = randomUUID();
 const secret = 'must-never-reach-the-operator';
@@ -27,6 +34,9 @@ const overviewService = new PostgresOperationsOverviewService(
   () => now,
 );
 const logService = new PostgresIntegrationLogService(database.db);
+const callbackRepository = new PostgresCallbackInboxRepository(database.db, {
+  clock: () => now,
+});
 
 try {
   const baseline = await overviewService.getOverview();
@@ -76,19 +86,43 @@ try {
   });
   await database.db.insert(deadLetterEvents).values({
     id: deadLetterId,
-    sourceType: 'OUTBOX',
+    sourceType: 'CALLBACK',
     sourceId: randomUUID(),
     originalEvent: { marker, token: secret, contactPhone: phone },
-    finalError: `token=${secret}; phone=${phone}`,
+    finalError: `CallbackBusinessConflictError: token=${secret}; phone=${phone}`,
     suggestedAction: '核对链路后人工重放',
     status: 'OPEN',
     createdAt: staleAt,
   });
+  await database.db.insert(operationalMetricEvents).values({
+    id: categoryMetricId,
+    metricCode: 'DATA_CATEGORY_AMBIGUOUS',
+    sourceSystem: 'ERP',
+    requestId: marker,
+    objectRef: 'MC-QUALITY-VERIFY',
+    detail: { mainCategory: '排档', subCategory: '孕妈', cLevel: 'SR3' },
+    occurredAt: now,
+  });
+  const duplicateInput = {
+    callbackType: 'STAGE6B3_DUPLICATE_VERIFY',
+    eventKey: `${marker}:duplicate`,
+    companyId: 'QUALITY-VERIFY',
+    callJobId: 'QUALITY-JOB',
+    callInstanceId: 'QUALITY-CALL',
+    rawBodyCiphertext: 'local-verifier-ciphertext',
+    rawBodySha256: 'c'.repeat(64),
+    headers: {},
+  };
+  const firstDuplicateReceipt = await callbackRepository.save(duplicateInput);
+  const secondDuplicateReceipt = await callbackRepository.save(duplicateInput);
+  callbackIds.push(firstDuplicateReceipt.id);
+  assert.equal(firstDuplicateReceipt.replayed, false);
+  assert.equal(secondDuplicateReceipt.replayed, true);
 
   const overview = await overviewService.getOverview();
   assert.equal(
     overview.pipeline.callbackPending,
-    baseline.pipeline.callbackPending + 2,
+    baseline.pipeline.callbackPending + 3,
   );
   assert.equal(
     overview.pipeline.callbackStale,
@@ -105,6 +139,18 @@ try {
   assert.equal(
     overview.pipeline.openDeadLetters,
     baseline.pipeline.openDeadLetters + 1,
+  );
+  assert.equal(
+    overview.integrationQuality.correlationConflicts.count,
+    baseline.integrationQuality.correlationConflicts.count + 1,
+  );
+  assert.equal(
+    overview.integrationQuality.categoryAmbiguities.count,
+    baseline.integrationQuality.categoryAmbiguities.count + 1,
+  );
+  assert.equal(
+    overview.integrationQuality.callbackDuplicates.matched,
+    baseline.integrationQuality.callbackDuplicates.matched + 1,
   );
   assert.equal(overview.attention.total, baseline.attention.total + 1);
   assert.equal(
@@ -123,7 +169,7 @@ try {
     pageNum: 0,
     pageSize: 20,
   });
-  assert.equal(logPage.total, 2);
+  assert.equal(logPage.total, 3);
   const pendingLog = logPage.items.find(
     (item) => item.requestId === `${marker}:pending`,
   );
@@ -151,6 +197,9 @@ try {
           deadLetterAttention: true,
           unifiedIntegrationLog: true,
           recursiveCredentialAndPhoneRedaction: true,
+          callbackDuplicatePersistence: true,
+          categoryAmbiguityMetric: true,
+          correlationConflictMetric: true,
         },
       },
       null,
@@ -158,6 +207,12 @@ try {
     ),
   );
 } finally {
+  await database.db
+    .delete(operationalMetricEvents)
+    .where(inArray(operationalMetricEvents.id, [categoryMetricId]));
+  await database.db
+    .delete(operationalMetricEvents)
+    .where(inArray(operationalMetricEvents.objectRef, callbackIds));
   await database.db
     .delete(deadLetterEvents)
     .where(inArray(deadLetterEvents.id, [deadLetterId]));

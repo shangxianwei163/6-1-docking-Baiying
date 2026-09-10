@@ -26,6 +26,7 @@ describe('BaiyingCallbackIngressService', () => {
         encryptUtf8: (value) => `encrypted:${value}`,
         decryptUtf8: vi.fn(),
         phoneHmac: vi.fn(),
+        correlationHmac: vi.fn(),
       },
     );
 
@@ -42,6 +43,9 @@ describe('BaiyingCallbackIngressService', () => {
     expect(save).toHaveBeenCalledWith(
       expect.objectContaining({
         callbackType: 'JOB_INFO_RESULT',
+        companyId: '1',
+        callJobId: '2',
+        callInstanceId: null,
         rawBodyCiphertext: `encrypted:${rawBody}`,
         rawBodySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         headers: {
@@ -66,6 +70,7 @@ describe('BaiyingCallbackIngressService', () => {
         encryptUtf8: vi.fn(),
         decryptUtf8: vi.fn(),
         phoneHmac: vi.fn(),
+        correlationHmac: vi.fn(),
       },
       4,
     );

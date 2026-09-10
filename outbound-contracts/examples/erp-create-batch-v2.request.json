@@ -1,0 +1,37 @@
+{
+  "main_category": "排档",
+  "sub_category": "孕妈",
+  "source": 0,
+  "company_code": "5903679116",
+  "customer_list": [
+    {
+      "c_level": "",
+      "c_info_list": [
+        {
+          "phone": "13500000001",
+          "guid": "11111111-1111-4111-8111-111111111101",
+          "customer_name": "测试客户A",
+          "photoshop": "湖滨店",
+          "photodate": "2026-09-20"
+        },
+        {
+          "phone": "19900000002",
+          "guid": "11111111-1111-4111-8111-111111111102",
+          "customer_name": "测试客户B"
+        }
+      ]
+    },
+    {
+      "c_level": "SR3",
+      "c_info_list": [
+        {
+          "phone": "18300000003",
+          "guid": "11111111-1111-4111-8111-111111111103",
+          "customer_name": "测试客户C",
+          "selectshop": "万象城店",
+          "自定义扩展变量": "可继续增加，不限于示例字段"
+        }
+      ]
+    }
+  ]
+}

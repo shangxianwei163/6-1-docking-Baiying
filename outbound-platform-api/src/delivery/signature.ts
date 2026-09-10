@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { sha256Hex } from '../security/request-signature.js';
+import { sha256Hex } from '../security/sha256.js';
 
 export type CallbackSignatureInput = {
   url: string | URL;

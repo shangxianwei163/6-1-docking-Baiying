@@ -51,7 +51,11 @@ describe('Baiying callback schema', () => {
               duration: 61,
               customerTelephone: '+86 138-0000-0000',
               properties:
-                '{"sx_platform_item_id":"de7119d0-582c-44dd-94d6-bc420d254513","意向等级":"A"}',
+                '{"sx_platform_item_id":"de7119d0-582c-44dd-94d6-bc420d254513","sx_correlation_token":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","导入变量":"不能作为采集结果返回"}',
+              collectProperties: {
+                预约门店: '湖滨店',
+                sx_platform_debug: '不能外泄',
+              },
               endTime: '2026-09-06 18:30:00',
               luyinOssUrl: 'https://recording.example.test/full.mp3',
             },
@@ -70,11 +74,16 @@ describe('Baiying callback schema', () => {
       durationSeconds: 61,
       callStatus: 'ANSWERED',
       platformItemId: 'de7119d0-582c-44dd-94d6-bc420d254513',
-      collectProperties: {
-        sx_platform_item_id: 'de7119d0-582c-44dd-94d6-bc420d254513',
-        意向等级: 'A',
-        taskResult: [{ key: '意向等级', value: 'A' }],
+      correlationToken:
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      importedProperties: {
+        导入变量: '不能作为采集结果返回',
       },
+      collectProperties: {
+        预约门店: '湖滨店',
+      },
+      taskResults: [{ key: '意向等级', value: 'A' }],
+      resultComplete: true,
     });
     expect(parsed.providerOccurredAt?.toISOString()).toBe(
       '2026-09-06T10:30:00.000Z',
@@ -118,7 +127,36 @@ describe('Baiying callback schema', () => {
     expect(inspectBaiyingCallback(first).eventKey).not.toBe(
       inspectBaiyingCallback(formatted).eventKey,
     );
+    expect(inspectBaiyingCallback(first)).toMatchObject({
+      companyId: '1',
+      callJobId: '2',
+      callInstanceId: null,
+    });
     expect(inspectBaiyingCallback('{').callbackType).toBe('INVALID_JSON');
+  });
+
+  it('extracts non-sensitive provider identities for task-scoped Inbox reconciliation', () => {
+    const inspected = inspectBaiyingCallback(
+      JSON.stringify({
+        data: {
+          callbackType: 'CALL_INSTANCE_RESULT',
+          data: {
+            callInstance: {
+              companyId: 1001,
+              callJobId: 2002,
+              callInstanceId: 3003,
+              finishStatus: 0,
+            },
+          },
+        },
+      }),
+    );
+
+    expect(inspected).toMatchObject({
+      companyId: '1001',
+      callJobId: '2002',
+      callInstanceId: '3003',
+    });
   });
 
   it('classifies malformed and unsupported payloads separately', () => {

@@ -324,9 +324,7 @@ export function ScriptListView() {
     setSelectedCategoryIds((current) =>
       current.includes(categoryId)
         ? current.filter((id) => id !== categoryId)
-        : current.length >= 100
-          ? current
-          : [...current, categoryId],
+        : [...current, categoryId],
     );
   const toggleSubgroupCategories = (subgroupCategories: SourceDataCategory[]) =>
     setSelectedCategoryIds((current) => {
@@ -337,10 +335,7 @@ export function ScriptListView() {
       const allSelected = subgroupIds.every((id) => current.includes(id));
       if (allSelected) return current.filter((id) => !subgroupIdSet.has(id));
       const missingIds = subgroupIds.filter((id) => !current.includes(id));
-      return [
-        ...current,
-        ...missingIds.slice(0, Math.max(0, 100 - current.length)),
-      ];
+      return [...current, ...missingIds];
     });
   const selectedStudio = studios.find(
     (studio) => studio.businessCode === studioId,
@@ -889,10 +884,6 @@ export function ScriptListView() {
                                         <input
                                           type="checkbox"
                                           checked={checked}
-                                          disabled={
-                                            !checked &&
-                                            selectedCategoryIds.length >= 100
-                                          }
                                           onChange={() =>
                                             toggleCategory(category.externalId)
                                           }

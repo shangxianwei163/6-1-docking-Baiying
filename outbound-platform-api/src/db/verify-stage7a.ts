@@ -24,8 +24,6 @@ import { TaskOrchestrationWorker } from '../orchestration/worker.js';
 import { PostgresOutboundTaskService } from '../outbound-task/service.js';
 import { PostgresOutboxRepository } from '../outbox/postgres-repository.js';
 import { LocalDataProtector } from '../security/data-protector.js';
-import { signRequest } from '../security/request-signature.js';
-import { LocalDevelopmentSecretProvider } from '../security/secret-provider.js';
 import { createDatabase, type Database } from './client.js';
 import {
   accountLedger,
@@ -105,10 +103,6 @@ async function main() {
       config.WORKER_SHARED_SECRET,
       config.NODE_ENV,
     );
-    const secrets = new LocalDevelopmentSecretProvider(
-      config.WORKER_SHARED_SECRET,
-      config.NODE_ENV,
-    );
     const taskService = new PostgresOutboundTaskService(
       database.db,
       protector,
@@ -126,13 +120,10 @@ async function main() {
       workerSharedSecret: config.WORKER_SHARED_SECRET,
       externalRequestAuthenticator: new PostgresExternalRequestAuthenticator(
         database.db,
-        secrets,
       ),
       outboundTaskService: taskService,
     });
-    const secret = await secrets.getSecretBytes(
-      `local-hkdf://${fixture.clientId}`,
-    );
+    const accessToken = `stage7-token-${fixture.suffix}`;
 
     const capacityRequest = createCapacityRequest(fixture);
     assert.equal(
@@ -162,9 +153,9 @@ async function main() {
 
     const capacityRawBody = Buffer.from(JSON.stringify(capacityRequest));
     const capacityStarted = performance.now();
-    const capacityResponse = await signedRequest({
+    const capacityResponse = await tokenRequest({
       app,
-      secret,
+      accessToken,
       fixture,
       rawBody: capacityRawBody,
       idempotencyKey: `stage7-capacity-${fixture.suffix}`,
@@ -247,9 +238,9 @@ async function main() {
     const replayRawBody = Buffer.from(JSON.stringify(replayRequest));
     const replayResponses = await Promise.all(
       Array.from({ length: IDEMPOTENT_REPLAYS }, () =>
-        signedRequest({
+        tokenRequest({
           app,
-          secret,
+          accessToken,
           fixture,
           rawBody: replayRawBody,
           idempotencyKey: `stage7-idempotent-${fixture.suffix}`,
@@ -283,9 +274,9 @@ async function main() {
           index + 1,
         );
         const started = performance.now();
-        const response = await signedRequest({
+        const response = await tokenRequest({
           app,
-          secret,
+          accessToken,
           fixture,
           rawBody: Buffer.from(JSON.stringify(request)),
           idempotencyKey: `stage7-balance-${fixture.suffix}-${index}`,
@@ -493,36 +484,21 @@ async function verifyCallbackBurst(
   return { ingressMs, ingressP95Ms, drainMs, endToEndMs };
 }
 
-async function signedRequest(input: {
+async function tokenRequest(input: {
   app: ReturnType<typeof createApp>;
-  secret: Buffer;
+  accessToken: string;
   fixture: Fixture;
   rawBody: Buffer;
   idempotencyKey: string;
 }) {
-  const timestamp = String(Date.now());
-  const nonce = randomUUID();
   const path = '/openapi/v1/outbound/tasks';
   const url = `${baseUrl}${path}`;
-  const signature = signRequest(
-    {
-      method: 'POST',
-      url,
-      timestamp,
-      nonce,
-      rawBody: input.rawBody,
-    },
-    input.secret,
-  );
   return input.app.request(url, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       'content-length': String(input.rawBody.byteLength),
-      'x-client-id': input.fixture.clientId,
-      'x-timestamp': timestamp,
-      'x-nonce': nonce,
-      'x-signature': signature,
+      'x-access-token': input.accessToken,
       'idempotency-key': input.idempotencyKey,
       'x-request-id': `stage7-${randomUUID()}`,
     },
@@ -710,6 +686,7 @@ async function insertFixture(db: Database, fixture: Fixture) {
       clientId: fixture.clientId,
       sourceSystem: 'ERP',
       displayName: 'Stage 7A 隔离 ERP 客户端',
+      accessToken: `stage7-token-${fixture.suffix}`,
       secretRef: `local-hkdf://${fixture.clientId}`,
       status: 'ACTIVE',
       rateLimitPerMinute: 1_000,

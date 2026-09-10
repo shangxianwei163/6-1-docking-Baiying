@@ -7,6 +7,7 @@ import {
   type BaiyingProviderMetadata,
 } from '../baiying/call-job-client.js';
 import type { DataProtector } from '../security/data-protector.js';
+import { buildCallItemCorrelationToken } from '../security/correlation-token.js';
 import {
   TaskNotFoundError,
   type OperationHandle,
@@ -31,7 +32,7 @@ export type TaskOrchestrationResult = {
   taskId: string;
   taskNo: string;
   executionStatus: TaskExecutionStatus;
-  outcome: 'CALLING' | 'TERMINAL_OR_ALREADY_STARTED';
+  outcome: 'CALLING' | 'WAITING_FOR_BATCH' | 'TERMINAL_OR_ALREADY_STARTED';
 };
 
 export class TaskOrchestrationRetryError extends Error {
@@ -54,6 +55,80 @@ export class TaskOrchestrationService {
   async run(taskId: string): Promise<TaskOrchestrationResult> {
     for (let transition = 0; transition < 12; transition += 1) {
       const task = await this.requireTask(taskId);
+      if (
+        task.contractVersion === '2.0' &&
+        task.batchId &&
+        ['ACCEPTED', 'BAIYING_CREATED'].includes(task.executionStatus) &&
+        (await this.repository.isBatchAborted(task.batchId))
+      ) {
+        if (task.executionStatus === 'ACCEPTED') {
+          await this.repository.recordFailure({
+            taskId: task.id,
+            executionStatus: 'CREATE_FAILED',
+            stage: 'BAIYING_CREATE',
+            code: 'BATCH_PREPARATION_ABORTED',
+            message:
+              '同一平台批次的其他子任务准备失败，本子任务未创建百应任务并已释放冻结金额',
+            retryable: false,
+            releaseHold: true,
+          });
+        } else {
+          const cleanup = await this.terminateForCleanup(task, [
+            'BAIYING_CREATED',
+          ]);
+          await this.repository.recordFailure({
+            taskId: task.id,
+            executionStatus: 'IMPORT_FAILED',
+            stage: 'BAIYING_IMPORT',
+            code: 'BATCH_PREPARATION_ABORTED',
+            message: appendCleanup(
+              '同一平台批次的其他子任务准备失败，本子任务已执行整批补偿终止',
+              cleanup,
+            ),
+            retryable: false,
+            releaseHold: cleanup !== 'FAILED',
+          });
+        }
+        continue;
+      }
+      if (
+        task.contractVersion === '2.0' &&
+        task.batchId &&
+        ['IMPORTED', 'STARTING', 'CALLING', 'PAUSED'].includes(
+          task.executionStatus,
+        )
+      ) {
+        const barrier = await this.repository.releaseBatchStartBarrier({
+          batchId: task.batchId,
+          currentTaskId: task.id,
+        });
+        if (barrier === 'WAITING') {
+          return {
+            taskId: task.id,
+            taskNo: task.taskNo,
+            executionStatus: task.executionStatus,
+            outcome: 'WAITING_FOR_BATCH',
+          };
+        }
+        if (barrier === 'FAILED') {
+          const cleanup = await this.terminateForCleanup(task, [
+            task.executionStatus,
+          ]);
+          await this.repository.recordFailure({
+            taskId: task.id,
+            executionStatus: 'START_FAILED',
+            stage: 'BAIYING_START',
+            code: 'BATCH_START_BARRIER_ABORTED',
+            message: appendCleanup(
+              '同一平台批次的其他百应任务未能完成启动前准备，当前子任务已执行整批补偿终止',
+              cleanup,
+            ),
+            retryable: false,
+            releaseHold: cleanup !== 'FAILED',
+          });
+          continue;
+        }
+      }
       if (TERMINAL_OR_POST_START_STATUSES.has(task.executionStatus)) {
         return {
           taskId: task.id,
@@ -166,7 +241,8 @@ export class TaskOrchestrationService {
     const callJobName = buildCallJobName(task.taskNo, task.id);
     const request = {
       callJobName,
-      callJobType: 1 as const,
+      // 使用手动任务；定时任务（1）必须额外传 startDate，不适合平台异步编排。
+      callJobType: 2 as const,
       companyId: task.baiyingCompanyId,
       robotDefId: task.robotDefId,
       userPhoneIds: [task.userPhoneId],
@@ -735,13 +811,28 @@ function materializeCustomers(
     const properties = parseMappedProperties(
       protector.decryptUtf8(item.mappedPropertiesCiphertext),
     );
+    const correlationProperties: Record<string, string> =
+      task.contractVersion === '2.0'
+        ? {
+            sx_correlation_token: buildCallItemCorrelationToken(
+              protector,
+              task.id,
+              item.id,
+              item.phoneHmac,
+            ),
+          }
+        : {};
     return {
       platformItemId: item.id,
       name: item.customerNameCiphertext
         ? protector.decryptUtf8(item.customerNameCiphertext)
         : `客户${item.ordinal}`,
       phone: protector.decryptUtf8(item.phoneCiphertext),
-      properties: { ...properties, sx_platform_item_id: item.id },
+      properties: {
+        ...properties,
+        sx_platform_item_id: item.id,
+        ...correlationProperties,
+      },
     };
   });
 }

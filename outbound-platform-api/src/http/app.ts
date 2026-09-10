@@ -3,6 +3,7 @@ import { Readable } from 'node:stream';
 import { z } from 'zod';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import {
   accountAdjustmentKindSchema,
   accountAdjustmentStatusSchema,
@@ -12,6 +13,7 @@ import {
   createOperatorStudioInputSchema,
   createTopUpInputSchema,
   consoleTaskStatusFilterSchema,
+  createOutboundBatchRequestV2Schema,
   createOutboundTaskRequestSchema,
   decideAccountAdjustmentInputSchema,
   lineStudioBindingInputSchema,
@@ -42,6 +44,8 @@ import {
   operatorTaskCommandInputSchema,
   operatorTaskRetryInputSchema,
   replayDeadLetterInputSchema,
+  repairTaskReconciliationInputSchema,
+  taskReconciliationStatusSchema,
 } from '@outbound/contracts';
 import {
   MappingConflictError,
@@ -69,7 +73,7 @@ import {
 import type { CategorySyncService } from '../source-category/sync-service.js';
 import type { ExternalRequestAuthenticator } from '../openapi/authenticator.js';
 import { ExternalApiFailure } from '../openapi/errors.js';
-import { stableJsonSha256 } from '../openapi/request-hash.js';
+import { rawBodySha256, stableJsonSha256 } from '../openapi/request-hash.js';
 import type { OutboundTaskService } from '../outbound-task/service.js';
 import {
   CallbackBodyTooLargeError,
@@ -93,9 +97,12 @@ import {
   type RecordingAccess,
 } from '../recording/access-service.js';
 import type { RecordingUrlReissue } from '../recording/reissue-service.js';
+import type { OperatorSessionService } from '../security/operator-session.js';
+import type { ReconciliationOperations } from '../reconciliation/postgres-repository.js';
 export { calculateBillingMinutes } from '../callback/schema.js';
 
 type AppVariables = { requestId: string };
+const OPERATOR_SESSION_COOKIE = 'outbound_operator_session';
 
 export type AppDependencies = {
   mappingRepository: MappingRepository;
@@ -124,6 +131,9 @@ export type AppDependencies = {
   recordingAccessService?: RecordingAccess;
   recordingUrlReissueService?: RecordingUrlReissue;
   baiyingCallbackIngress?: BaiyingCallbackIngress;
+  reconciliationOperations?: ReconciliationOperations;
+  operatorSessionService?: OperatorSessionService;
+  operatorSessionCookieSecure?: boolean;
   clock?: () => Date;
   createId?: () => string;
 };
@@ -141,9 +151,8 @@ export function createApp(dependencies: AppDependencies) {
         'Content-Type',
         'X-Request-Id',
         'X-Actor-Id',
-        'X-Client-Id',
+        'X-Access-Token',
         'X-Timestamp',
-        'X-Nonce',
         'X-Signature',
         'Idempotency-Key',
       ],
@@ -162,6 +171,71 @@ export function createApp(dependencies: AppDependencies) {
     context.set('requestId', requestId);
     context.header('X-Request-Id', requestId);
     await next();
+  });
+
+  app.use('/api/v1/*', async (context, next) => {
+    const sessionService = dependencies.operatorSessionService;
+    if (!sessionService || isPublicOperatorApi(context.req.path)) {
+      await next();
+      return;
+    }
+
+    const identity = sessionService.verify(
+      getCookie(context, OPERATOR_SESSION_COOKIE),
+    );
+    if (!identity) throw new UnauthorizedError('登录已失效，请重新登录');
+
+    const claimedActor = context.req.header('x-actor-id')?.trim();
+    if (claimedActor && claimedActor !== identity.username) {
+      throw new UnauthorizedError('当前登录账号与操作人身份不一致');
+    }
+    await next();
+  });
+
+  app.post('/api/v1/operator-session', async (context) => {
+    const sessionService = operatorSessionDependency(dependencies);
+    const input = z
+      .object({
+        username: z.string().trim().min(1).max(128),
+        password: z.string().min(1).max(256),
+      })
+      .parse(await context.req.json());
+    const identity = sessionService.authenticate(
+      input.username,
+      input.password,
+    );
+    if (!identity) throw new UnauthorizedError('账号或密码错误');
+
+    setCookie(
+      context,
+      OPERATOR_SESSION_COOKIE,
+      sessionService.issue(identity),
+      operatorSessionCookieOptions(
+        dependencies.operatorSessionCookieSecure ?? false,
+        sessionService.ttlSeconds,
+      ),
+    );
+    return context.json(success(context.get('requestId'), identity));
+  });
+
+  app.get('/api/v1/operator-session', (context) => {
+    const sessionService = operatorSessionDependency(dependencies);
+    const identity = sessionService.verify(
+      getCookie(context, OPERATOR_SESSION_COOKIE),
+    );
+    if (!identity) throw new UnauthorizedError('登录已失效，请重新登录');
+    return context.json(success(context.get('requestId'), identity));
+  });
+
+  app.delete('/api/v1/operator-session', (context) => {
+    deleteCookie(context, OPERATOR_SESSION_COOKIE, {
+      path: '/',
+      secure: dependencies.operatorSessionCookieSecure ?? false,
+      sameSite: dependencies.operatorSessionCookieSecure ? 'None' : 'Lax',
+    });
+    return context.json(
+      success(context.get('requestId'), { loggedOut: true as const }),
+    );
   });
 
   app.get('/health', (context) =>
@@ -695,6 +769,51 @@ export function createApp(dependencies: AppDependencies) {
     return context.json(success(context.get('requestId'), data));
   });
 
+  app.get('/api/v1/reconciliations', async (context) => {
+    requireActor(context.req.header('x-actor-id'));
+    const query = z
+      .object({
+        keyword: z.string().trim().max(200).optional(),
+        status: taskReconciliationStatusSchema.optional(),
+        pageNum: z.coerce.number().int().min(0).default(0),
+        pageSize: z.coerce.number().int().min(1).max(100).default(20),
+      })
+      .parse(context.req.query());
+    const data = await reconciliationDependency(
+      dependencies,
+    ).listReconciliations({
+      ...query,
+      keyword: query.keyword || undefined,
+    });
+    return context.json(success(context.get('requestId'), data));
+  });
+
+  app.post(
+    '/api/v1/outbound-tasks/:taskNo/reconciliation/repair',
+    async (context) => {
+      const actorId = requireActor(context.req.header('x-actor-id'));
+      const taskNo = z
+        .string()
+        .trim()
+        .min(1)
+        .max(64)
+        .parse(context.req.param('taskNo'));
+      const input = repairTaskReconciliationInputSchema.parse(
+        await context.req.json(),
+      );
+      const data = await reconciliationDependency(dependencies).requestRepair(
+        taskNo,
+        input,
+        actorId,
+        context.get('requestId'),
+      );
+      if (!data.idempotentReplay)
+        context.header('Idempotent-Replayed', 'false');
+      else context.header('Idempotent-Replayed', 'true');
+      return context.json(success(context.get('requestId'), data), 202);
+    },
+  );
+
   app.get('/api/v1/mappings', async (context) =>
     context.json(
       success(context.get('requestId'), {
@@ -1164,11 +1283,7 @@ export function createApp(dependencies: AppDependencies) {
         413,
       );
     }
-    const principal = await authenticateExternal(
-      authenticator,
-      context.req.raw,
-      rawBody,
-    );
+    const principal = await authenticateExternal(authenticator, context.req.raw);
     const idempotencyKey = context.req.header('idempotency-key')?.trim();
     if (
       !idempotencyKey ||
@@ -1219,14 +1334,106 @@ export function createApp(dependencies: AppDependencies) {
     return context.json(result.body, result.status);
   });
 
+  app.post('/openapi/v2/outbound/tasks', async (context) => {
+    const { authenticator, taskService } =
+      externalApiDependencies(dependencies);
+    const declaredLength = Number(context.req.header('content-length') ?? '0');
+    if (Number.isFinite(declaredLength) && declaredLength > 25 * 1024 * 1024) {
+      throw new ExternalApiFailure(
+        'INVALID_REQUEST',
+        '请求体超过 25 MiB 上限',
+        413,
+      );
+    }
+    const rawBody = new Uint8Array(await context.req.arrayBuffer());
+    if (rawBody.byteLength > 25 * 1024 * 1024) {
+      throw new ExternalApiFailure(
+        'INVALID_REQUEST',
+        '请求体超过 25 MiB 上限',
+        413,
+      );
+    }
+    const principal = await authenticateExternal(authenticator, context.req.raw);
+    const idempotencyKey = context.req.header('idempotency-key')?.trim();
+    if (
+      !idempotencyKey ||
+      idempotencyKey.length < 8 ||
+      idempotencyKey.length > 128
+    ) {
+      throw new ExternalApiFailure(
+        'INVALID_REQUEST',
+        'Idempotency-Key 长度必须为 8～128 个字符',
+        400,
+      );
+    }
+    let json: unknown;
+    try {
+      json = JSON.parse(Buffer.from(rawBody).toString('utf8'));
+    } catch {
+      throw new ExternalApiFailure(
+        'INVALID_REQUEST',
+        '请求体不是有效 JSON',
+        400,
+      );
+    }
+    const parsedRequest = createOutboundBatchRequestV2Schema.safeParse(json);
+    if (!parsedRequest.success) {
+      const duplicateGuid = parsedRequest.error.issues.find(
+        (issue) =>
+          issue.path.at(-1) === 'guid' && issue.message.includes('不可重复'),
+      );
+      if (duplicateGuid) {
+        throw new ExternalApiFailure(
+          'GUID_DUPLICATED',
+          duplicateGuid.message,
+          422,
+          { issues: parsedRequest.error.issues },
+        );
+      }
+      const phoneIssue = parsedRequest.error.issues.find(
+        (issue) => issue.path.at(-1) === 'phone',
+      );
+      if (phoneIssue) {
+        throw new ExternalApiFailure(
+          phoneIssue.message.includes('不可重复')
+            ? 'PHONE_DUPLICATED'
+            : 'PHONE_INVALID',
+          phoneIssue.message,
+          422,
+          { issues: parsedRequest.error.issues },
+        );
+      }
+      throw parsedRequest.error;
+    }
+    const request = parsedRequest.data;
+    const result = await taskService.acceptV2({
+      principal,
+      idempotencyKey,
+      requestId: context.get('requestId'),
+      requestHash: rawBodySha256(rawBody),
+      request,
+    });
+    if (result.replayed) context.header('Idempotent-Replayed', 'true');
+    return context.json(result.body, result.status);
+  });
+
+  app.get('/openapi/v2/outbound/batches/:batchId', async (context) => {
+    const { authenticator, taskService } =
+      externalApiDependencies(dependencies);
+    const principal = await authenticateExternal(authenticator, context.req.raw);
+    const batchId = z.uuid().parse(context.req.param('batchId'));
+    return context.json({
+      code: 'OK',
+      message: 'success',
+      request_id: context.get('requestId'),
+      data: await taskService.getBatchV2(principal, batchId),
+    });
+  });
+
   app.get('/openapi/v1/outbound/tasks/:taskNo', async (context) => {
     const { authenticator, taskService } =
       externalApiDependencies(dependencies);
-    const principal = await authenticateExternal(
-      authenticator,
-      context.req.raw,
-      new Uint8Array(),
-    );
+    const principal = await authenticateExternal(authenticator, context.req.raw);
     const taskNo = z
       .string()
       .regex(/^PT-\d{8}-\d{5,}$/)
@@ -1242,11 +1449,7 @@ export function createApp(dependencies: AppDependencies) {
   app.get('/openapi/v1/outbound/tasks/:taskNo/calls', async (context) => {
     const { authenticator, taskService } =
       externalApiDependencies(dependencies);
-    const principal = await authenticateExternal(
-      authenticator,
-      context.req.raw,
-      new Uint8Array(),
-    );
+    const principal = await authenticateExternal(authenticator, context.req.raw);
     const taskNo = z
       .string()
       .regex(/^PT-\d{8}-\d{5,}$/)
@@ -1279,7 +1482,6 @@ export function createApp(dependencies: AppDependencies) {
       const principal = await authenticateExternal(
         externalAuthenticatorDependency(dependencies),
         context.req.raw,
-        rawBody,
       );
       if (rawBody.byteLength > 0) {
         throw new ExternalApiFailure(
@@ -1539,6 +1741,13 @@ function consoleTaskDependency(dependencies: AppDependencies) {
   return dependencies.outboundTaskService;
 }
 
+function operatorSessionDependency(dependencies: AppDependencies) {
+  if (!dependencies.operatorSessionService) {
+    throw new UnauthorizedError('运营后台登录服务尚未配置');
+  }
+  return dependencies.operatorSessionService;
+}
+
 function operationsDependency(dependencies: AppDependencies) {
   if (!dependencies.operationsConsoleService) {
     throw new OperationsConsoleFailure(
@@ -1649,6 +1858,17 @@ function recoveryDependency(dependencies: AppDependencies) {
   return dependencies.recoveryOperationsService;
 }
 
+function reconciliationDependency(dependencies: AppDependencies) {
+  if (!dependencies.reconciliationOperations) {
+    throw new OperationsConsoleFailure(
+      'RECONCILIATION_NOT_CONFIGURED',
+      '百应通话对账服务尚未配置',
+      503,
+    );
+  }
+  return dependencies.reconciliationOperations;
+}
+
 function taskControlDependency(dependencies: AppDependencies) {
   if (!dependencies.taskControlService) {
     throw new OperationsConsoleFailure(
@@ -1691,16 +1911,9 @@ function externalAuthenticatorDependency(dependencies: AppDependencies) {
 function authenticateExternal(
   authenticator: ExternalRequestAuthenticator,
   request: Request,
-  rawBody: Uint8Array,
 ) {
   return authenticator.authenticate({
-    method: request.method,
-    url: request.url,
-    rawBody,
-    clientId: request.headers.get('x-client-id') ?? undefined,
-    timestamp: request.headers.get('x-timestamp') ?? undefined,
-    nonce: request.headers.get('x-nonce') ?? undefined,
-    signature: request.headers.get('x-signature') ?? undefined,
+    accessToken: request.headers.get('x-access-token') ?? undefined,
   });
 }
 
@@ -1834,3 +2047,22 @@ function requireWorkerSecret(
 }
 
 class UnauthorizedError extends Error {}
+
+function isPublicOperatorApi(path: string): boolean {
+  return (
+    path === '/api/v1/operator-session' ||
+    path === '/api/v1/callbacks/baiying' ||
+    path === '/api/v1/callbacks/baiying/call-instance' ||
+    /^\/api\/v1\/recordings\/[^/]+\/content$/.test(path)
+  );
+}
+
+function operatorSessionCookieOptions(secure: boolean, maxAge: number) {
+  return {
+    httpOnly: true,
+    maxAge,
+    path: '/',
+    secure,
+    sameSite: secure ? ('None' as const) : ('Lax' as const),
+  };
+}

@@ -1,7 +1,13 @@
 import { z } from 'zod';
 
-export const transformTypeSchema = z.enum(['TEXT', 'DATE', 'MONEY', 'ENUM', 'TEMPLATE']);
-export const emptyPolicySchema = z.enum(['BLOCK', 'DEFAULT']);
+export const transformTypeSchema = z.enum([
+  'TEXT',
+  'DATE',
+  'MONEY',
+  'ENUM',
+  'TEMPLATE',
+]);
+export const emptyPolicySchema = z.enum(['BLOCK', 'DEFAULT', 'OMIT']);
 export const mappingRuleStatusSchema = z.enum(['PUBLISHED', 'REMOVED']);
 export const sceneStatusSchema = z.enum([
   'ACTIVE',
@@ -17,39 +23,77 @@ export type MappingRuleStatus = z.infer<typeof mappingRuleStatusSchema>;
 export type SceneStatus = z.infer<typeof sceneStatusSchema>;
 
 export const transformConfigSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('TEXT'), mode: z.enum(['TRIM', 'PRESERVE', 'UPPERCASE', 'LOWERCASE']) }),
-  z.object({ type: z.literal('DATE'), outputFormat: z.enum(['YYYY-MM-DD', 'YYYY年MM月DD日', 'MM/DD/YYYY']) }),
-  z.object({ type: z.literal('MONEY'), inputUnit: z.enum(['YUAN', 'CENT']), decimalPlaces: z.union([z.literal(0), z.literal(2)]) }),
-  z.object({ type: z.literal('ENUM'), values: z.record(z.string(), z.string()).refine((value) => Object.keys(value).length > 0, '至少需要一条枚举映射') }),
-  z.object({ type: z.literal('TEMPLATE'), template: z.string().includes('{{value}}') }),
+  z.object({
+    type: z.literal('TEXT'),
+    mode: z.enum(['TRIM', 'PRESERVE', 'UPPERCASE', 'LOWERCASE']),
+  }),
+  z.object({
+    type: z.literal('DATE'),
+    outputFormat: z.enum(['YYYY-MM-DD', 'YYYY年MM月DD日', 'MM/DD/YYYY']),
+  }),
+  z.object({
+    type: z.literal('MONEY'),
+    inputUnit: z.enum(['YUAN', 'CENT']),
+    decimalPlaces: z.union([z.literal(0), z.literal(2)]),
+  }),
+  z.object({
+    type: z.literal('ENUM'),
+    values: z
+      .record(z.string(), z.string())
+      .refine((value) => Object.keys(value).length > 0, '至少需要一条枚举映射'),
+  }),
+  z.object({
+    type: z.literal('TEMPLATE'),
+    template: z.string().includes('{{value}}'),
+  }),
 ]);
 export type TransformConfig = z.infer<typeof transformConfigSchema>;
 
-export const mappingDraftInputSchema = z.object({
-  baiyingVariableName: z.string().trim().min(1).max(128),
-  erpField: z.string().trim().max(128).nullable().default(null),
-  crmField: z.string().trim().max(128).nullable().default(null),
-  transformConfig: transformConfigSchema,
-  emptyPolicy: emptyPolicySchema,
-  defaultValue: z.string().max(1000).nullable().default(null),
-}).superRefine((value, context) => {
-  if (!value.erpField && !value.crmField) {
-    context.addIssue({ code: 'custom', path: ['erpField'], message: 'ERP 与 CRM 至少配置一个取值字段' });
-  }
-  if (value.transformConfig.type === 'ENUM' && value.emptyPolicy === 'DEFAULT' && !value.defaultValue) {
-    context.addIssue({ code: 'custom', path: ['defaultValue'], message: 'DEFAULT 策略必须配置默认值' });
-  }
-  if (value.emptyPolicy === 'DEFAULT' && !value.defaultValue) {
-    context.addIssue({ code: 'custom', path: ['defaultValue'], message: 'DEFAULT 策略必须配置默认值' });
-  }
-});
+export const mappingDraftInputSchema = z
+  .object({
+    baiyingVariableName: z.string().trim().min(1).max(128),
+    erpField: z.string().trim().max(128).nullable().default(null),
+    crmField: z.string().trim().max(128).nullable().default(null),
+    transformConfig: transformConfigSchema,
+    emptyPolicy: emptyPolicySchema,
+    defaultValue: z.string().max(1000).nullable().default(null),
+  })
+  .superRefine((value, context) => {
+    if (!value.erpField && !value.crmField) {
+      context.addIssue({
+        code: 'custom',
+        path: ['erpField'],
+        message: 'ERP 与 CRM 至少配置一个取值字段',
+      });
+    }
+    if (
+      value.transformConfig.type === 'ENUM' &&
+      value.emptyPolicy === 'DEFAULT' &&
+      !value.defaultValue
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['defaultValue'],
+        message: 'DEFAULT 策略必须配置默认值',
+      });
+    }
+    if (value.emptyPolicy === 'DEFAULT' && !value.defaultValue) {
+      context.addIssue({
+        code: 'custom',
+        path: ['defaultValue'],
+        message: 'DEFAULT 策略必须配置默认值',
+      });
+    }
+  });
 export type MappingDraftInput = z.infer<typeof mappingDraftInputSchema>;
 
 export const removeMappingDraftInputSchema = z.object({
   baiyingVariableName: z.string().trim().min(1).max(128),
   removalReason: z.string().trim().min(1).max(500),
 });
-export type RemoveMappingDraftInput = z.infer<typeof removeMappingDraftInputSchema>;
+export type RemoveMappingDraftInput = z.infer<
+  typeof removeMappingDraftInputSchema
+>;
 
 export const publishMappingInputSchema = z.object({
   publisherId: z.string().min(1).max(128),

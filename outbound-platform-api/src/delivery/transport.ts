@@ -1,4 +1,8 @@
-import { outboundCallbackEventSchema } from '@outbound/contracts';
+import {
+  outboundCallbackEventSchema,
+  outboundCallResultV2Schema,
+} from '@outbound/contracts';
+import { parseCallbackTargetUrl } from './callback-url.js';
 import { verifyCallbackRequestSignature } from './signature.js';
 
 export type DeliveryHttpRequest = {
@@ -15,6 +19,39 @@ export type DeliveryHttpResponse = {
 
 export interface DeliveryTransport {
   send(request: DeliveryHttpRequest): Promise<DeliveryHttpResponse>;
+}
+
+export class HttpDeliveryTransport implements DeliveryTransport {
+  private readonly fetchImpl: typeof fetch;
+  private readonly maxResponseBytes: number;
+
+  constructor(
+    options: {
+      fetchImpl?: typeof fetch;
+      maxResponseBytes?: number;
+    } = {},
+  ) {
+    this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
+    this.maxResponseBytes = options.maxResponseBytes ?? 65_536;
+    if (!Number.isInteger(this.maxResponseBytes) || this.maxResponseBytes < 1) {
+      throw new Error('回调响应大小上限必须是正整数');
+    }
+  }
+
+  async send(request: DeliveryHttpRequest): Promise<DeliveryHttpResponse> {
+    const target = parseCallbackTargetUrl(request.url);
+    const response = await this.fetchImpl(target, {
+      method: 'POST',
+      headers: request.headers,
+      body: Buffer.from(request.body),
+      redirect: 'manual',
+      signal: AbortSignal.timeout(request.timeoutMs),
+    });
+    return {
+      status: response.status,
+      body: await readLimitedResponseBody(response, this.maxResponseBytes),
+    };
+  }
 }
 
 export type LocalDeliveryReceipt = {
@@ -56,13 +93,21 @@ export class LocalNoNetworkDeliveryTransport implements DeliveryTransport {
       this.options.allowedHosts ?? ['erp.mock.invalid', 'crm.mock.invalid'],
     );
     const raw = Buffer.from(request.body).toString('utf8');
-    const event = outboundCallbackEventSchema.parse(JSON.parse(raw));
     const eventId = requiredHeader(request.headers, 'X-Platform-Event-Id');
+    const contractVersion = findHeader(request.headers, 'X-Contract-Version');
+    let eventType: string;
+    if (contractVersion === '2.0') {
+      outboundCallResultV2Schema.parse(JSON.parse(raw));
+      eventType = 'OUTBOUND_CALL_RESULT_V2';
+    } else {
+      const event = outboundCallbackEventSchema.parse(JSON.parse(raw));
+      if (eventId !== event.eventId) {
+        throw new Error('本地接收器拒绝 Header 与 Body 不一致的 eventId');
+      }
+      eventType = event.eventType;
+    }
     const timestamp = requiredHeader(request.headers, 'X-Timestamp');
     const signature = requiredHeader(request.headers, 'X-Signature');
-    if (eventId !== event.eventId) {
-      throw new Error('本地接收器拒绝 Header 与 Body 不一致的 eventId');
-    }
     if (!/^\d{13}$/.test(timestamp)) {
       throw new Error('本地接收器拒绝无效的毫秒时间戳');
     }
@@ -80,7 +125,7 @@ export class LocalNoNetworkDeliveryTransport implements DeliveryTransport {
     this.receivedEventIds.add(eventId);
     const receipt = {
       eventId,
-      eventType: event.eventType,
+      eventType,
       url: url.toString(),
       timestamp,
       body: raw,
@@ -121,9 +166,40 @@ function requiredHeader(
   headers: Readonly<Record<string, string>>,
   name: string,
 ): string {
-  const found = Object.entries(headers).find(
-    ([key]) => key.toLowerCase() === name.toLowerCase(),
-  )?.[1];
+  const found = findHeader(headers, name);
   if (!found) throw new Error(`本地接收器缺少 ${name}`);
   return found;
+}
+
+function findHeader(
+  headers: Readonly<Record<string, string>>,
+  name: string,
+): string | undefined {
+  return Object.entries(headers).find(
+    ([key]) => key.toLowerCase() === name.toLowerCase(),
+  )?.[1];
+}
+
+async function readLimitedResponseBody(
+  response: Response,
+  maxBytes: number,
+): Promise<string> {
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let received = 0;
+  while (received < maxBytes) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const remaining = maxBytes - received;
+    const chunk = Buffer.from(value.subarray(0, remaining));
+    chunks.push(chunk);
+    received += chunk.length;
+    if (value.length > remaining) {
+      await reader.cancel();
+      break;
+    }
+  }
+  if (received === maxBytes) await reader.cancel();
+  return Buffer.concat(chunks).toString('utf8');
 }

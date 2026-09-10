@@ -172,7 +172,7 @@ export function RechargeLedgerConsole() {
   };
 
   return (
-    <>
+    <div className="finance-console">
       <header className="ops-page-intro">
         <div>
           <span>ACCOUNT LEDGER / IMMUTABLE</span>
@@ -549,7 +549,7 @@ export function RechargeLedgerConsole() {
           refresh();
         }}
       />
-    </>
+    </div>
   );
 }
 

@@ -6,6 +6,8 @@ import {
 } from './service.js';
 import { userFacingTaskFailureMessage } from './postgres-repository.js';
 import { retryDelayForAttempt } from './worker.js';
+import { LocalDataProtector } from '../security/data-protector.js';
+import { buildCallItemCorrelationToken } from '../security/correlation-token.js';
 
 describe('task orchestration helpers', () => {
   it('builds a stable provider name without duplicating the PT prefix', () => {
@@ -19,6 +21,28 @@ describe('task orchestration helpers', () => {
     );
     expect(first).toMatch(/^PT-20260906-00025-[a-f0-9]{8}$/);
     expect(second).toBe(first);
+  });
+
+  it('binds a callback token to task, item and normalized phone hash', () => {
+    const protector = new LocalDataProtector(
+      'test-root-secret-with-at-least-24-characters',
+      'test',
+    );
+    const token = buildCallItemCorrelationToken(
+      protector,
+      'task-1',
+      'item-1',
+      protector.phoneHmac('13800138000'),
+    );
+    expect(token).toMatch(/^[a-f0-9]{64}$/);
+    expect(token).not.toBe(
+      buildCallItemCorrelationToken(
+        protector,
+        'task-1',
+        'item-2',
+        protector.phoneHmac('13800138000'),
+      ),
+    );
   });
 
   it('accepts only an exact all-success import summary', () => {

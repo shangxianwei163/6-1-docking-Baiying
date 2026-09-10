@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { CreateOutboundBatchRequestV2 } from '@outbound/contracts';
 import type { MappingRepository } from '../mapping/repository.js';
 import type {
   AuthenticationInput,
@@ -6,7 +7,7 @@ import type {
   ExternalRequestAuthenticator,
 } from '../openapi/authenticator.js';
 import { ExternalApiFailure } from '../openapi/errors.js';
-import { stableJsonSha256 } from '../openapi/request-hash.js';
+import { rawBodySha256, stableJsonSha256 } from '../openapi/request-hash.js';
 import type { OutboundTaskService } from '../outbound-task/service.js';
 import { createApp } from './app.js';
 
@@ -36,6 +37,27 @@ const validRequest = {
   ],
 };
 
+const validV2Request = {
+  main_category: '排档',
+  sub_category: '孕妈',
+  source: 0 as const,
+  company_code: '5903679116',
+  customer_list: [
+    {
+      c_level: '',
+      c_info_list: [
+        {
+          phone: '13500000001',
+          guid: '11111111-1111-4111-8111-111111111101',
+          customer_name: '测试客户A',
+          photoshop: null,
+          custom_variable_101: '可扩展字段',
+        },
+      ],
+    },
+  ],
+};
+
 function setup() {
   const authenticate = vi.fn(async (_input: AuthenticationInput) => principal);
   const accept = vi.fn(async () => ({
@@ -58,8 +80,35 @@ function setup() {
     },
   }));
   const authenticator: ExternalRequestAuthenticator = { authenticate };
+  const acceptV2 = vi.fn(async () => ({
+    status: 202 as const,
+    replayed: false,
+    body: {
+      code: 'BATCH_ACCEPTED' as const,
+      message: '外呼批次已受理',
+      request_id: 'request-001',
+      data: {
+        batch_id: 'b37dd640-3b48-4e9c-b719-cf650fc9907a',
+        execution_status: 'ACCEPTED' as const,
+        phone_count: 1,
+        task_count: 1,
+        tasks: [
+          {
+            task_id: 'cf9806bb-2166-43b0-8fdc-c7bb48115880',
+            task_no: 'PT-20260906-00001',
+            phone_count: 1,
+            status_url: '/openapi/v1/outbound/tasks/PT-20260906-00001',
+          },
+        ],
+        status_url:
+          '/openapi/v2/outbound/batches/b37dd640-3b48-4e9c-b719-cf650fc9907a',
+      },
+    },
+  }));
   const taskService = {
     accept,
+    acceptV2,
+    getBatchV2: vi.fn(),
     getTask: vi.fn(),
     listCalls: vi.fn(),
   } as unknown as OutboundTaskService;
@@ -71,21 +120,18 @@ function setup() {
     outboundTaskService: taskService,
     createId: () => 'request-001',
   });
-  return { app, authenticate, accept };
+  return { app, authenticate, accept, acceptV2 };
 }
 
 describe('external outbound task HTTP API', () => {
-  it('authenticates the exact raw body and accepts a validated task', async () => {
+  it('authenticates the fixed request token and accepts a validated task', async () => {
     const { app, authenticate, accept } = setup();
     const rawBody = JSON.stringify(validRequest);
     const response = await app.request('/openapi/v1/outbound/tasks', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-client-id': 'erp-local-01',
-        'x-timestamp': '1788624000000',
-        'x-nonce': 'nonce-1234567890',
-        'x-signature': 'signature',
+        'x-access-token': 'erp-local-access-token',
         'idempotency-key': 'idempotency-001',
         'x-request-id': 'request-001',
       },
@@ -97,9 +143,9 @@ describe('external outbound task HTTP API', () => {
       code: 'TASK_ACCEPTED',
       data: { taskNo: 'PT-20260906-00001' },
     });
-    expect(
-      new TextDecoder().decode(authenticate.mock.calls[0]![0].rawBody),
-    ).toBe(rawBody);
+    expect(authenticate).toHaveBeenCalledWith({
+      accessToken: 'erp-local-access-token',
+    });
     expect(accept).toHaveBeenCalledWith(
       expect.objectContaining({
         idempotencyKey: 'idempotency-001',
@@ -108,15 +154,84 @@ describe('external outbound task HTTP API', () => {
     );
   });
 
+  it('accepts the nested v2 batch and hashes its normalized contract', async () => {
+    const { app, authenticate, acceptV2 } = setup();
+    const rawBody = JSON.stringify(validV2Request);
+    const response = await app.request('/openapi/v2/outbound/tasks', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-access-token': 'erp-local-access-token',
+        'idempotency-key': 'idempotency-v2-001',
+      },
+      body: rawBody,
+    });
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'BATCH_ACCEPTED',
+      data: {
+        batch_id: 'b37dd640-3b48-4e9c-b719-cf650fc9907a',
+        task_count: 1,
+      },
+    });
+    expect(authenticate).toHaveBeenLastCalledWith({
+      accessToken: 'erp-local-access-token',
+    });
+    expect(acceptV2).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: 'idempotency-v2-001',
+        requestHash: rawBodySha256(new TextEncoder().encode(rawBody)),
+        request: expect.objectContaining({ company_code: '5903679116' }),
+      }),
+    );
+  });
+
+  it.each([
+    ['guid', 'GUID_DUPLICATED'],
+    ['phone', 'PHONE_DUPLICATED'],
+  ] as const)(
+    'rejects a v2 batch with a duplicate %s before calling the service',
+    async (field, code) => {
+      const { app, acceptV2 } = setup();
+      const duplicate: CreateOutboundBatchRequestV2 =
+        structuredClone(validV2Request);
+      duplicate.customer_list.push({
+        c_level: 'SR3',
+        c_info_list: [
+          {
+            phone:
+              field === 'phone'
+                ? validV2Request.customer_list[0]!.c_info_list[0]!.phone
+                : '18300000003',
+            guid:
+              field === 'guid'
+                ? validV2Request.customer_list[0]!.c_info_list[0]!.guid
+                : '11111111-1111-4111-8111-111111111103',
+          },
+        ],
+      });
+      const response = await app.request('/openapi/v2/outbound/tasks', {
+        method: 'POST',
+        headers: {
+          'x-access-token': 'erp-local-access-token',
+          'idempotency-key': `idempotency-${field}-001`,
+        },
+        body: JSON.stringify(duplicate),
+      });
+
+      expect(response.status).toBe(422);
+      await expect(response.json()).resolves.toMatchObject({ code });
+      expect(acceptV2).not.toHaveBeenCalled();
+    },
+  );
+
   it('returns the flat external error contract for invalid payloads', async () => {
     const { app, accept } = setup();
     const response = await app.request('/openapi/v1/outbound/tasks', {
       method: 'POST',
       headers: {
-        'x-client-id': 'erp-local-01',
-        'x-timestamp': '1788624000000',
-        'x-nonce': 'nonce-1234567890',
-        'x-signature': 'signature',
+        'x-access-token': 'erp-local-access-token',
         'idempotency-key': 'idempotency-001',
       },
       body: '{}',
@@ -141,10 +256,7 @@ describe('external outbound task HTTP API', () => {
     const response = await app.request('/openapi/v1/outbound/tasks', {
       method: 'POST',
       headers: {
-        'x-client-id': 'erp-local-01',
-        'x-timestamp': '1788624000000',
-        'x-nonce': 'nonce-1234567890',
-        'x-signature': 'signature',
+        'x-access-token': 'erp-local-access-token',
         'idempotency-key': 'idempotency-001',
       },
       body: JSON.stringify(validRequest),
@@ -165,10 +277,7 @@ describe('external outbound task HTTP API', () => {
     const response = await app.request('/openapi/v1/outbound/tasks', {
       method: 'POST',
       headers: {
-        'x-client-id': 'erp-local-01',
-        'x-timestamp': '1788624000000',
-        'x-nonce': 'nonce-1234567890',
-        'x-signature': 'signature',
+        'x-access-token': 'erp-local-access-token',
         'idempotency-key': 'idempotency-001',
       },
       body: JSON.stringify(validRequest),

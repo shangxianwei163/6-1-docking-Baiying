@@ -6,6 +6,7 @@ import { createDatabase } from './db/client.js';
 import { createApp } from './http/app.js';
 import { PostgresMappingRepository } from './mapping/postgres-repository.js';
 import { HttpBaiyingVariableClient } from './baiying/client.js';
+import { HttpBaiyingCallJobClient } from './baiying/http-call-job-client.js';
 import { OAuthBaiyingTokenProvider } from './baiying/token-provider.js';
 import { PostgresPlannedTaskRepository } from './planned-task/postgres-repository.js';
 import { PostgresScriptRepository } from './script/postgres-repository.js';
@@ -26,6 +27,7 @@ import { PostgresOperationsOverviewService } from './operations/overview-service
 import { PostgresIntegrationLogService } from './operations/integration-log-service.js';
 import { PostgresRecoveryOperationsService } from './operations/recovery-service.js';
 import {
+  BaiyingTaskCommandExecutor,
   LocalTaskCommandExecutor,
   PostgresTaskControlService,
 } from './operations/task-control-service.js';
@@ -35,6 +37,8 @@ import { PostgresRecordingUrlReissueService } from './recording/reissue-service.
 import { LocalRecordingObjectStore } from './recording/local-object-store.js';
 import { PostgresRecordingAccessRepository } from './recording/postgres-access-repository.js';
 import { LocalRecordingUrlSigner } from './recording/url-signer.js';
+import { OperatorSessionService } from './security/operator-session.js';
+import { PostgresReconciliationRepository } from './reconciliation/postgres-repository.js';
 
 for (const name of [
   'HTTP_PROXY',
@@ -48,6 +52,13 @@ for (const name of [
 }
 
 const config = readConfig();
+const operatorSessionService = new OperatorSessionService({
+  username: config.CONSOLE_ADMIN_USERNAME,
+  password: config.CONSOLE_ADMIN_PASSWORD,
+  displayName: '平台管理员',
+  organization: '华东运营中心',
+  secret: config.WORKER_SHARED_SECRET,
+});
 const database = createDatabase(config.DATABASE_URL);
 const repository = new PostgresMappingRepository(
   database.db,
@@ -77,9 +88,9 @@ const localSecretProvider =
         config.WORKER_SHARED_SECRET,
         config.NODE_ENV,
       );
-const externalRequestAuthenticator = localSecretProvider
-  ? new PostgresExternalRequestAuthenticator(database.db, localSecretProvider)
-  : undefined;
+const externalRequestAuthenticator = new PostgresExternalRequestAuthenticator(
+  database.db,
+);
 const localDataProtector =
   config.NODE_ENV === 'production'
     ? undefined
@@ -114,14 +125,9 @@ const integrationLogService = new PostgresIntegrationLogService(database.db);
 const recoveryOperationsService = new PostgresRecoveryOperationsService(
   database.db,
 );
-const taskControlService =
-  config.NODE_ENV === 'production'
-    ? undefined
-    : new PostgresTaskControlService(
-        database.db,
-        new LocalTaskCommandExecutor(),
-        { taskQueueName: config.TASK_ORCHESTRATION_QUEUE_NAME },
-      );
+const reconciliationOperations = new PostgresReconciliationRepository(
+  database.db,
+);
 const callbackPreviewService = new SafeCallbackPreviewService();
 const recordingUrlSigner = localDataProtector
   ? new LocalRecordingUrlSigner(config.WORKER_SHARED_SECRET, config.NODE_ENV)
@@ -164,6 +170,25 @@ const workflowClient =
         tokenProvider: baiyingTokenProvider,
       })
     : undefined;
+const callJobClient =
+  config.BAIYING_BASE_URL && baiyingTokenProvider
+    ? new HttpBaiyingCallJobClient({
+        baseUrl: config.BAIYING_BASE_URL,
+        tokenProvider: baiyingTokenProvider,
+        timeoutMs: config.BAIYING_REQUEST_TIMEOUT_MS,
+      })
+    : undefined;
+const taskCommandExecutor =
+  config.BAIYING_WRITE_ENABLED && callJobClient
+    ? new BaiyingTaskCommandExecutor(callJobClient)
+    : config.NODE_ENV !== 'production'
+      ? new LocalTaskCommandExecutor()
+      : undefined;
+const taskControlService = taskCommandExecutor
+  ? new PostgresTaskControlService(database.db, taskCommandExecutor, {
+      taskQueueName: config.TASK_ORCHESTRATION_QUEUE_NAME,
+    })
+  : undefined;
 const app = createApp({
   mappingRepository: repository,
   plannedTaskRepository,
@@ -183,6 +208,7 @@ const app = createApp({
   operationsOverviewService,
   integrationLogService,
   recoveryOperationsService,
+  reconciliationOperations,
   taskControlService,
   callbackPreviewService,
   recordingAccessService,
@@ -191,6 +217,8 @@ const app = createApp({
   baiyingCompanyId: config.BAIYING_COMPANY_ID,
   consoleOrigin: config.CONSOLE_ORIGIN,
   workerSharedSecret: config.WORKER_SHARED_SECRET,
+  operatorSessionService,
+  operatorSessionCookieSecure: config.NODE_ENV === 'production',
 });
 
 const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {

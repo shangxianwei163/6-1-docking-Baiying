@@ -82,6 +82,120 @@ describe('CallbackDeliveryWorker', () => {
     );
   });
 
+  it('delivers and signs a legacy HTTP endpoint with its explicit port', async () => {
+    const targetUrl = 'http://testmc.6161520.cn:8083/SAi/Sx_AI_CallResult';
+    const send = vi.fn<DeliveryTransport['send']>(async (request) => {
+      expect(request.url).toBe(targetUrl);
+      expect(
+        verifyCallbackRequestSignature(
+          {
+            url: request.url,
+            timestamp: request.headers['X-Timestamp']!,
+            eventId: request.headers['X-Platform-Event-Id']!,
+            rawBody: request.body,
+          },
+          secret,
+          request.headers['X-Signature']!,
+        ),
+      ).toBe(true);
+      return { status: 200, body: '{"Code":200}' };
+    });
+    const worker = workerWith(repository({}, { ...claimed, targetUrl }), {
+      send,
+    });
+
+    await expect(worker.runOnce()).resolves.toMatchObject({
+      status: 'SUCCEEDED',
+      responseStatus: 200,
+    });
+  });
+
+  it.each([
+    'ftp://erp.example.com/callback',
+    'http://erp.example.com/callback?token=secret',
+    'https://user:secret@erp.example.com/callback',
+  ])(
+    'dead-letters an invalid target without sending: %s',
+    async (targetUrl) => {
+      const send = vi.fn<DeliveryTransport['send']>();
+      const fail = vi.fn<DeliveryRepository['fail']>(async () => ({
+        status: 'DEAD_LETTERED',
+        attempts: 1,
+        availableAt: null,
+      }));
+      const worker = workerWith(
+        repository({ fail }, { ...claimed, targetUrl }),
+        { send },
+      );
+
+      await expect(worker.runOnce()).resolves.toMatchObject({
+        status: 'DEAD_LETTERED',
+      });
+      expect(send).not.toHaveBeenCalled();
+      expect(fail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          retryable: false,
+          errorClass: 'TARGET_URL_INVALID',
+        }),
+      );
+    },
+  );
+
+  it('delivers only the v2 business result body during the compatibility window', async () => {
+    const result = {
+      guid: '11111111-1111-4111-8111-111111111101',
+      externalCustomerId: '11111111-1111-4111-8111-111111111101',
+      phone_masked: '135****0001',
+      call_status: 'ANSWERED',
+      finish_status: 0,
+      result_complete: true,
+      collected_variables: { 预约门店: '湖滨店' },
+      task_results: [{ resultName: '客户意向等级', resultValue: 'A' }],
+    };
+    const v2Event = {
+      schemaVersion: '2.0',
+      eventId: '11111111-1111-4111-8111-111111111114',
+      eventType: 'OUTBOUND_CALL_RESULT_V2',
+      occurredAt: '2026-09-06T10:35:00+08:00',
+      sourceSystem: 'ERP',
+      mcCode: '5903679116',
+      taskNo: 'PT-20260906-00026',
+      result,
+    };
+    const v2Claimed: ClaimedDeliveryEvent = {
+      ...claimed,
+      eventId: v2Event.eventId,
+      eventKey: `OUTBOUND_CALL_RESULT_V2:${result.guid}`,
+      eventType: v2Event.eventType,
+      payload: v2Event,
+    };
+    const send = vi.fn<DeliveryTransport['send']>(async (request) => {
+      const rawBody = Buffer.from(request.body).toString('utf8');
+      expect(request.headers['X-Contract-Version']).toBe('2.0');
+      expect(JSON.parse(rawBody)).toEqual(result);
+      expect(rawBody).not.toContain('taskNo');
+      expect(
+        verifyCallbackRequestSignature(
+          {
+            url: request.url,
+            timestamp: request.headers['X-Timestamp']!,
+            eventId: request.headers['X-Platform-Event-Id']!,
+            rawBody: request.body,
+          },
+          secret,
+          request.headers['X-Signature']!,
+        ),
+      ).toBe(true);
+      return { status: 200, body: '{"code":200}' };
+    });
+    const worker = workerWith(repository({}, v2Claimed), { send });
+
+    await expect(worker.runOnce()).resolves.toMatchObject({
+      status: 'SUCCEEDED',
+      eventType: 'OUTBOUND_CALL_RESULT_V2',
+    });
+  });
+
   it.each([408, 429, 500, 503])(
     'retries documented retryable HTTP status %i',
     async (status) => {
@@ -147,10 +261,11 @@ function workerWith(
 
 function repository(
   overrides: Partial<DeliveryRepository>,
+  next: ClaimedDeliveryEvent = claimed,
 ): DeliveryRepository {
   return {
     materialize: vi.fn(),
-    claimNext: vi.fn(async () => claimed),
+    claimNext: vi.fn(async () => next),
     complete: vi.fn(),
     fail: vi.fn(),
     ...overrides,

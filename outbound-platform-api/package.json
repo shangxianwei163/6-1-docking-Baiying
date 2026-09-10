@@ -23,6 +23,7 @@
     "db:verify:stage2": "tsx src/db/verify-stage2.ts",
     "db:verify:stage3": "tsx src/db/verify-stage3.ts",
     "db:verify:stage4": "tsx src/db/verify-stage4.ts",
+    "db:verify:stage4b": "tsx src/db/verify-stage4.ts",
     "db:verify:stage5a": "tsx src/db/verify-stage5a.ts",
     "db:verify:stage5b": "tsx src/db/verify-stage5b.ts",
     "db:verify:stage6b": "tsx src/db/verify-stage6b.ts",
@@ -35,13 +36,18 @@
     "stage2:send:crm": "tsx src/openapi/send-local-example.ts CRM",
     "stage3:worker:local": "tsx src/orchestration/local-worker.ts",
     "stage4:worker:local": "tsx src/callback/local-worker.ts",
+    "stage4b:worker": "tsx src/reconciliation/local-worker.ts",
     "stage5:worker:local": "tsx src/recording/local-worker.ts",
+    "recording:network-worker": "tsx src/recording/network-worker.ts",
     "stage5b:worker:local": "tsx src/delivery/local-worker.ts",
+    "callback:delivery-worker": "tsx src/delivery/network-worker.ts",
     "preseed": "npm run build --workspace @outbound/contracts",
     "db:seed": "tsx src/db/seed.ts",
     "baiying:check": "tsx src/baiying/check-connection.ts",
     "baiying:sync": "tsx src/baiying/sync-to-postgres.ts",
-    "baiying:worker": "tsx watch src/baiying/local-sync-worker.ts"
+    "baiying:worker": "tsx watch src/baiying/local-sync-worker.ts",
+    "baiying:task-worker": "tsx src/orchestration/baiying-worker.ts",
+    "baiying:verify:live": "tsx src/baiying/verify-live-lifecycle.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.1.1",

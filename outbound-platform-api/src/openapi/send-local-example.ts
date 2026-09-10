@@ -5,8 +5,6 @@ import type {
   SourceSystem,
 } from '@outbound/contracts';
 import { readConfig } from '../config.js';
-import { LocalDevelopmentSecretProvider } from '../security/secret-provider.js';
-import { signRequest } from '../security/request-signature.js';
 
 async function main() {
   const config = readConfig();
@@ -14,7 +12,10 @@ async function main() {
     throw new Error('生产环境禁止运行本地模拟客户端');
   }
   const sourceSystem = parseSource(process.argv[2]);
-  const clientId = sourceSystem === 'ERP' ? 'erp-local-01' : 'crm-local-01';
+  const accessToken =
+    sourceSystem === 'ERP'
+      ? 'erp-local-access-token'
+      : 'crm-local-access-token';
   const categoryId =
     sourceSystem === 'ERP' ? 'LOCAL-ERP-WEDDING' : 'LOCAL-CRM-WEDDING';
   const request: CreateOutboundTaskRequest = {
@@ -45,25 +46,11 @@ async function main() {
   };
   const rawBody = Buffer.from(JSON.stringify(request));
   const url = `http://localhost:${config.PORT}/openapi/v1/outbound/tasks`;
-  const timestamp = String(Date.now());
-  const nonce = randomUUID();
-  const provider = new LocalDevelopmentSecretProvider(
-    config.WORKER_SHARED_SECRET,
-    config.NODE_ENV,
-  );
-  const secret = await provider.getSecretBytes(`local-hkdf://${clientId}`);
-  const signature = signRequest(
-    { method: 'POST', url, timestamp, nonce, rawBody },
-    secret,
-  );
   const response = await fetch(url, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-client-id': clientId,
-      'x-timestamp': timestamp,
-      'x-nonce': nonce,
-      'x-signature': signature,
+      'x-access-token': accessToken,
       'idempotency-key': randomUUID(),
       'x-request-id': randomUUID(),
     },

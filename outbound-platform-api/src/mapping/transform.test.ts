@@ -16,31 +16,58 @@ const rule: MappingRule = {
 
 describe('transformMappedValue', () => {
   it('reads only the ERP field for ERP input', () => {
-    expect(transformMappedValue({
-      rule,
-      sourceSystem: 'ERP',
-      sourceRecord: { wedding_date: '2026/10/18', marriage_date: '2027/01/01' },
-    })).toBe('2026-10-18');
+    expect(
+      transformMappedValue({
+        rule,
+        sourceSystem: 'ERP',
+        sourceRecord: {
+          wedding_date: '2026/10/18',
+          marriage_date: '2027/01/01',
+        },
+      }),
+    ).toBe('2026-10-18');
   });
 
   it('reads only the CRM field for CRM input', () => {
-    expect(transformMappedValue({
-      rule,
-      sourceSystem: 'CRM',
-      sourceRecord: { wedding_date: '2026/10/18', marriage_date: '2027/01/01' },
-    })).toBe('2027-01-01');
+    expect(
+      transformMappedValue({
+        rule,
+        sourceSystem: 'CRM',
+        sourceRecord: {
+          wedding_date: '2026/10/18',
+          marriage_date: '2027/01/01',
+        },
+      }),
+    ).toBe('2027-01-01');
   });
 
   it('records a mapping failure when the selected source field is empty', () => {
-    expect(() => transformMappedValue({ rule, sourceSystem: 'ERP', sourceRecord: { marriage_date: '2027/01/01' } }))
-      .toThrow(MappingValueError);
+    expect(() =>
+      transformMappedValue({
+        rule,
+        sourceSystem: 'ERP',
+        sourceRecord: { marriage_date: '2027/01/01' },
+      }),
+    ).toThrow(MappingValueError);
   });
 
   it('uses the configured default value when conversion fails', () => {
-    expect(transformMappedValue({
-      rule: { ...rule, emptyPolicy: 'DEFAULT', defaultValue: '待确认' },
-      sourceSystem: 'CRM',
-      sourceRecord: { marriage_date: 'not-a-date' },
-    })).toBe('待确认');
+    expect(
+      transformMappedValue({
+        rule: { ...rule, emptyPolicy: 'DEFAULT', defaultValue: '待确认' },
+        sourceSystem: 'CRM',
+        sourceRecord: { marriage_date: 'not-a-date' },
+      }),
+    ).toBe('待确认');
+  });
+
+  it('omits a null source value when the rule uses OMIT', () => {
+    expect(
+      transformMappedValue({
+        rule: { ...rule, emptyPolicy: 'OMIT' },
+        sourceSystem: 'ERP',
+        sourceRecord: { wedding_date: null },
+      }),
+    ).toBeUndefined();
   });
 });

@@ -9,7 +9,7 @@ export const scriptCategoryBindingSchema = z.object({
 export const scriptBindingInputSchema = z.object({
   robotDefId: z.string().min(1).max(128),
   sourceSystem: sourceSystemSchema,
-  categories: z.array(scriptCategoryBindingSchema).min(1).max(100),
+  categories: z.array(scriptCategoryBindingSchema).min(1),
   studioId: z.string().min(1).max(128),
   studioName: z.string().min(1).max(200),
   lineId: z.string().min(1).max(128),

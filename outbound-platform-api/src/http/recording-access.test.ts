@@ -144,10 +144,7 @@ describe('operator recording access HTTP API', () => {
       {
         method: 'POST',
         headers: {
-          'x-client-id': 'erp-local-01',
-          'x-timestamp': '1788696000000',
-          'x-nonce': 'stage5b-reissue-nonce',
-          'x-signature': 'signed-by-client',
+          'x-access-token': 'erp-local-access-token',
         },
       },
     );
@@ -159,10 +156,7 @@ describe('operator recording access HTTP API', () => {
       {
         method: 'POST',
         headers: {
-          'x-client-id': 'erp-local-01',
-          'x-timestamp': '1788696000000',
-          'x-nonce': 'stage5b-reissue-nonce',
-          'x-signature': 'signed-by-client',
+          'x-access-token': 'erp-local-access-token',
           'idempotency-key': 'stage5b-recording-reissue-001',
         },
         body: '{}',
@@ -176,10 +170,7 @@ describe('operator recording access HTTP API', () => {
       {
         method: 'POST',
         headers: {
-          'x-client-id': 'erp-local-01',
-          'x-timestamp': '1788696000000',
-          'x-nonce': 'stage5b-reissue-nonce',
-          'x-signature': 'signed-by-client',
+          'x-access-token': 'erp-local-access-token',
           'idempotency-key': 'stage5b-recording-reissue-001',
         },
       },

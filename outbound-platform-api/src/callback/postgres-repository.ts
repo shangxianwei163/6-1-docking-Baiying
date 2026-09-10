@@ -1,6 +1,10 @@
 import { and, eq, sql } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
-import { callbackInbox, deadLetterEvents } from '../db/schema.js';
+import {
+  callbackInbox,
+  deadLetterEvents,
+  operationalMetricEvents,
+} from '../db/schema.js';
 import {
   CallbackClaimLostError,
   type CallbackFailureResult,
@@ -39,6 +43,9 @@ export class PostgresCallbackInboxRepository implements CallbackInboxRepository 
   async save(input: {
     callbackType: string;
     eventKey: string;
+    companyId: string | null;
+    callJobId: string | null;
+    callInstanceId: string | null;
     rawBodyCiphertext: string;
     rawBodySha256: string;
     headers: Record<string, string>;
@@ -50,6 +57,9 @@ export class PostgresCallbackInboxRepository implements CallbackInboxRepository 
         provider: this.provider,
         callbackType: truncate(input.callbackType, 128),
         eventKey: input.eventKey,
+        companyId: input.companyId,
+        callJobId: input.callJobId,
+        callInstanceId: input.callInstanceId,
         rawBodyCiphertext: input.rawBodyCiphertext,
         rawBodySha256: input.rawBodySha256,
         headers: input.headers,
@@ -73,6 +83,16 @@ export class PostgresCallbackInboxRepository implements CallbackInboxRepository 
     if (!existing) {
       throw new Error('重复回调冲突后未找到既有 Inbox 记录');
     }
+    await this.db.insert(operationalMetricEvents).values({
+      metricCode: 'CALLBACK_DUPLICATE',
+      sourceSystem: this.provider,
+      objectRef: existing.id,
+      detail: {
+        callbackType: truncate(input.callbackType, 128),
+        rawBodySha256: input.rawBodySha256,
+      },
+      occurredAt: now,
+    });
     return { ...existing, replayed: true };
   }
 

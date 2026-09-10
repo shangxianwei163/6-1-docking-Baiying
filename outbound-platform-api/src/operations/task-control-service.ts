@@ -9,6 +9,7 @@ import {
   type TaskExecutionStatus,
 } from '@outbound/contracts';
 import { BaiyingProviderError } from '../baiying/call-job-client.js';
+import type { BaiyingCallJobClient } from '../baiying/call-job-client.js';
 import {
   addMoney,
   moneyToMicros,
@@ -116,6 +117,64 @@ export class LocalTaskCommandExecutor implements TaskCommandExecutor {
       },
       confirmedState,
     };
+  }
+}
+
+/** 百应真实命令适配器：写接口成功后主动查询，只有目标状态可见才确认。 */
+export class BaiyingTaskCommandExecutor implements TaskCommandExecutor {
+  readonly mode = 'BAIYING' as const;
+
+  constructor(
+    private readonly client: BaiyingCallJobClient,
+    private readonly options: {
+      confirmationAttempts?: number;
+      confirmationIntervalMs?: number;
+      delay?: (milliseconds: number) => Promise<void>;
+    } = {},
+  ) {}
+
+  async execute(input: {
+    companyId: string;
+    callJobId: string;
+    command: ConsoleTaskCommand;
+  }) {
+    const command =
+      input.command === 'PAUSE' ? 2 : input.command === 'TERMINATE' ? 3 : 1;
+    const target =
+      input.command === 'PAUSE'
+        ? ('PAUSED' as const)
+        : input.command === 'TERMINATE'
+          ? ('TERMINATED' as const)
+          : ('CALLING' as const);
+    const result = await this.client.executeCallJob({
+      companyId: input.companyId,
+      callJobId: input.callJobId,
+      command,
+    });
+    const attempts = this.options.confirmationAttempts ?? 10;
+    const interval = this.options.confirmationIntervalMs ?? 1_000;
+    const delay = this.options.delay ?? defaultDelay;
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const snapshot = await this.client.getCallJob({
+        companyId: input.companyId,
+        callJobId: input.callJobId,
+      });
+      if (snapshot.job?.state === target) {
+        return {
+          requestId: result.requestId,
+          response: result.response,
+          confirmedState: target,
+        };
+      }
+      if (attempt < attempts) await delay(interval);
+    }
+    throw new BaiyingProviderError(
+      'UNKNOWN_OUTCOME',
+      'BAIYING_COMMAND_CONFIRMATION_TIMEOUT',
+      `百应已受理 ${input.command}，但在确认窗口内未查询到目标状态 ${target}`,
+      result,
+    );
   }
 }
 
@@ -638,6 +697,10 @@ function providerStatusFor(command: ConsoleTaskCommand): number {
   if (command === 'PAUSE') return 4;
   if (command === 'RESUME') return 1;
   return 6;
+}
+
+function defaultDelay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function retryTarget(

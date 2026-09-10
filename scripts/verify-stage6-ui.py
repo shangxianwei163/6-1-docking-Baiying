@@ -1,31 +1,19 @@
 from pathlib import Path
 import re
-import json
-from urllib.request import ProxyHandler, Request, build_opener
 
 from playwright.sync_api import expect, sync_playwright
 
 from dialog_assertions import assert_dialog_has_no_outer_overflow
+from ui_auth import authenticated_api_json, open_authenticated
 
 
 SCREENSHOT = Path('/tmp/outbound-platform-stage6-task.png')
 LIST_SCREENSHOT = Path('/tmp/outbound-platform-stage6-list.png')
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
-API_BASE_URL = 'http://127.0.0.1:8788'
-
-
-def api_json(path: str) -> dict:
-    opener = build_opener(ProxyHandler({}))
-    request = Request(
-        f'{API_BASE_URL}{path}',
-        headers={'x-actor-id': 'stage6-ui-verifier'},
-    )
-    with opener.open(request, timeout=10) as response:
-        return json.load(response)['data']
-
-
 def find_fixtures() -> tuple[dict, dict, dict]:
-    tasks = api_json('/api/v1/outbound-tasks?pageNum=0&pageSize=100')['tasks']
+    tasks = authenticated_api_json(
+        '/api/v1/outbound-tasks?pageNum=0&pageSize=100'
+    )['tasks']
     delivery_pending = next(
         (
             task
@@ -48,7 +36,7 @@ def find_fixtures() -> tuple[dict, dict, dict]:
         raise AssertionError(
             'Stage 6A UI verification needs one delivery-pending and one calling local task'
         )
-    calls = api_json(
+    calls = authenticated_api_json(
         f"/api/v1/outbound-tasks/{delivery_pending['taskNo']}/calls?limit=50"
     )['items']
     if not calls:
@@ -66,7 +54,7 @@ def main() -> None:
         )
         page = browser.new_page(viewport={"width": 1600, "height": 1000})
         page.on('pageerror', lambda error: page_errors.append(str(error)))
-        page.goto('http://localhost:4173/', wait_until='networkidle')
+        open_authenticated(page)
 
         page.get_by_role('button', name=re.compile(r'^呼叫任务')).click()
         expect(page.get_by_text('PostgreSQL 实时数据')).to_be_visible()

@@ -3,6 +3,7 @@ import { sourceSystemSchema } from './envelope.js';
 import { nonNegativeAmountSchema } from './billing.js';
 import { recordingDeliveryItemSchema } from './recording.js';
 import { taskFailureSchema } from './outbound-task.js';
+import { outboundCallResultInternalEventV2Schema } from './outbound-task-v2.js';
 
 const callbackEventBaseShape = {
   schemaVersion: z.literal('1.0'),
@@ -96,6 +97,7 @@ export const outboundResultEventSchema = z.discriminatedUnion('eventType', [
 export const outboundCallbackEventSchema = z.union([
   outboundResultEventSchema,
   recordingAvailableBatchEventSchema,
+  outboundCallResultInternalEventV2Schema,
 ]);
 
 export const callbackAckSchema = z.object({

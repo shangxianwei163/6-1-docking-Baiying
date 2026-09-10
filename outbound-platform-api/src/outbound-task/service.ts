@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   asc,
   and,
@@ -19,10 +19,17 @@ import {
 import {
   consoleTaskPageSchema,
   consoleTaskRecordSchema,
+  batchAcceptedEnvelopeV2Schema,
+  flattenOutboundCustomersV2,
+  sourceCodeFromSystemV2,
+  sourceSystemFromCodeV2,
   taskAcceptedEnvelopeSchema,
+  type BatchAcceptedEnvelopeV2,
+  type BatchDetailV2,
   type ConsoleTaskPage,
   type ConsoleTaskRecord,
   type ConsoleTaskStatusFilter,
+  type CreateOutboundBatchRequestV2,
   type CreateOutboundTaskRequest,
   type MappingRule,
   type OutboundCallPage,
@@ -52,10 +59,12 @@ import {
   callInstances,
   fundHolds,
   idempotencyRecords,
+  intakeBatches,
   integrationClientStudios,
   integrationEndpoints,
   mappingRules,
   mappingVersions,
+  operationalMetricEvents,
   platformTasks,
   queueOutbox,
   recordingAssets,
@@ -91,8 +100,27 @@ export type AcceptedTaskResult = {
   replayed: boolean;
 };
 
+export type AcceptBatchV2Input = {
+  principal: ExternalPrincipal;
+  idempotencyKey: string;
+  requestId: string;
+  requestHash: string;
+  request: CreateOutboundBatchRequestV2;
+};
+
+export type AcceptedBatchV2Result = {
+  status: 202;
+  body: BatchAcceptedEnvelopeV2;
+  replayed: boolean;
+};
+
 export interface OutboundTaskService {
   accept(input: AcceptTaskInput): Promise<AcceptedTaskResult>;
+  acceptV2(input: AcceptBatchV2Input): Promise<AcceptedBatchV2Result>;
+  getBatchV2(
+    principal: ExternalPrincipal,
+    batchId: string,
+  ): Promise<BatchDetailV2>;
   getTask(principal: ExternalPrincipal, taskNo: string): Promise<TaskDetail>;
   listCalls(
     principal: ExternalPrincipal,
@@ -176,7 +204,7 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
     if (input.request.sourceSystem !== input.principal.sourceSystem) {
       throw new ExternalApiFailure(
         'AUTHENTICATION_FAILED',
-        '请求来源与客户端凭证不一致',
+        '请求来源与请求 Token 不一致',
         403,
       );
     }
@@ -466,6 +494,422 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
       });
       return { status: 202, body, replayed: false };
     });
+  }
+
+  async acceptV2(input: AcceptBatchV2Input): Promise<AcceptedBatchV2Result> {
+    const sourceSystem = sourceSystemFromCodeV2(input.request.source);
+    if (sourceSystem !== input.principal.sourceSystem) {
+      throw new ExternalApiFailure(
+        'AUTHENTICATION_FAILED',
+        '请求 source 与请求 Token 不一致',
+        403,
+      );
+    }
+    const now = this.clock();
+    try {
+      return await this.db.transaction(async (tx) => {
+        await advisoryLock(
+          tx,
+          `idempotency:${input.principal.clientId}:${input.idempotencyKey}`,
+        );
+        const [stored] = await tx
+          .select()
+          .from(idempotencyRecords)
+          .where(
+            and(
+              eq(idempotencyRecords.sourceSystem, sourceSystem),
+              eq(idempotencyRecords.clientId, input.principal.clientId),
+              eq(idempotencyRecords.idempotencyKey, input.idempotencyKey),
+            ),
+          )
+          .limit(1);
+        if (stored && stored.expiresAt > now) {
+          if (stored.requestBodySha256 !== input.requestHash) {
+            throw new ExternalApiFailure(
+              'IDEMPOTENCY_CONFLICT',
+              '同一次请求重试必须复用原 GUID、幂等键和完整报文',
+              409,
+            );
+          }
+          const body = batchAcceptedEnvelopeV2Schema.safeParse(
+            stored.responseBody,
+          );
+          if (!body.success || stored.responseStatus !== 202) {
+            throw new ExternalApiFailure(
+              'IDEMPOTENCY_CONFLICT',
+              '该 Idempotency-Key 已被其他版本的创建请求使用',
+              409,
+            );
+          }
+          return { status: 202, body: body.data, replayed: true };
+        }
+        if (stored) {
+          await tx
+            .delete(idempotencyRecords)
+            .where(
+              and(
+                eq(idempotencyRecords.sourceSystem, sourceSystem),
+                eq(idempotencyRecords.clientId, input.principal.clientId),
+                eq(idempotencyRecords.idempotencyKey, input.idempotencyKey),
+              ),
+            );
+        }
+
+        const batchId = this.createId();
+        const prepared = await this.precheckV2(
+          tx,
+          input,
+          sourceSystem,
+          batchId,
+          now,
+        );
+        const reservedAmounts = prepared.routes.map((route) =>
+          multiplyMoneyByInteger(
+            route.configuration.price.voiceRate,
+            route.customers.length * route.configuration.price.frozenMinutes,
+          ),
+        );
+        const totalReservedAmount = reservedAmounts.reduce(
+          (total, value) => addMoney(total, value),
+          normalizeMoney('0'),
+        );
+        if (moneyToMicros(totalReservedAmount) <= 0n) {
+          throw new ExternalApiFailure(
+            'PRICING_NOT_CONFIGURED',
+            '当前价格计算出的冻结金额无效',
+            422,
+          );
+        }
+
+        const account = await lockAccount(tx, prepared.studio.id);
+        if (account.status === 'DISABLED' || account.status === 'OVERDUE') {
+          throw new ExternalApiFailure(
+            'INSUFFICIENT_BALANCE',
+            `影楼账户状态 ${account.status} 不允许创建任务`,
+            409,
+          );
+        }
+        const available = subtractMoney(
+          account.balance,
+          account.activeHoldAmount,
+        );
+        if (moneyToMicros(available) < moneyToMicros(totalReservedAmount)) {
+          throw new ExternalApiFailure(
+            'INSUFFICIENT_BALANCE',
+            '影楼可用余额不足',
+            409,
+            {
+              availableBalance: normalizeMoney(available),
+              reservedAmount: totalReservedAmount,
+            },
+          );
+        }
+
+        await tx.insert(intakeBatches).values({
+          id: batchId,
+          sourceSystem,
+          integrationClientId: input.principal.integrationClientId,
+          studioId: prepared.studio.id,
+          mcCodeSnapshot: prepared.studio.mcCode,
+          mainCategory: prepared.mainCategory,
+          subCategory: prepared.subCategory,
+          idempotencyKey: input.idempotencyKey,
+          requestBodySha256: input.requestHash,
+          phoneCount: prepared.phoneCount,
+          taskCount: prepared.routes.length,
+          executionStatus: 'ACCEPTED',
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        const taskSummaries: BatchAcceptedEnvelopeV2['data']['tasks'] = [];
+        let runningHold = account.activeHoldAmount;
+        for (
+          let routeIndex = 0;
+          routeIndex < prepared.routes.length;
+          routeIndex += 1
+        ) {
+          const route = prepared.routes[routeIndex]!;
+          const configuration = route.configuration;
+          const reservedAmount = reservedAmounts[routeIndex]!;
+          const taskId = this.createId();
+          const taskNo = await nextTaskNo(tx, now);
+          const taskCategories = Array.from(
+            new Map(
+              route.customers.map((customer) => [
+                customer.category.externalId,
+                customer.category,
+              ]),
+            ).values(),
+          );
+          const categorySnapshot = taskCategories.map((category) => ({
+            id: category.externalId,
+            path: category.categoryPath,
+          }));
+          const taskName = buildPlatformTaskName(
+            taskNo,
+            taskCategories.map((category) => category.categoryPath),
+          );
+
+          await tx.insert(platformTasks).values({
+            id: taskId,
+            taskNo,
+            batchId,
+            routeKey: route.routeKey,
+            contractVersion: '2.0',
+            externalRequestId: `V2:${batchId}:${routeIndex + 1}`,
+            sourceSystem,
+            integrationClientId: input.principal.integrationClientId,
+            studioId: configuration.studio.id,
+            studioNameSnapshot: configuration.studio.name,
+            mcCodeSnapshot: configuration.studio.mcCode,
+            taskName,
+            phoneCount: route.customers.length,
+            categorySnapshot,
+            robotDefId: configuration.binding.robotDefId,
+            robotName: configuration.scene.sceneName,
+            userPhoneId: configuration.binding.userPhoneId,
+            lineName: configuration.line.phoneName || configuration.line.phone,
+            mappingVersionId: configuration.mappingVersion.id,
+            pricingVersionId: configuration.price.id,
+            endpointVersionId: configuration.endpoint.id,
+            endpointSnapshot: {
+              resultUrl: configuration.endpoint.resultUrl,
+              recordingUrl: configuration.endpoint.recordingUrl,
+              signingSecretRef: configuration.endpoint.signingSecretRef!,
+            },
+            customerRate: normalizeMoney(configuration.price.voiceRate),
+            frozenMinutes: configuration.price.frozenMinutes,
+            reservedAmount,
+            baiyingCompanyId: configuration.sceneCompanyId,
+            importRequestedCount: route.customers.length,
+            createdAt: now,
+            acceptedAt: now,
+            updatedAt: now,
+          });
+
+          const callItems = route.customers.map((customer, index) => {
+            const phone = normalizePhone(customer.phone);
+            return {
+              id: this.createId(),
+              taskId,
+              batchId,
+              ordinal: index + 1,
+              externalCustomerId: customer.guid,
+              dataCategoryId: customer.category.externalId,
+              categoryPath: customer.category.categoryPath,
+              categorySnapshot: {
+                mainCategory: prepared.mainCategory,
+                subCategory: prepared.subCategory,
+                cLevel: customer.cLevel,
+              },
+              phoneCiphertext: this.protector.encryptUtf8(phone),
+              phoneHmac: this.protector.phoneHmac(phone),
+              phoneTail4: phone.slice(-4),
+              customerNameCiphertext: customer.customerName
+                ? this.protector.encryptUtf8(customer.customerName)
+                : null,
+              sourceFieldsCiphertext: this.protector.encryptUtf8(
+                JSON.stringify(customer.variables),
+              ),
+              mappedPropertiesCiphertext: this.protector.encryptUtf8(
+                JSON.stringify(configuration.mappedProperties[index]),
+              ),
+              createdAt: now,
+              updatedAt: now,
+            };
+          });
+          for (let offset = 0; offset < callItems.length; offset += 500) {
+            await tx
+              .insert(taskCallItems)
+              .values(callItems.slice(offset, offset + 500));
+          }
+
+          await tx.insert(taskMappingSnapshots).values({
+            taskId,
+            mappingVersionId: configuration.mappingVersion.id,
+            variables: configuration.scene.variables,
+            mappingRules: configuration.rules,
+            createdAt: now,
+          });
+          await tx.insert(fundHolds).values({
+            id: this.createId(),
+            studioId: configuration.studio.id,
+            taskId,
+            originalAmount: reservedAmount,
+            remainingAmount: reservedAmount,
+            createdAt: now,
+          });
+          runningHold = addMoney(runningHold, reservedAmount);
+          const availableAfterTask = subtractMoney(
+            account.balance,
+            runningHold,
+          );
+          await tx.insert(accountLedger).values({
+            id: this.createId(),
+            studioId: configuration.studio.id,
+            taskId,
+            entryType: 'TASK_HOLD',
+            amount: negateMoney(reservedAmount),
+            balanceAfter: normalizeMoney(account.balance),
+            availableBalanceAfter: availableAfterTask,
+            businessKey: `TASK_HOLD:${taskId}`,
+            operatorId: input.principal.clientId,
+            reason: `创建外呼批次 ${batchId} 的执行任务冻结余额`,
+            occurredAt: now,
+          });
+          await tx.insert(queueOutbox).values({
+            id: this.createId(),
+            eventType: 'TASK_ACCEPTED',
+            queueName: this.options.queueName ?? 'task-orchestration-queue',
+            payload: {
+              schemaVersion: '1.0',
+              taskId,
+              taskNo,
+              sourceSystem,
+            },
+            availableAt: now,
+            createdAt: now,
+          });
+          taskSummaries.push({
+            task_id: taskId,
+            task_no: taskNo,
+            phone_count: route.customers.length,
+            status_url: `/openapi/v1/outbound/tasks/${taskNo}`,
+          });
+        }
+
+        const availableAfter = subtractMoney(account.balance, runningHold);
+        await tx
+          .update(studioAccounts)
+          .set({
+            activeHoldAmount: runningHold,
+            status: accountStatusAfter(
+              account.balance,
+              availableAfter,
+              account.status,
+              this.options.lowBalanceThreshold ?? '500.000000',
+            ),
+            lockVersion: sql`${studioAccounts.lockVersion} + 1`,
+            updatedAt: now,
+          })
+          .where(eq(studioAccounts.studioId, prepared.studio.id));
+
+        const body = batchAcceptedEnvelopeV2Schema.parse({
+          code: 'BATCH_ACCEPTED',
+          message: '外呼批次已受理',
+          request_id: input.requestId,
+          data: {
+            batch_id: batchId,
+            execution_status: 'ACCEPTED',
+            phone_count: prepared.phoneCount,
+            task_count: taskSummaries.length,
+            tasks: taskSummaries,
+            status_url: `/openapi/v2/outbound/batches/${batchId}`,
+          },
+        });
+        await tx.insert(idempotencyRecords).values({
+          sourceSystem,
+          clientId: input.principal.clientId,
+          idempotencyKey: input.idempotencyKey,
+          requestId: input.requestId,
+          requestBodySha256: input.requestHash,
+          taskId: taskSummaries[0]!.task_id,
+          processingStatus: 'COMPLETED',
+          responseStatus: 202,
+          responseBody: body,
+          createdAt: now,
+          updatedAt: now,
+          // 批次终态时会收敛为 completedAt + 180 天；运行期间不得过期。
+          expiresAt: addDays(now, 3_650),
+        });
+        return { status: 202, body, replayed: false };
+      });
+    } catch (error) {
+      if (
+        error instanceof ExternalApiFailure &&
+        error.code === 'DATA_CATEGORY_AMBIGUOUS'
+      ) {
+        try {
+          await this.db.insert(operationalMetricEvents).values({
+            metricCode: 'DATA_CATEGORY_AMBIGUOUS',
+            sourceSystem,
+            requestId: input.requestId,
+            objectRef: input.request.company_code,
+            detail: {
+              mainCategory: input.request.main_category,
+              subCategory: input.request.sub_category,
+              ...error.details,
+            },
+            occurredAt: now,
+          });
+        } catch (recordingError) {
+          console.error(
+            JSON.stringify({
+              level: 'error',
+              message: 'Failed to persist category ambiguity metric',
+              requestId: input.requestId,
+              error:
+                recordingError instanceof Error
+                  ? recordingError.message
+                  : String(recordingError),
+            }),
+          );
+        }
+      }
+      throw error;
+    }
+  }
+
+  async getBatchV2(
+    principal: ExternalPrincipal,
+    batchId: string,
+  ): Promise<BatchDetailV2> {
+    const [batch] = await this.db
+      .select()
+      .from(intakeBatches)
+      .where(
+        and(
+          eq(intakeBatches.id, batchId),
+          eq(intakeBatches.integrationClientId, principal.integrationClientId),
+        ),
+      )
+      .limit(1);
+    if (!batch || batch.sourceSystem !== principal.sourceSystem) {
+      throw new ExternalApiFailure('TASK_NOT_FOUND', '外呼批次不存在', 404);
+    }
+    const tasks = await this.db
+      .select({
+        id: platformTasks.id,
+        taskNo: platformTasks.taskNo,
+        phoneCount: platformTasks.phoneCount,
+        executionStatus: platformTasks.executionStatus,
+      })
+      .from(platformTasks)
+      .where(eq(platformTasks.batchId, batch.id))
+      .orderBy(asc(platformTasks.createdAt), asc(platformTasks.taskNo));
+    return {
+      batch_id: batch.id,
+      source: sourceCodeFromSystemV2(principal.sourceSystem),
+      company_code: batch.mcCodeSnapshot,
+      main_category: batch.mainCategory,
+      sub_category: batch.subCategory,
+      execution_status: aggregateBatchStatus(
+        tasks.map((task) => task.executionStatus),
+        batch.executionStatus,
+      ),
+      phone_count: batch.phoneCount,
+      task_count: tasks.length,
+      tasks: tasks.map((task) => ({
+        task_id: task.id,
+        task_no: task.taskNo,
+        phone_count: task.phoneCount,
+        execution_status: task.executionStatus,
+        status_url: `/openapi/v1/outbound/tasks/${task.taskNo}`,
+      })),
+      created_at: batch.createdAt.toISOString(),
+      completed_at: batch.completedAt?.toISOString() ?? null,
+    };
   }
 
   async getTask(
@@ -773,10 +1217,10 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
     const months = [...new Set(monthByTask.values())];
     const summaryByMonth = new Map(
       await Promise.all(
-        months.map(async (month) => [
-          month,
-          await settlementService.preview(month),
-        ] as const),
+        months.map(
+          async (month) =>
+            [month, await settlementService.preview(month)] as const,
+        ),
       ),
     );
     return rows.map((row) => {
@@ -804,6 +1248,225 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
         },
       };
     });
+  }
+
+  private async precheckV2(
+    tx: Transaction,
+    input: AcceptBatchV2Input,
+    sourceSystem: SourceSystem,
+    batchId: string,
+    now: Date,
+  ) {
+    const mainCategory = normalizeCategoryPart(input.request.main_category);
+    const subCategory = normalizeCategoryPart(input.request.sub_category);
+    const customers = flattenOutboundCustomersV2(input.request);
+    const [studio] = await tx
+      .select()
+      .from(studios)
+      .where(eq(studios.mcCode, input.request.company_code))
+      .limit(1);
+    if (!studio) {
+      throw new ExternalApiFailure(
+        'STUDIO_NOT_FOUND',
+        'company_code 未匹配到影楼',
+        404,
+      );
+    }
+    if (studio.status !== 'ACTIVE') {
+      throw new ExternalApiFailure('STUDIO_DISABLED', '影楼已停用', 422);
+    }
+    const [authorization] = await tx
+      .select({ studioId: integrationClientStudios.studioId })
+      .from(integrationClientStudios)
+      .where(
+        and(
+          eq(
+            integrationClientStudios.integrationClientId,
+            input.principal.integrationClientId,
+          ),
+          eq(integrationClientStudios.studioId, studio.id),
+        ),
+      )
+      .limit(1);
+    if (!authorization) {
+      throw new ExternalApiFailure(
+        'AUTHENTICATION_FAILED',
+        '请求 Token 无权访问该影楼',
+        403,
+      );
+    }
+
+    const activeCategories = await tx
+      .select()
+      .from(sourceDataCategories)
+      .where(
+        and(
+          eq(sourceDataCategories.sourceSystem, sourceSystem),
+          eq(sourceDataCategories.active, true),
+        ),
+      );
+    const categoryCandidates = new Map<string, typeof activeCategories>();
+    for (const category of activeCategories) {
+      if (
+        normalizeCategoryPart(category.fields.main_category) !== mainCategory ||
+        normalizeCategoryPart(category.fields.sub_category) !== subCategory
+      ) {
+        continue;
+      }
+      const key = normalizeCategoryPart(category.fields.c_level);
+      const current = categoryCandidates.get(key) ?? [];
+      current.push(category);
+      categoryCandidates.set(key, current);
+    }
+
+    const requestedLevels = Array.from(
+      new Set(
+        customers.map((customer) => normalizeCategoryPart(customer.cLevel)),
+      ),
+    );
+    const categoryByLevel = new Map<
+      string,
+      (typeof activeCategories)[number]
+    >();
+    for (const level of requestedLevels) {
+      const matches = categoryCandidates.get(level) ?? [];
+      if (matches.length === 0) {
+        throw new ExternalApiFailure(
+          'DATA_CATEGORY_NOT_FOUND',
+          '三级分类未匹配到启用的数据分类',
+          422,
+          { mainCategory, subCategory, cLevel: level },
+        );
+      }
+      if (matches.length > 1) {
+        throw new ExternalApiFailure(
+          'DATA_CATEGORY_AMBIGUOUS',
+          '三级分类匹配到多条启用的数据分类',
+          422,
+          {
+            mainCategory,
+            subCategory,
+            cLevel: level,
+            categoryIds: matches.map((category) => category.externalId),
+          },
+        );
+      }
+      categoryByLevel.set(level, matches[0]!);
+    }
+
+    const preparedCustomers = customers.map((customer, ordinal) => ({
+      ordinal: ordinal + 1,
+      phone: customer.phone,
+      guid: customer.guid,
+      customerName: customer.customer_name ?? null,
+      variables: customer.variables,
+      cLevel: normalizeCategoryPart(customer.cLevel),
+      category: categoryByLevel.get(normalizeCategoryPart(customer.cLevel))!,
+    }));
+    const categoryIds = Array.from(
+      new Set(
+        preparedCustomers.map((customer) => customer.category.externalId),
+      ),
+    );
+    const bindingRows = await tx
+      .select({
+        binding: scriptBindings,
+        categoryId: scriptCategoryBindings.sourceCategoryId,
+      })
+      .from(scriptBindings)
+      .innerJoin(
+        scriptCategoryBindings,
+        eq(scriptCategoryBindings.scriptBindingId, scriptBindings.id),
+      )
+      .where(
+        and(
+          eq(scriptBindings.studioId, studio.id),
+          eq(scriptBindings.sourceSystem, sourceSystem),
+          eq(scriptBindings.status, 'ACTIVE'),
+          eq(scriptCategoryBindings.active, true),
+          inArray(scriptCategoryBindings.sourceCategoryId, categoryIds),
+        ),
+      );
+    const bindingByCategory = new Map<
+      string,
+      (typeof bindingRows)[number]['binding']
+    >();
+    for (const categoryId of categoryIds) {
+      const matches = bindingRows.filter(
+        (row) => row.categoryId === categoryId,
+      );
+      if (matches.length === 0) {
+        throw new ExternalApiFailure(
+          'DATA_CATEGORY_SCRIPT_UNBOUND',
+          '至少一个数据分类未绑定话术',
+          422,
+          { categoryIds: [categoryId] },
+        );
+      }
+      if (matches.length > 1) {
+        throw new ExternalApiFailure(
+          'DATA_CATEGORY_AMBIGUOUS',
+          '数据分类存在多个生效话术绑定',
+          422,
+          { categoryIds: [categoryId] },
+        );
+      }
+      bindingByCategory.set(categoryId, matches[0]!.binding);
+    }
+
+    const routeGroups = new Map<
+      string,
+      Array<(typeof preparedCustomers)[number]>
+    >();
+    for (const customer of preparedCustomers) {
+      const binding = bindingByCategory.get(customer.category.externalId)!;
+      const baseRouteKey = `${binding.robotDefId}\u0000${binding.userPhoneId}`;
+      const routeCustomers = routeGroups.get(baseRouteKey) ?? [];
+      routeCustomers.push(customer);
+      routeGroups.set(baseRouteKey, routeCustomers);
+    }
+
+    const routes = [];
+    for (const routeCustomers of routeGroups.values()) {
+      const syntheticRequest: CreateOutboundTaskRequest = {
+        schemaVersion: '1.0',
+        externalRequestId: `V2-PRECHECK:${batchId}`,
+        sourceSystem,
+        mcCode: input.request.company_code,
+        customers: routeCustomers.map((customer) => ({
+          externalCustomerId: customer.guid,
+          ...(customer.customerName ? { name: customer.customerName } : {}),
+          phone: customer.phone,
+          dataCategoryId: customer.category.externalId,
+          fields: customer.variables,
+        })),
+      };
+      const configuration = await this.precheck(
+        tx,
+        { ...input, request: syntheticRequest },
+        now,
+      );
+      const routeKey = createHash('sha256')
+        .update(
+          [
+            configuration.sceneCompanyId,
+            configuration.binding.robotDefId,
+            configuration.binding.userPhoneId,
+            configuration.scene.sceneDefId,
+            configuration.mappingVersion.id,
+          ].join('\u0000'),
+          'utf8',
+        )
+        .digest('hex');
+      routes.push({ routeKey, customers: routeCustomers, configuration });
+    }
+    return {
+      studio,
+      mainCategory,
+      subCategory,
+      phoneCount: preparedCustomers.length,
+      routes,
+    };
   }
 
   private async precheck(tx: Transaction, input: AcceptTaskInput, now: Date) {
@@ -838,7 +1501,7 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
     if (!authorization) {
       throw new ExternalApiFailure(
         'AUTHENTICATION_FAILED',
-        '客户端无权访问该影楼',
+        '请求 Token 无权访问该影楼',
         403,
       );
     }
@@ -939,32 +1602,14 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
           inArray(scriptCategoryBindings.sourceCategoryId, categoryIds),
         ),
       );
-    const boundCategoryIds = new Set(bindingRows.map((row) => row.categoryId));
-    const unbound = categoryIds.filter((id) => !boundCategoryIds.has(id));
-    if (unbound.length) {
-      throw new ExternalApiFailure(
-        'DATA_CATEGORY_SCRIPT_UNBOUND',
-        '至少一个数据分类未绑定话术',
-        422,
-        { categoryIds: unbound },
-      );
-    }
-    const lineIds = new Set(bindingRows.map((row) => row.binding.userPhoneId));
-    if (lineIds.size !== 1) {
-      throw new ExternalApiFailure(
-        'DATA_CATEGORY_LINE_CONFLICT',
-        '所选分类绑定了不同线路',
-        422,
-      );
-    }
-    const robotIds = new Set(bindingRows.map((row) => row.binding.robotDefId));
-    if (robotIds.size !== 1) {
-      throw new ExternalApiFailure(
-        'DATA_CATEGORY_SCRIPT_CONFLICT',
-        '所选分类绑定了不同话术',
-        422,
-      );
-    }
+    selectConsistentCategoryBinding(
+      categoryIds,
+      bindingRows.map((row) => ({
+        categoryId: row.categoryId,
+        userPhoneId: row.binding.userPhoneId,
+        robotDefId: row.binding.robotDefId,
+      })),
+    );
     const binding = bindingRows[0]!.binding;
     const [line] = await tx
       .select()
@@ -1088,11 +1733,12 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
       for (const variable of scene.variables) {
         const rule = ruleByVariable.get(variable)!;
         try {
-          mapped[variable] = transformMappedValue({
+          const mappedValue = transformMappedValue({
             rule,
             sourceSystem: input.request.sourceSystem,
             sourceRecord: customer.fields,
           });
+          if (mappedValue !== undefined) mapped[variable] = mappedValue;
         } catch (error) {
           errorCount += 1;
           if (errors.length < 50) {
@@ -1335,6 +1981,59 @@ function containsPattern(value: string): string {
   return `%${value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
 }
 
+function normalizeCategoryPart(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (
+    typeof value !== 'string' &&
+    typeof value !== 'number' &&
+    typeof value !== 'boolean' &&
+    typeof value !== 'bigint'
+  ) {
+    return '';
+  }
+  return String(value).normalize('NFKC').trim();
+}
+
+function addDays(value: Date, days: number): Date {
+  return new Date(value.getTime() + days * 24 * 60 * 60 * 1_000);
+}
+
+export function aggregateBatchStatus(
+  statuses: TaskExecutionStatus[],
+  stored: BatchDetailV2['execution_status'],
+): BatchDetailV2['execution_status'] {
+  if (statuses.length === 0) return stored;
+  if (['FAILED', 'PARTIAL_FAILED', 'COMPLETED', 'CANCELLED'].includes(stored)) {
+    return stored;
+  }
+  if (statuses.every((status) => status === 'COMPLETED')) return 'COMPLETED';
+  if (
+    statuses.every(
+      (status) => status === 'CANCELLED' || status === 'TERMINATED',
+    )
+  ) {
+    return 'CANCELLED';
+  }
+  const failures = statuses.filter((status) => failedStatuses.includes(status));
+  if (failures.length === statuses.length) return 'FAILED';
+  if (failures.length > 0) return 'PARTIAL_FAILED';
+  if (
+    statuses.some((status) =>
+      [
+        'CALLING',
+        'PAUSED',
+        'CALL_COMPLETED',
+        'RECONCILING',
+        'COMPLETED',
+      ].includes(status),
+    )
+  ) {
+    return 'RUNNING';
+  }
+  if (statuses.some((status) => status !== 'ACCEPTED')) return 'PREPARING';
+  return 'ACCEPTED';
+}
+
 export function displayStatusFor(
   status: TaskExecutionStatus,
   resultDelivery: TaskDetail['statuses']['resultDelivery'] = 'PENDING',
@@ -1491,6 +2190,43 @@ export function buildPlatformTaskName(
     .slice(0, categoryLength)
     .join('');
   return `${date}${categoryName}-${sequence}`;
+}
+
+export function selectConsistentCategoryBinding(
+  categoryIds: string[],
+  bindings: Array<{
+    categoryId: string;
+    userPhoneId: string;
+    robotDefId: string;
+  }>,
+) {
+  const boundCategoryIds = new Set(bindings.map((row) => row.categoryId));
+  const unbound = categoryIds.filter((id) => !boundCategoryIds.has(id));
+  if (unbound.length) {
+    throw new ExternalApiFailure(
+      'DATA_CATEGORY_SCRIPT_UNBOUND',
+      '至少一个数据分类未绑定话术',
+      422,
+      { categoryIds: unbound },
+    );
+  }
+
+  if (new Set(bindings.map((row) => row.userPhoneId)).size !== 1) {
+    throw new ExternalApiFailure(
+      'DATA_CATEGORY_LINE_CONFLICT',
+      '所选分类绑定了不同线路',
+      422,
+    );
+  }
+  if (new Set(bindings.map((row) => row.robotDefId)).size !== 1) {
+    throw new ExternalApiFailure(
+      'DATA_CATEGORY_SCRIPT_CONFLICT',
+      '所选分类绑定了不同话术',
+      422,
+    );
+  }
+
+  return bindings[0]!;
 }
 
 export function shanghaiDate(value: Date): string {

@@ -20,11 +20,13 @@ import { TaskOrchestrationService } from '../orchestration/service.js';
 import { TaskOrchestrationWorker } from '../orchestration/worker.js';
 import { PostgresOutboundTaskService } from '../outbound-task/service.js';
 import { PostgresOutboxRepository } from '../outbox/postgres-repository.js';
+import { PostgresReconciliationRepository } from '../reconciliation/postgres-repository.js';
 import { LocalDataProtector } from '../security/data-protector.js';
 import { bootstrapStage2Local } from './bootstrap-stage2-local.js';
 import { createDatabase, type Database } from './client.js';
 import {
   accountLedger,
+  auditLogs,
   callInstances,
   callbackInbox,
   deadLetterEvents,
@@ -39,6 +41,7 @@ import {
   taskCallItems,
   taskMappingSnapshots,
   taskOperations,
+  taskReconciliations,
 } from './schema.js';
 
 type AcceptedFixture = {
@@ -64,6 +67,7 @@ async function main() {
   const deliveryQueueName = `stage4-delivery-${suffix}`;
   const tasks: AcceptedFixture[] = [];
   const inboxIds = new Set<string>();
+  const reconciliationTaskIds = new Set<string>();
 
   try {
     await bootstrapStage2Local(database.db);
@@ -299,7 +303,9 @@ async function main() {
       code: 2,
       description: '已完成',
     });
-    assert.equal(taskDetail.statuses.display, '执行完成');
+    assert.equal(taskDetail.statuses.display, '执行中');
+    assert.equal(taskDetail.statuses.resultDelivery, 'PENDING');
+    assert.equal(taskDetail.statuses.recordingDelivery, 'PENDING');
     const firstPage = await intake.listCalls(principal, standard.taskNo, {
       limit: 1,
     });
@@ -453,6 +459,121 @@ async function main() {
     });
     await assertDeadLetter(database.db, staleLock.id, 'UNKNOWN_TYPE');
 
+    const reconciliationRepository = new PostgresReconciliationRepository(
+      database.db,
+    );
+    const reconciliationIdsBefore = new Set(
+      (
+        await database.db
+          .select({ taskId: taskReconciliations.taskId })
+          .from(taskReconciliations)
+      ).map((item) => item.taskId),
+    );
+    const seeded = await reconciliationRepository.seedCandidates({
+      staleBefore: new Date(),
+    });
+    assert.ok(seeded >= 2);
+    const reconciliationIdsAfter = await database.db
+      .select({ taskId: taskReconciliations.taskId })
+      .from(taskReconciliations);
+    for (const item of reconciliationIdsAfter) {
+      if (!reconciliationIdsBefore.has(item.taskId)) {
+        reconciliationTaskIds.add(item.taskId);
+      }
+    }
+    const initialReconciliations =
+      await reconciliationRepository.listReconciliations({
+        pageNum: 0,
+        pageSize: 20,
+      });
+    assert.equal(
+      initialReconciliations.items.filter((item) =>
+        tasks.some((task) => task.taskId === item.taskId),
+      ).length,
+      2,
+    );
+
+    await database.db
+      .update(callbackInbox)
+      .set({
+        parseStatus: 'VALID',
+        processStatus: 'FAILED',
+        processAttempts: 5,
+        processError: 'Stage 4B 人工修复数据库验证',
+        deadLetteredAt: new Date(),
+      })
+      .where(eq(callbackInbox.id, lateRecording.id));
+    await database.db.insert(deadLetterEvents).values({
+      sourceType: 'CALLBACK',
+      sourceId: lateRecording.id,
+      originalEvent: { callbackType: 'CALL_INSTANCE_RESULT' },
+      finalError: 'Stage 4B 人工修复数据库验证',
+      suggestedAction: '人工核对后重放',
+    });
+    await database.db
+      .update(taskReconciliations)
+      .set({
+        status: 'MANUAL_REVIEW',
+        providerCallCount: 1,
+        platformCallCount: 0,
+        pendingInboxCount: 1,
+        mismatchSince: new Date(Date.now() - 16 * 60_000),
+        manualReviewAt: new Date(),
+        nextCheckAt: null,
+        lastError: '百应与平台通话数量持续不一致',
+      })
+      .where(eq(taskReconciliations.taskId, overage.taskId));
+    const repairKey = randomUUID();
+    const repaired = await reconciliationRepository.requestRepair(
+      overage.taskNo,
+      {
+        reason: '本地验证已核对百应任务，批准恢复失败回调',
+        idempotencyKey: repairKey,
+      },
+      'stage4b-verifier',
+      randomUUID(),
+    );
+    assert.equal(repaired.idempotentReplay, false);
+    assert.equal(repaired.replayedInboxCount, 1);
+    assert.equal(repaired.reconciliation.status, 'PENDING');
+    assert.equal(repaired.reconciliation.repairCount, 1);
+    const replayed = await reconciliationRepository.requestRepair(
+      overage.taskNo,
+      {
+        reason: '本地验证幂等重复提交不会再次恢复同一回调',
+        idempotencyKey: repairKey,
+      },
+      'stage4b-verifier',
+      randomUUID(),
+    );
+    assert.equal(replayed.idempotentReplay, true);
+    assert.equal(replayed.replayedInboxCount, 1);
+    assert.equal(replayed.reconciliation.repairCount, 1);
+    const [repairedInbox] = await database.db
+      .select({
+        status: callbackInbox.processStatus,
+        attempts: callbackInbox.processAttempts,
+        deadLetteredAt: callbackInbox.deadLetteredAt,
+      })
+      .from(callbackInbox)
+      .where(eq(callbackInbox.id, lateRecording.id));
+    assert.deepEqual(repairedInbox, {
+      status: 'PENDING',
+      attempts: 0,
+      deadLetteredAt: null,
+    });
+    const [replayingDeadLetter] = await database.db
+      .select({
+        status: deadLetterEvents.status,
+        replayCount: deadLetterEvents.replayCount,
+      })
+      .from(deadLetterEvents)
+      .where(eq(deadLetterEvents.sourceId, lateRecording.id));
+    assert.deepEqual(replayingDeadLetter, {
+      status: 'REPLAYING',
+      replayCount: 1,
+    });
+
     console.info(
       JSON.stringify(
         {
@@ -469,6 +590,9 @@ async function main() {
             '录音临时 URL 只加密保存，不发起任何下载请求',
             '未知任务有界重试后进入死信，非法和未知类型回调直接隔离',
             '并发 Worker 只能领取一次，同一 Inbox 的超时处理锁可恢复',
+            '已完成任务会进入分页核对候选，避免 Worker 晚启动时漏扫',
+            '人工修复原子恢复失败 Inbox/死信并立即重排对账',
+            '人工修复幂等键重复提交不会重复重放或重复计数',
           ],
           verifiedTaskCount: tasks.length,
           verifiedInboxCount: inboxIds.size,
@@ -478,7 +602,12 @@ async function main() {
       ),
     );
   } finally {
-    await cleanup(database.db, tasks, [...inboxIds]);
+    await cleanup(
+      database.db,
+      tasks,
+      [...inboxIds],
+      [...reconciliationTaskIds],
+    );
     await database.close();
   }
 }
@@ -676,6 +805,7 @@ async function cleanup(
   db: Database,
   tasks: AcceptedFixture[],
   inboxIds: string[],
+  reconciliationTaskIds: string[],
 ) {
   const taskIds = tasks.map((task) => task.taskId);
   let refund = '0.000000';
@@ -708,6 +838,11 @@ async function cleanup(
   }
 
   await db.transaction(async (tx) => {
+    if (reconciliationTaskIds.length) {
+      await tx
+        .delete(taskReconciliations)
+        .where(inArray(taskReconciliations.taskId, reconciliationTaskIds));
+    }
     const callIds = taskIds.length
       ? (
           await tx
@@ -748,6 +883,7 @@ async function cleanup(
       await tx
         .delete(idempotencyRecords)
         .where(inArray(idempotencyRecords.taskId, taskIds));
+      await tx.delete(auditLogs).where(inArray(auditLogs.objectId, taskIds));
       await tx
         .delete(taskOperations)
         .where(inArray(taskOperations.taskId, taskIds));

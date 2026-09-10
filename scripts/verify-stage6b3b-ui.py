@@ -5,10 +5,10 @@ import re
 from playwright.sync_api import Route, expect, sync_playwright
 
 from dialog_assertions import assert_dialog_has_no_outer_overflow
+from ui_auth import open_authenticated
 
 
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
-APP_URL = 'http://localhost:4173/'
 TASK_SCREENSHOT = Path('/tmp/outbound-platform-stage6b3b-task-control.png')
 RECOVERY_SCREENSHOT = Path('/tmp/outbound-platform-stage6b3b-recovery.png')
 TASK_NO = 'PT-20260906-90001'
@@ -289,7 +289,7 @@ def main() -> None:
         page = browser.new_page(viewport={'width': 1600, 'height': 1000})
         page.on('pageerror', lambda error: page_errors.append(str(error)))
         install_fixtures(page)
-        page.goto(APP_URL, wait_until='networkidle')
+        open_authenticated(page)
 
         page.get_by_role('button', name=re.compile(r'^呼叫任务')).click()
         row = page.locator('tr', has_text=TASK_NO)
@@ -358,7 +358,7 @@ def main() -> None:
         mobile = browser.new_page(viewport={'width': 390, 'height': 844})
         mobile.on('pageerror', lambda error: page_errors.append(str(error)))
         install_fixtures(mobile)
-        mobile.goto(APP_URL, wait_until='networkidle')
+        open_authenticated(mobile)
         mobile.get_by_role('button', name=re.compile(r'^异常中心')).click()
         expect(mobile.locator('h2').filter(has_text='异常中心')).to_be_visible()
         document_width = mobile.evaluate('document.documentElement.scrollWidth')

@@ -13,7 +13,8 @@ export type BaiyingProviderMetadata = {
 
 export type CreateBaiyingCallJobInput = {
   callJobName: string;
-  callJobType: 1;
+  /** 1 定时任务；2 手动任务。平台常规编排使用手动任务。 */
+  callJobType: 1 | 2;
   companyId: string;
   robotDefId: string;
   userPhoneIds: string[];
@@ -52,6 +53,45 @@ export type ExecuteBaiyingCallJobInput = {
   companyId: string;
   command: 1 | 2 | 3;
 };
+
+export type BaiyingCompletedCall = {
+  callInstanceId: string;
+  callJobId: string;
+  callInstanceStatus: number | null;
+  finishStatus: number;
+  calledTimes: number | null;
+  customerTelephone: string | null;
+  customerName: string | null;
+  durationSeconds: number;
+  startTime: string | number | null;
+  endTime: string | number | null;
+  fullRecordingUrl: string | null;
+  userRecordingUrl: string | null;
+  properties: Record<string, unknown>;
+  userProperties: Record<string, unknown>;
+  resultList: Record<string, unknown>[];
+};
+
+export type ListBaiyingCompletedCallsInput = {
+  callJobId: string;
+  companyId: string;
+  pageNum: number;
+  pageSize: number;
+};
+
+export type BaiyingCompletedCallPage = BaiyingProviderMetadata & {
+  total: number;
+  pages: number;
+  pageNum: number;
+  calls: BaiyingCompletedCall[];
+};
+
+/** 阶段 4B 只读补偿边界；单页按百应现行契约最多 500 条。 */
+export interface BaiyingCompletedCallClient {
+  listCompletedCalls(
+    input: ListBaiyingCompletedCallsInput,
+  ): Promise<BaiyingCompletedCallPage>;
+}
 
 /**
  * 百应任务写接口的稳定边界。真实 OAuth 客户端和本地模拟器都实现该接口，

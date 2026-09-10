@@ -31,6 +31,7 @@ const scenario = scenarioSchema.parse(
 const database = createDatabase(config.DATABASE_URL);
 const repository = new PostgresTaskOrchestrationRepository(database.db, {
   deliveryQueueName: config.CALLBACK_DELIVERY_QUEUE_NAME,
+  orchestrationQueueName: config.TASK_ORCHESTRATION_QUEUE_NAME,
 });
 const orchestration = new TaskOrchestrationService(
   repository,

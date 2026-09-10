@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { LocalDataProtector } from '../security/data-protector.js';
-import type { BaiyingCallbackProcessor } from './processor.js';
+import {
+  CallbackBusinessConflictError,
+  type BaiyingCallbackProcessor,
+} from './processor.js';
 import type { CallbackInboxRepository } from './repository.js';
 import { inspectBaiyingCallback } from './schema.js';
 import { BaiyingCallbackWorker } from './worker.js';
@@ -90,6 +93,33 @@ describe('BaiyingCallbackWorker', () => {
         retryDelayMs: 5_000,
         maxAttempts: 2,
       }),
+    );
+  });
+
+  it('dead-letters a deterministic correlation conflict immediately', async () => {
+    const rawBody = jobCallback('JOB_INFO_RESULT');
+    const fail = vi.fn<CallbackInboxRepository['fail']>(async () => ({
+      status: 'DEAD_LETTERED',
+      attempts: 1,
+      availableAt: null,
+    }));
+    const worker = new BaiyingCallbackWorker(
+      repositoryFor(rawBody, { fail }),
+      {
+        process: vi.fn(async () => {
+          throw new CallbackBusinessConflictError('关联签名无效');
+        }),
+      },
+      protector,
+      { workerId: 'worker-4', maxAttempts: 6 },
+    );
+
+    await expect(worker.runOnce()).resolves.toMatchObject({
+      status: 'DEAD_LETTERED',
+      attempts: 1,
+    });
+    expect(fail).toHaveBeenCalledWith(
+      expect.objectContaining({ maxAttempts: 1, parseStatus: 'VALID' }),
     );
   });
 });

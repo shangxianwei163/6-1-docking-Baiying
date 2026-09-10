@@ -44,11 +44,14 @@ import type {
   PublishPricingInput,
   PublishMappingInput,
   RemoveMappingDraftInput,
+  RepairTaskReconciliationResult,
   SceneReadiness,
   SourceSystem,
   SupplierSettlementSummary,
   SupplierPricingPreview,
   SupplierPricingPublishResult,
+  TaskReconciliationPage,
+  TaskReconciliationStatus,
   VariableSyncRequested,
   UpdateOperatorStudioInput,
 } from '@outbound/contracts';
@@ -72,9 +75,11 @@ import {
   pricingOverviewSchema,
   pricingPreviewSchema,
   pricingPublishResultSchema,
+  repairTaskReconciliationResultSchema,
   supplierPricingPreviewSchema,
   supplierPricingPublishResultSchema,
   supplierSettlementSummarySchema,
+  taskReconciliationPageSchema,
 } from '@outbound/contracts';
 
 export type MappingDraftRecord = {
@@ -245,9 +250,16 @@ type ApiErrorEnvelope = {
 };
 
 const apiBaseUrl = (
-  import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8788'
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.DEV ? 'http://localhost:8788' : '')
 ).replace(/\/$/, '');
-export const platformActorId = 'platform-admin';
+export const platformActorId = 'fc6j1';
+
+export type OperatorSession = {
+  username: string;
+  displayName: string;
+  organization: string;
+};
 
 export class PlatformApiError extends Error {
   constructor(
@@ -257,6 +269,23 @@ export class PlatformApiError extends Error {
   ) {
     super(message);
   }
+}
+
+export function loadOperatorSession() {
+  return request<OperatorSession>('/api/v1/operator-session');
+}
+
+export function loginOperator(username: string, password: string) {
+  return request<OperatorSession>('/api/v1/operator-session', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export function logoutOperator() {
+  return request<{ loggedOut: true }>('/api/v1/operator-session', {
+    method: 'DELETE',
+  });
 }
 
 export async function loadMappingCenter() {
@@ -729,6 +758,37 @@ export async function ignoreDeadLetter(
   ) as OperatorDeadLetterActionResult;
 }
 
+export async function loadTaskReconciliations(
+  input: {
+    keyword?: string;
+    status?: TaskReconciliationStatus;
+    pageNum?: number;
+    pageSize?: number;
+  } = {},
+) {
+  const search = new URLSearchParams({
+    pageNum: String(input.pageNum ?? 0),
+    pageSize: String(input.pageSize ?? 20),
+  });
+  if (input.keyword?.trim()) search.set('keyword', input.keyword.trim());
+  if (input.status) search.set('status', input.status);
+  return taskReconciliationPageSchema.parse(
+    await request<unknown>(`/api/v1/reconciliations?${search}`),
+  ) as TaskReconciliationPage;
+}
+
+export async function repairTaskReconciliation(
+  taskNo: string,
+  input: { reason: string; idempotencyKey: string },
+) {
+  return repairTaskReconciliationResultSchema.parse(
+    await request<unknown>(
+      `/api/v1/outbound-tasks/${encodeURIComponent(taskNo)}/reconciliation/repair`,
+      { method: 'POST', body: JSON.stringify(input) },
+    ),
+  ) as RepairTaskReconciliationResult;
+}
+
 export async function loadPricingOverview() {
   return pricingOverviewSchema.parse(
     await request<unknown>('/api/v1/pricing'),
@@ -816,6 +876,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const payload = (await response.json()) as ApiEnvelope<T> | ApiErrorEnvelope;
   if (!response.ok || !('data' in payload)) {
     const error = 'error' in payload ? payload.error : undefined;
+    if (response.status === 401 && typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('operator-session-expired'));
+    }
     throw new PlatformApiError(
       error?.message || '平台 API 请求失败',
       error?.code || 'API_ERROR',

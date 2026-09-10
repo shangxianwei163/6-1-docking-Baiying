@@ -28,6 +28,16 @@ type MetricRow = {
   deliveryFailed: number;
   openDeadLetters: number;
   pendingApprovals: number;
+  primaryCorrelationTotal: number;
+  primaryCorrelationMatched: number;
+  allCorrelationMatched: number;
+  phoneFallbackMatched: number;
+  correlationConflicts: number;
+  categoryAmbiguities: number;
+  callbackUnique: number;
+  callbackDuplicates: number;
+  resultDeliveryFailures: number;
+  recordingDeliveryFailures: number;
 };
 
 type TrendRow = { hour: number; total: number; answered: number };
@@ -73,10 +83,15 @@ export class PostgresOperationsOverviewService implements OperationsOverviewServ
     const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
     const callbackStaleBefore = new Date(now.getTime() - 2 * 60 * 1000);
     const outboxStaleBefore = new Date(now.getTime() - 5 * 60 * 1000);
+    const qualityWindowHours = 24;
+    const qualityWindowStart = new Date(
+      now.getTime() - qualityWindowHours * 60 * 60 * 1000,
+    );
     const dayStartIso = dayStart.toISOString();
     const dayEndIso = dayEnd.toISOString();
     const callbackStaleBeforeIso = callbackStaleBefore.toISOString();
     const outboxStaleBeforeIso = outboxStaleBefore.toISOString();
+    const qualityWindowStartIso = qualityWindowStart.toISOString();
 
     const [metricRows, trendRows, recentRows, attentionRows] =
       await Promise.all([
@@ -101,7 +116,59 @@ export class PostgresOperationsOverviewService implements OperationsOverviewServ
             (select count(*)::int from queue_outbox where published_at is null and dead_lettered_at is null and created_at < ${outboxStaleBeforeIso}::timestamptz) as "outboxStale",
             (select count(*)::int from delivery_event where status in ('FAILED', 'DEAD_LETTERED')) as "deliveryFailed",
             (select count(*)::int from dead_letter_event where status in ('OPEN', 'REPLAYING')) as "openDeadLetters",
-            (select count(*)::int from account_adjustment_request where status = 'PENDING') as "pendingApprovals"
+            (select count(*)::int from account_adjustment_request where status = 'PENDING') as "pendingApprovals",
+            (select count(*)::int
+              from call_instance instance
+              join platform_task task on task.id = instance.task_id
+              where task.contract_version = '2.0'
+                and instance.match_method is not null
+                and coalesce(instance.provider_occurred_at, instance.created_at) >= ${qualityWindowStartIso}::timestamptz
+            ) as "primaryCorrelationTotal",
+            (select count(*)::int
+              from call_instance instance
+              join platform_task task on task.id = instance.task_id
+              where task.contract_version = '2.0'
+                and instance.match_method = 'ITEM_TOKEN'
+                and coalesce(instance.provider_occurred_at, instance.created_at) >= ${qualityWindowStartIso}::timestamptz
+            ) as "primaryCorrelationMatched",
+            (select count(*)::int
+              from call_instance
+              where match_method is not null
+                and coalesce(provider_occurred_at, created_at) >= ${qualityWindowStartIso}::timestamptz
+            ) as "allCorrelationMatched",
+            (select count(*)::int
+              from call_instance
+              where match_method = 'PHONE_FALLBACK'
+                and coalesce(provider_occurred_at, created_at) >= ${qualityWindowStartIso}::timestamptz
+            ) as "phoneFallbackMatched",
+            (select count(*)::int
+              from dead_letter_event
+              where source_type = 'CALLBACK'
+                and final_error like 'CallbackBusinessConflictError:%'
+                and created_at >= ${qualityWindowStartIso}::timestamptz
+            ) as "correlationConflicts",
+            (select count(*)::int
+              from operational_metric_event
+              where metric_code = 'DATA_CATEGORY_AMBIGUOUS'
+                and occurred_at >= ${qualityWindowStartIso}::timestamptz
+            ) as "categoryAmbiguities",
+            (select count(*)::int
+              from callback_inbox
+              where received_at >= ${qualityWindowStartIso}::timestamptz
+            ) as "callbackUnique",
+            (select count(*)::int
+              from operational_metric_event
+              where metric_code = 'CALLBACK_DUPLICATE'
+                and occurred_at >= ${qualityWindowStartIso}::timestamptz
+            ) as "callbackDuplicates",
+            (select count(*)::int
+              from delivery_event
+              where target = 'RESULT' and status in ('FAILED', 'DEAD_LETTERED')
+            ) as "resultDeliveryFailures",
+            (select count(*)::int
+              from delivery_event
+              where target = 'RECORDING' and status in ('FAILED', 'DEAD_LETTERED')
+            ) as "recordingDeliveryFailures"
         `),
         this.db.execute<TrendRow>(sql`
           select
@@ -226,6 +293,52 @@ export class PostgresOperationsOverviewService implements OperationsOverviewServ
       .slice(0, 12);
     const highPriority =
       metrics.taskFailed + metrics.overdueStudios + metrics.openDeadLetters;
+    const primaryCorrelation = rateMetric(
+      metrics.primaryCorrelationMatched,
+      metrics.primaryCorrelationTotal,
+      primaryCorrelationStatus,
+      '必须达到 100%',
+    );
+    const phoneFallback = rateMetric(
+      metrics.phoneFallbackMatched,
+      metrics.allCorrelationMatched,
+      (_, count) =>
+        count === 0 ? 'HEALTHY' : count <= 5 ? 'WARNING' : 'CRITICAL',
+      '目标为 0 次',
+    );
+    const correlationConflicts = countMetric(
+      metrics.correlationConflicts,
+      '必须为 0 次',
+      true,
+    );
+    const categoryAmbiguities = countMetric(
+      metrics.categoryAmbiguities,
+      '必须为 0 次',
+      true,
+    );
+    const callbackTotal = metrics.callbackUnique + metrics.callbackDuplicates;
+    const callbackDuplicates = rateMetric(
+      metrics.callbackDuplicates,
+      callbackTotal,
+      duplicateCallbackStatus,
+      '低于 5% 且少于 5 次',
+    );
+    const deliveryFailureTotal =
+      metrics.resultDeliveryFailures + metrics.recordingDeliveryFailures;
+    const deliveryFailureStatus =
+      deliveryFailureTotal === 0 ? 'HEALTHY' : 'CRITICAL';
+    const qualityStatuses = [
+      primaryCorrelation.status,
+      phoneFallback.status,
+      correlationConflicts.status,
+      categoryAmbiguities.status,
+      callbackDuplicates.status,
+      deliveryFailureStatus,
+    ] as const;
+    const qualityStatus = qualityStatuses.reduce(worseQualityStatus, 'HEALTHY');
+    const qualityAlertCount = qualityStatuses.filter(
+      (status) => status === 'WARNING' || status === 'CRITICAL',
+    ).length;
 
     return operatorOperationsOverviewSchema.parse({
       generatedAt: now.toISOString(),
@@ -255,6 +368,24 @@ export class PostgresOperationsOverviewService implements OperationsOverviewServ
         deliveryFailed: metrics.deliveryFailed,
         openDeadLetters: metrics.openDeadLetters,
         pendingApprovals: metrics.pendingApprovals,
+      },
+      integrationQuality: {
+        windowHours: qualityWindowHours,
+        windowStartedAt: qualityWindowStart.toISOString(),
+        status: qualityStatus,
+        alertCount: qualityAlertCount,
+        primaryCorrelation,
+        phoneFallback,
+        correlationConflicts,
+        categoryAmbiguities,
+        callbackDuplicates,
+        deliveryFailures: {
+          result: metrics.resultDeliveryFailures,
+          recording: metrics.recordingDeliveryFailures,
+          total: deliveryFailureTotal,
+          status: deliveryFailureStatus,
+          threshold: '当前未恢复必须为 0',
+        },
       },
       attention: {
         total:
@@ -302,7 +433,77 @@ function emptyMetrics(): MetricRow {
     deliveryFailed: 0,
     openDeadLetters: 0,
     pendingApprovals: 0,
+    primaryCorrelationTotal: 0,
+    primaryCorrelationMatched: 0,
+    allCorrelationMatched: 0,
+    phoneFallbackMatched: 0,
+    correlationConflicts: 0,
+    categoryAmbiguities: 0,
+    callbackUnique: 0,
+    callbackDuplicates: 0,
+    resultDeliveryFailures: 0,
+    recordingDeliveryFailures: 0,
   };
+}
+
+type QualityStatus = OperatorOperationsOverview['integrationQuality']['status'];
+
+function rateMetric(
+  matched: number,
+  total: number,
+  statusFor: (rate: number, matched: number, total: number) => QualityStatus,
+  threshold: string,
+) {
+  const rate = total === 0 ? null : roundPercent((matched / total) * 100);
+  return {
+    matched,
+    total,
+    rate,
+    status:
+      rate === null ? ('NO_DATA' as const) : statusFor(rate, matched, total),
+    threshold,
+  };
+}
+
+function countMetric(count: number, threshold: string, critical: boolean) {
+  return {
+    count,
+    status:
+      count === 0
+        ? ('HEALTHY' as const)
+        : critical
+          ? ('CRITICAL' as const)
+          : ('WARNING' as const),
+    threshold,
+  };
+}
+
+function primaryCorrelationStatus(rate: number): QualityStatus {
+  if (rate === 100) return 'HEALTHY';
+  return rate >= 99 ? 'WARNING' : 'CRITICAL';
+}
+
+function duplicateCallbackStatus(rate: number, matched: number): QualityStatus {
+  if (matched >= 20 && rate >= 20) return 'CRITICAL';
+  if (matched >= 5 && rate >= 5) return 'WARNING';
+  return 'HEALTHY';
+}
+
+function worseQualityStatus(
+  current: QualityStatus,
+  candidate: QualityStatus,
+): QualityStatus {
+  return qualityStatusRank(candidate) > qualityStatusRank(current)
+    ? candidate
+    : current;
+}
+
+function qualityStatusRank(status: QualityStatus) {
+  return { NO_DATA: 0, HEALTHY: 1, WARNING: 2, CRITICAL: 3 }[status];
+}
+
+function roundPercent(value: number) {
+  return Math.round(value * 10) / 10;
 }
 
 function shanghaiBusinessDate(value: Date) {

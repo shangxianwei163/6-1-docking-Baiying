@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 import type { DataProtector } from '../security/data-protector.js';
-import type { BaiyingCallbackProcessor } from './processor.js';
+import {
+  CallbackBusinessConflictError,
+  type BaiyingCallbackProcessor,
+} from './processor.js';
 import type {
   CallbackFailureResult,
   CallbackInboxRepository,
@@ -94,7 +97,13 @@ export class BaiyingCallbackWorker {
         ...outcome,
       };
     } catch (error) {
-      return this.fail(claimed.id, claimed.processAttempts, error, 'VALID');
+      return this.fail(
+        claimed.id,
+        claimed.processAttempts,
+        error,
+        'VALID',
+        error instanceof CallbackBusinessConflictError,
+      );
     }
   }
 
@@ -103,6 +112,7 @@ export class BaiyingCallbackWorker {
     attempts: number,
     error: unknown,
     parseStatus: 'PENDING' | 'VALID',
+    permanent = false,
   ): Promise<CallbackWorkerResult> {
     const retryDelays = this.options.retryDelaysMs ?? [
       5_000, 30_000, 120_000, 600_000, 1_800_000,
@@ -115,7 +125,9 @@ export class BaiyingCallbackWorker {
         retryDelays[
           Math.min(Math.max(attempts - 1, 0), retryDelays.length - 1)
         ] ?? 1_800_000,
-      maxAttempts: this.options.maxAttempts ?? retryDelays.length + 1,
+      maxAttempts: permanent
+        ? attempts
+        : (this.options.maxAttempts ?? retryDelays.length + 1),
       parseStatus,
     });
     return { inboxId, ...result };

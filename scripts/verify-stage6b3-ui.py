@@ -1,33 +1,22 @@
 from pathlib import Path
-import json
 import re
-from urllib.request import ProxyHandler, Request, build_opener
 
 from playwright.sync_api import expect, sync_playwright
 
 from dialog_assertions import assert_dialog_has_no_outer_overflow
+from ui_auth import authenticated_api_json, open_authenticated
 
 
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
-APP_URL = 'http://localhost:4173/'
-API_BASE_URL = 'http://127.0.0.1:8788'
 OVERVIEW_SCREENSHOT = Path('/tmp/outbound-platform-stage6b3-overview.png')
 LOG_SCREENSHOT = Path('/tmp/outbound-platform-stage6b3-integration-logs.png')
 
 
-def api_json(path: str) -> dict:
-    opener = build_opener(ProxyHandler({}))
-    request = Request(
-        f'{API_BASE_URL}{path}',
-        headers={'x-actor-id': 'stage6b3-ui-verifier'},
-    )
-    with opener.open(request, timeout=10) as response:
-        return json.load(response)['data']
-
-
 def main() -> None:
-    overview = api_json('/api/v1/operations-overview')
-    logs = api_json('/api/v1/integration-logs?pageNum=0&pageSize=20')
+    overview = authenticated_api_json('/api/v1/operations-overview')
+    logs = authenticated_api_json(
+        '/api/v1/integration-logs?pageNum=0&pageSize=20'
+    )
     if logs['total'] < 1 or not logs['items']:
         raise AssertionError('Stage 6B-3 UI verification needs one real integration log')
     first_log = logs['items'][0]
@@ -40,12 +29,19 @@ def main() -> None:
         )
         page = browser.new_page(viewport={'width': 1600, 'height': 1000})
         page.on('pageerror', lambda error: page_errors.append(str(error)))
-        page.goto(APP_URL, wait_until='networkidle')
+        open_authenticated(page)
 
         expect(page.locator('h2').filter(has_text='总览')).to_be_visible()
         expect(page.get_by_text('今日外呼任务', exact=True)).to_be_visible()
         expect(page.get_by_text('回调待处理', exact=True)).to_be_visible()
         expect(page.get_by_text('队列待发布', exact=True)).to_be_visible()
+        expect(page.get_by_text('接口质量与关联告警', exact=True)).to_be_visible()
+        expect(page.get_by_text('GUID 主关联成功率', exact=True)).to_be_visible()
+        expect(page.get_by_text('手机号后备匹配', exact=True)).to_be_visible()
+        expect(page.get_by_text('号码关联冲突', exact=True)).to_be_visible()
+        expect(page.get_by_text('分类匹配歧义', exact=True)).to_be_visible()
+        expect(page.get_by_text('百应重复回调', exact=True)).to_be_visible()
+        expect(page.get_by_text('ERP / CRM 回传失败', exact=True)).to_be_visible()
         expect(page.get_by_text('最近受理任务', exact=True)).to_be_visible()
         if overview['recentTasks']:
             expect(
@@ -76,9 +72,12 @@ def main() -> None:
 
         mobile = browser.new_page(viewport={'width': 390, 'height': 844})
         mobile.on('pageerror', lambda error: page_errors.append(str(error)))
-        mobile.goto(APP_URL, wait_until='networkidle')
+        open_authenticated(mobile)
         expect(mobile.locator('h2').filter(has_text='总览')).to_be_visible()
         expect(mobile.get_by_text('今日外呼任务', exact=True)).to_be_visible()
+        expect(
+            mobile.get_by_text('接口质量与关联告警', exact=True)
+        ).to_be_visible()
         mobile.get_by_role('button', name=re.compile(r'^接口日志')).click()
         mobile_log_row = (
             mobile.locator('tbody tr').filter(has_text=first_log['requestId']).first

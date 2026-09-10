@@ -15,6 +15,7 @@ import {
 import type {
   OperatorOperationsOverview,
   OperatorOverviewAttentionItem,
+  OperatorQualityStatus,
 } from '@outbound/contracts';
 import { loadOperationsOverview, PlatformApiError } from '@/lib/platform-api';
 import { Panel, Status } from './shared';
@@ -208,6 +209,106 @@ export function OperationsOverviewConsole({
           note="Maker / Checker"
         />
       </section>
+
+      <Panel
+        title="接口质量与关联告警"
+        meta={
+          overview
+            ? `近 ${overview.integrationQuality.windowHours} 小时 · ${qualityStatusMeta[overview.integrationQuality.status].label}`
+            : '读取中'
+        }
+        className={`monitoring-panel quality-panel is-${overview?.integrationQuality.status ?? 'NO_DATA'}`}
+      >
+        <div className="quality-panel-heading">
+          <p>
+            主关联、后备匹配和回调异常按近 24
+            小时统计；结果与录音显示当前仍未恢复的回传事件。
+          </p>
+          <span>
+            {overview?.integrationQuality.alertCount ?? 0} 项达到告警阈值
+          </span>
+        </div>
+        <section className="quality-metric-grid" aria-label="接口质量告警指标">
+          <QualityMetric
+            label="GUID 主关联成功率"
+            value={formatQualityRate(
+              overview?.integrationQuality.primaryCorrelation.rate,
+            )}
+            note={`${overview?.integrationQuality.primaryCorrelation.matched ?? 0} / ${overview?.integrationQuality.primaryCorrelation.total ?? 0} 通`}
+            threshold={
+              overview?.integrationQuality.primaryCorrelation.threshold ??
+              '必须达到 100%'
+            }
+            status={
+              overview?.integrationQuality.primaryCorrelation.status ??
+              'NO_DATA'
+            }
+          />
+          <QualityMetric
+            label="手机号后备匹配"
+            value={`${overview?.integrationQuality.phoneFallback.matched ?? 0} 次`}
+            note={`占已关联回调 ${formatQualityRate(overview?.integrationQuality.phoneFallback.rate)}`}
+            threshold={
+              overview?.integrationQuality.phoneFallback.threshold ??
+              '目标为 0 次'
+            }
+            status={
+              overview?.integrationQuality.phoneFallback.status ?? 'NO_DATA'
+            }
+          />
+          <QualityMetric
+            label="号码关联冲突"
+            value={`${overview?.integrationQuality.correlationConflicts.count ?? 0} 次`}
+            note="签名、任务或号码无法唯一对应"
+            threshold={
+              overview?.integrationQuality.correlationConflicts.threshold ??
+              '必须为 0 次'
+            }
+            status={
+              overview?.integrationQuality.correlationConflicts.status ??
+              'NO_DATA'
+            }
+          />
+          <QualityMetric
+            label="分类匹配歧义"
+            value={`${overview?.integrationQuality.categoryAmbiguities.count ?? 0} 次`}
+            note="同一三级分类命中多条配置"
+            threshold={
+              overview?.integrationQuality.categoryAmbiguities.threshold ??
+              '必须为 0 次'
+            }
+            status={
+              overview?.integrationQuality.categoryAmbiguities.status ??
+              'NO_DATA'
+            }
+          />
+          <QualityMetric
+            label="百应重复回调"
+            value={`${overview?.integrationQuality.callbackDuplicates.matched ?? 0} 次`}
+            note={`占全部入站 ${formatQualityRate(overview?.integrationQuality.callbackDuplicates.rate)}`}
+            threshold={
+              overview?.integrationQuality.callbackDuplicates.threshold ??
+              '低于 5% 且少于 5 次'
+            }
+            status={
+              overview?.integrationQuality.callbackDuplicates.status ??
+              'NO_DATA'
+            }
+          />
+          <QualityMetric
+            label="ERP / CRM 回传失败"
+            value={`${overview?.integrationQuality.deliveryFailures.total ?? 0} 条`}
+            note={`结果 ${overview?.integrationQuality.deliveryFailures.result ?? 0} · 录音 ${overview?.integrationQuality.deliveryFailures.recording ?? 0}`}
+            threshold={
+              overview?.integrationQuality.deliveryFailures.threshold ??
+              '当前未恢复必须为 0'
+            }
+            status={
+              overview?.integrationQuality.deliveryFailures.status ?? 'NO_DATA'
+            }
+          />
+        </section>
+      </Panel>
 
       <div className="monitoring-primary-grid">
         <Panel
@@ -412,6 +513,43 @@ function PipelineMetric({
   );
 }
 
+const qualityStatusMeta: Record<
+  OperatorQualityStatus,
+  { label: string; shortLabel: string }
+> = {
+  NO_DATA: { label: '暂无样本', shortLabel: '无样本' },
+  HEALTHY: { label: '全部正常', shortLabel: '正常' },
+  WARNING: { label: '存在关注项', shortLabel: '关注' },
+  CRITICAL: { label: '存在严重告警', shortLabel: '严重' },
+};
+
+function QualityMetric({
+  label,
+  value,
+  note,
+  threshold,
+  status,
+}: {
+  label: string;
+  value: string;
+  note: string;
+  threshold: string;
+  status: OperatorQualityStatus;
+}) {
+  return (
+    <article className={`quality-metric is-${status}`}>
+      <div className="quality-metric-title">
+        <span className="quality-state" />
+        <span>{label}</span>
+        <em>{qualityStatusMeta[status].shortLabel}</em>
+      </div>
+      <b>{value}</b>
+      <p>{note}</p>
+      <small>阈值：{threshold}</small>
+    </article>
+  );
+}
+
 function formatInteger(value: number | undefined) {
   return new Intl.NumberFormat('zh-CN').format(value ?? 0);
 }
@@ -429,6 +567,10 @@ function formatRate(
 ) {
   if (!trend?.total) return '—';
   return `${((trend.answered / trend.total) * 100).toFixed(1)}%`;
+}
+
+function formatQualityRate(value: number | null | undefined) {
+  return value === null || value === undefined ? '—' : `${value.toFixed(1)}%`;
 }
 
 function formatTime(value: string) {

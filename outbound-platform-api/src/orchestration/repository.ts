@@ -19,6 +19,7 @@ export type TaskOperationStatus =
 export type OrchestrationCallItem = {
   id: string;
   ordinal: number;
+  phoneHmac: string;
   phoneCiphertext: string;
   customerNameCiphertext: string | null;
   mappedPropertiesCiphertext: string;
@@ -26,6 +27,8 @@ export type OrchestrationCallItem = {
 
 export type OrchestrationTask = {
   id: string;
+  batchId: string | null;
+  contractVersion: string;
   taskNo: string;
   taskName: string;
   sourceSystem: SourceSystem;
@@ -48,6 +51,8 @@ export type TaskFailureStage =
   | 'BAIYING_CREATE'
   | 'BAIYING_IMPORT'
   | 'BAIYING_START';
+
+export type BatchStartBarrierResult = 'WAITING' | 'RELEASED' | 'FAILED';
 
 export class TaskNotFoundError extends Error {}
 export class TaskStateConflictError extends Error {}
@@ -81,6 +86,11 @@ export interface TaskOrchestrationRepository {
   ): Promise<number>;
   recordCreated(taskId: string, callJobId: string): Promise<void>;
   recordImported(taskId: string, summary: BaiyingImportSummary): Promise<void>;
+  isBatchAborted(batchId: string): Promise<boolean>;
+  releaseBatchStartBarrier(input: {
+    batchId: string;
+    currentTaskId: string;
+  }): Promise<BatchStartBarrierResult>;
   recordCalling(taskId: string): Promise<void>;
   recordFailure(input: {
     taskId: string;

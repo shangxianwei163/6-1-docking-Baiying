@@ -4,10 +4,10 @@ import re
 from playwright.sync_api import expect, sync_playwright
 
 from dialog_assertions import assert_dialog_has_no_outer_overflow
+from ui_auth import open_authenticated
 
 
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
-APP_URL = 'http://localhost:4173/'
 
 
 def verify_mapping_dialogs(page) -> None:
@@ -74,7 +74,7 @@ def main() -> None:
         )
         page = browser.new_page(viewport={'width': 1440, 'height': 1000})
         page.on('pageerror', lambda error: page_errors.append(str(error)))
-        page.goto(APP_URL, wait_until='networkidle')
+        open_authenticated(page)
         verify_mapping_dialogs(page)
         verify_script_dialog(page)
         browser.close()

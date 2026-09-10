@@ -6,10 +6,10 @@ import uuid
 from playwright.sync_api import Route, expect, sync_playwright
 
 from dialog_assertions import assert_dialog_has_no_outer_overflow
+from ui_auth import open_authenticated
 
 
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
-APP_URL = 'http://localhost:4173/'
 SETTLEMENT_MONTH = '2026-08'
 EMPTY_SETTLEMENT_MONTH = '2026-07'
 SOURCE_HASH = 'a' * 64
@@ -119,7 +119,7 @@ def install_settlement_fixture(page, finalize_requests: list[dict]) -> None:
 
 
 def open_settlement(page) -> None:
-    page.goto(APP_URL, wait_until='networkidle')
+    open_authenticated(page)
     page.get_by_role('button', name=re.compile(r'^话费设置')).click()
     studio_tab = page.get_by_role('tab', name=re.compile(r'^影楼话费'))
     hainan_tab = page.get_by_role('tab', name=re.compile(r'^海南人像话费'))

@@ -5,16 +5,16 @@ import re
 from playwright.sync_api import Route, expect, sync_playwright
 
 from dialog_assertions import assert_dialog_has_no_outer_overflow
+from ui_auth import open_authenticated
 
 
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
-APP_URL = 'http://localhost:4173/'
 LIVE_SCREENSHOT = Path('/tmp/outbound-platform-lines-live.png')
 STALE_SCREENSHOT = Path('/tmp/outbound-platform-lines-stale.png')
 
 
 def open_line_management(page) -> None:
-    page.goto(APP_URL, wait_until='networkidle')
+    open_authenticated(page)
     page.get_by_role('button', name='线路管理', exact=True).click()
     expect(page.get_by_role('heading', name='线路管理', exact=True)).to_be_visible()
 

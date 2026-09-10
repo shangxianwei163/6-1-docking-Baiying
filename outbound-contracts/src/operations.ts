@@ -43,11 +43,31 @@ export const operatorEndpointSchema = z.object({
   createdAt: z.iso.datetime({ offset: true }),
 });
 
+export const operatorRequestTokenSchema = z.object({
+  sourceSystem: sourceSystemSchema,
+  clientId: z.string().min(1).max(128),
+  token: z.string().min(1).max(128),
+});
+
 const operatorEndpointUrlSchema = z
   .url()
-  .refine((value) => new URL(value).protocol === 'https:', {
-    message: '回传地址必须使用 HTTPS',
-  });
+  .max(2_048)
+  .refine(
+    (value) => {
+      const url = new URL(value);
+      return (
+        (url.protocol === 'http:' || url.protocol === 'https:') &&
+        !url.username &&
+        !url.password &&
+        !url.search &&
+        !url.hash
+      );
+    },
+    {
+      message:
+        '回传地址必须是无凭证、无查询串、无片段的 HTTP 或 HTTPS 完整地址',
+    },
+  );
 
 export const operatorEndpointDraftInputSchema = z
   .object({
@@ -104,6 +124,7 @@ export const operatorStudioSchema = z.object({
   currentPricing: operatorPricingVersionSchema.nullable(),
   scheduledPricing: operatorPricingVersionSchema.nullable(),
   pricingVersionCount: z.number().int().nonnegative(),
+  requestTokens: z.array(operatorRequestTokenSchema),
   endpoints: z.array(operatorEndpointSchema),
   createdBy: z.string().min(1).max(128),
   createdAt: z.iso.datetime({ offset: true }),
@@ -650,6 +671,27 @@ export const operatorOverviewRecentTaskSchema = z.object({
   updatedAt: z.iso.datetime({ offset: true }),
 });
 
+export const operatorQualityStatusSchema = z.enum([
+  'NO_DATA',
+  'HEALTHY',
+  'WARNING',
+  'CRITICAL',
+]);
+
+const operatorQualityRateMetricSchema = z.object({
+  matched: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  rate: z.number().min(0).max(100).nullable(),
+  status: operatorQualityStatusSchema,
+  threshold: z.string().min(1).max(64),
+});
+
+const operatorQualityCountMetricSchema = z.object({
+  count: z.number().int().nonnegative(),
+  status: operatorQualityStatusSchema,
+  threshold: z.string().min(1).max(64),
+});
+
 export const operatorOperationsOverviewSchema = z.object({
   generatedAt: z.iso.datetime({ offset: true }),
   businessDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -678,6 +720,24 @@ export const operatorOperationsOverviewSchema = z.object({
     deliveryFailed: z.number().int().nonnegative(),
     openDeadLetters: z.number().int().nonnegative(),
     pendingApprovals: z.number().int().nonnegative(),
+  }),
+  integrationQuality: z.object({
+    windowHours: z.number().int().positive(),
+    windowStartedAt: z.iso.datetime({ offset: true }),
+    status: operatorQualityStatusSchema,
+    alertCount: z.number().int().nonnegative(),
+    primaryCorrelation: operatorQualityRateMetricSchema,
+    phoneFallback: operatorQualityRateMetricSchema,
+    correlationConflicts: operatorQualityCountMetricSchema,
+    categoryAmbiguities: operatorQualityCountMetricSchema,
+    callbackDuplicates: operatorQualityRateMetricSchema,
+    deliveryFailures: z.object({
+      result: z.number().int().nonnegative(),
+      recording: z.number().int().nonnegative(),
+      total: z.number().int().nonnegative(),
+      status: operatorQualityStatusSchema,
+      threshold: z.string().min(1).max(64),
+    }),
   }),
   attention: z.object({
     total: z.number().int().nonnegative(),
@@ -907,6 +967,7 @@ export type OperatorOverviewAttentionItem = z.infer<
 export type OperatorOverviewRecentTask = z.infer<
   typeof operatorOverviewRecentTaskSchema
 >;
+export type OperatorQualityStatus = z.infer<typeof operatorQualityStatusSchema>;
 export type OperatorOperationsOverview = z.infer<
   typeof operatorOperationsOverviewSchema
 >;

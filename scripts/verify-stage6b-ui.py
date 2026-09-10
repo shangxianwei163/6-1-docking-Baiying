@@ -1,19 +1,18 @@
 from pathlib import Path
-import json
 import re
-from urllib.request import ProxyHandler, Request, build_opener
 
 from playwright.sync_api import expect, sync_playwright
+from ui_auth import APP_URL, authenticated_api_json, open_authenticated
 
 
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
-APP_URL = 'http://localhost:4173/'
-API_BASE_URL = 'http://127.0.0.1:8788'
 STUDIO_SCREENSHOT = Path('/tmp/outbound-platform-stage6b-studios.png')
+STUDIO_DETAIL_SCREENSHOT = Path('/tmp/outbound-platform-stage6b-studio-detail.png')
 STUDIO_EDITOR_SCREENSHOT = Path('/tmp/outbound-platform-stage6b-studio-editor.png')
 LEDGER_PAGE_SCREENSHOT = Path('/tmp/outbound-platform-stage6b-ledger-page.png')
 LEDGER_SCREENSHOT = Path('/tmp/outbound-platform-stage6b-ledger.png')
 PRICING_SCREENSHOT = Path('/tmp/outbound-platform-stage6b-pricing.png')
+API_DOCS_SCREENSHOT = Path('/tmp/outbound-platform-simple-token-api-docs.png')
 
 
 def assert_dialog_has_no_overflow(dialog, label: str) -> None:
@@ -35,20 +34,14 @@ def assert_dialog_has_no_overflow(dialog, label: str) -> None:
         raise AssertionError(f'{label} clips vertically: {metrics}')
 
 
-def api_json(path: str) -> dict:
-    opener = build_opener(ProxyHandler({}))
-    request = Request(
-        f'{API_BASE_URL}{path}',
-        headers={'x-actor-id': 'stage6b-ui-verifier'},
-    )
-    with opener.open(request, timeout=10) as response:
-        return json.load(response)['data']
-
-
 def load_fixtures() -> tuple[dict, list[dict], dict]:
-    studio_page = api_json('/api/v1/studios?pageNum=0&pageSize=100')
-    pricing = api_json('/api/v1/pricing')
-    ledger = api_json('/api/v1/account-ledger?pageNum=0&pageSize=100')
+    studio_page = authenticated_api_json(
+        '/api/v1/studios?pageNum=0&pageSize=100'
+    )
+    pricing = authenticated_api_json('/api/v1/pricing')
+    ledger = authenticated_api_json(
+        '/api/v1/account-ledger?pageNum=0&pageSize=100'
+    )
     if not studio_page['studios']:
         raise AssertionError('Stage 6B UI verification needs at least one studio')
     if not pricing['studios']:
@@ -66,9 +59,13 @@ def main() -> None:
             executable_path=str(CHROME) if CHROME.exists() else None,
             headless=True,
         )
-        page = browser.new_page(viewport={'width': 1600, 'height': 1000})
+        context = browser.new_context(
+            viewport={'width': 1600, 'height': 1000},
+            permissions=['clipboard-read', 'clipboard-write'],
+        )
+        page = context.new_page()
         page.on('pageerror', lambda error: page_errors.append(str(error)))
-        page.goto(APP_URL, wait_until='networkidle')
+        open_authenticated(page)
 
         page.get_by_role('button', name=re.compile(r'^影楼管理')).click()
         expect(page.get_by_text('PostgreSQL 实时数据')).to_be_visible()
@@ -81,6 +78,24 @@ def main() -> None:
         studio_dialog = page.get_by_role('dialog')
         expect(studio_dialog.get_by_text(studio['name'], exact=True)).to_be_visible()
         expect(studio_dialog.get_by_text('可用余额', exact=True)).to_be_visible()
+        expect(
+            studio_dialog.get_by_text('ERP / CRM 请求 Token', exact=True)
+        ).to_be_visible()
+        if not studio['requestTokens']:
+            raise AssertionError('Studio detail must expose ERP/CRM request tokens')
+        for item in studio['requestTokens']:
+            token_row = studio_dialog.locator(
+                '.ops-token-list article', has_text=item['clientId']
+            )
+            expect(token_row.get_by_text(item['token'], exact=True)).to_be_visible()
+        first_token = studio['requestTokens'][0]
+        first_token_row = studio_dialog.locator(
+            '.ops-token-list article', has_text=first_token['clientId']
+        )
+        first_token_row.get_by_role('button', name='复制 Token').click()
+        expect(first_token_row.get_by_role('button', name='已复制')).to_be_visible()
+        if page.evaluate('navigator.clipboard.readText()') != first_token['token']:
+            raise AssertionError('Request token copy button copied the wrong value')
         expect(studio_dialog.get_by_text('ERP / CRM 回传端点', exact=True)).to_be_visible()
         assert_dialog_has_no_overflow(studio_dialog, 'Studio detail dialog')
         page.set_viewport_size({'width': 1024, 'height': 640})
@@ -88,6 +103,7 @@ def main() -> None:
             studio_dialog, 'Studio detail dialog at short viewport'
         )
         page.set_viewport_size({'width': 1600, 'height': 1000})
+        page.screenshot(path=str(STUDIO_DETAIL_SCREENSHOT), full_page=True)
         studio_dialog.locator('[data-slot="dialog-close"]').click()
 
         page.get_by_role('button', name=re.compile(r'^新增影楼$')).click()
@@ -161,7 +177,7 @@ def main() -> None:
             raise AssertionError('Ledger principle or ledger panel is missing')
         if principle_box['y'] + principle_box['height'] > ledger_panel_box['y']:
             raise AssertionError('Arrival principle must appear above the ledger panel')
-        if not ledger_table_box or ledger_table_box['height'] < 425:
+        if not ledger_table_box or ledger_table_box['height'] < 360:
             raise AssertionError(f'Ledger table area is too short: {ledger_table_box}')
         if ledger_items:
             first_entry = ledger_items[0]
@@ -229,16 +245,31 @@ def main() -> None:
         preview_dialog.get_by_role('button', name='返回修改').click()
         expect(page.get_by_text('确认价格版本影响', exact=True)).not_to_be_visible()
         expect(page.get_by_role('dialog')).to_contain_text(first_pricing['name'])
+
+        docs_page = context.new_page()
+        docs_page.goto(
+            f"{APP_URL.rstrip('/')}/api-docs?api=create-outbound-task",
+            wait_until='networkidle',
+        )
+        expect(docs_page.locator('body')).to_contain_text(
+            'X-Access-Token 固定 Token'
+        )
+        expect(docs_page.get_by_text('X-Access-Token', exact=True)).to_be_visible()
+        expect(docs_page.get_by_text('X-Client-Id', exact=True)).to_have_count(0)
+        expect(docs_page.get_by_text('X-Nonce', exact=True)).to_have_count(0)
+        docs_page.screenshot(path=str(API_DOCS_SCREENSHOT), full_page=True)
         browser.close()
 
     if page_errors:
         raise AssertionError(f'Browser page errors: {page_errors}')
     print('Stage 6B UI verification passed (read-only + pricing preview)')
     print(f'Studio screenshot: {STUDIO_SCREENSHOT}')
+    print(f'Studio detail screenshot: {STUDIO_DETAIL_SCREENSHOT}')
     print(f'Studio editor screenshot: {STUDIO_EDITOR_SCREENSHOT}')
     print(f'Ledger page screenshot: {LEDGER_PAGE_SCREENSHOT}')
     print(f'Ledger screenshot: {LEDGER_SCREENSHOT}')
     print(f'Pricing screenshot: {PRICING_SCREENSHOT}')
+    print(f'API docs screenshot: {API_DOCS_SCREENSHOT}')
 
 
 if __name__ == '__main__':

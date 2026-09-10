@@ -1,8 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import {
   callbackAckSchema,
+  batchAcceptedEnvelopeV2Schema,
   callResultBatchEventSchema,
+  createOutboundBatchRequestV2Schema,
   createOutboundTaskRequestSchema,
+  outboundCallResultV2Schema,
   recordingAvailableBatchEventSchema,
   taskAcceptedEnvelopeSchema,
   taskCompletedEventSchema,
@@ -21,6 +24,9 @@ async function readExample(name) {
 const validExamples = [
   ['erp-create-task.request.json', createOutboundTaskRequestSchema],
   ['crm-create-task.request.json', createOutboundTaskRequestSchema],
+  ['erp-create-batch-v2.request.json', createOutboundBatchRequestV2Schema],
+  ['batch-accepted-v2.response.json', batchAcceptedEnvelopeV2Schema],
+  ['call-result-v2.callback.json', outboundCallResultV2Schema],
   ['task-accepted.response.json', taskAcceptedEnvelopeSchema],
   ['task-started.event.json', taskStartedEventSchema],
   ['task-start-failed.event.json', taskStartFailedEventSchema],

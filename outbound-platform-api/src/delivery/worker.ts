@@ -10,6 +10,10 @@ import type {
 import { serializeStableJson } from './serializer.js';
 import { signCallbackRequest } from './signature.js';
 import type { DeliveryHttpResponse, DeliveryTransport } from './transport.js';
+import {
+  CallbackTargetValidationError,
+  parseCallbackTargetUrl,
+} from './callback-url.js';
 
 export type DeliveryWorkerResult =
   | { status: 'IDLE' }
@@ -68,7 +72,9 @@ export class CallbackDeliveryWorker {
         );
       }
       const target = validateTarget(claimed.targetUrl);
-      const rawBody = serializeStableJson(event);
+      const rawBody = serializeStableJson(
+        event.eventType === 'OUTBOUND_CALL_RESULT_V2' ? event.result : event,
+      );
       const timestamp = requestedAt.getTime().toString();
       const secret = await this.secrets.getSecretBytes(
         claimed.signingSecretRef,
@@ -90,6 +96,7 @@ export class CallbackDeliveryWorker {
           'X-Platform-Event-Id': claimed.eventId,
           'X-Timestamp': timestamp,
           'X-Signature': signature,
+          'X-Contract-Version': event.schemaVersion,
         },
         body: rawBody,
         timeoutMs: this.options.timeoutMs ?? 10_000,
@@ -219,29 +226,15 @@ class PermanentDeliveryError extends Error {
 }
 
 function validateTarget(rawUrl: string): URL {
-  let url: URL;
   try {
-    url = new URL(rawUrl);
-  } catch {
-    throw new PermanentDeliveryError(
-      'TARGET_URL_INVALID',
-      '回调目标不是有效 URL',
-    );
+    return parseCallbackTargetUrl(rawUrl);
+  } catch (error) {
+    const message =
+      error instanceof CallbackTargetValidationError
+        ? error.message
+        : '回调目标不是有效 URL';
+    throw new PermanentDeliveryError('TARGET_URL_INVALID', message);
   }
-  if (
-    url.protocol !== 'https:' ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash ||
-    (url.port && url.port !== '443')
-  ) {
-    throw new PermanentDeliveryError(
-      'TARGET_URL_INVALID',
-      '回调目标必须是无凭证、无查询串、无片段的标准 HTTPS 地址',
-    );
-  }
-  return url;
 }
 
 function summarizeResponse(response: DeliveryHttpResponse): string | null {

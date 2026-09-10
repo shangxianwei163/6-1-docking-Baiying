@@ -12,3 +12,7 @@ export function stableJson(value: unknown): string {
 export function stableJsonSha256(value: unknown): string {
   return createHash('sha256').update(stableJson(value), 'utf8').digest('hex');
 }
+
+export function rawBodySha256(value: Uint8Array): string {
+  return createHash('sha256').update(value).digest('hex');
+}

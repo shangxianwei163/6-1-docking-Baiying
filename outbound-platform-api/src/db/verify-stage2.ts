@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import {
   externalApiErrorSchema,
   outboundCallPageEnvelopeSchema,
@@ -15,16 +15,12 @@ import { PostgresMappingRepository } from '../mapping/postgres-repository.js';
 import { PostgresExternalRequestAuthenticator } from '../openapi/authenticator.js';
 import { PostgresOutboundTaskService } from '../outbound-task/service.js';
 import { LocalDataProtector } from '../security/data-protector.js';
-import { signRequest } from '../security/request-signature.js';
-import { LocalDevelopmentSecretProvider } from '../security/secret-provider.js';
 import { bootstrapStage2Local } from './bootstrap-stage2-local.js';
 import { createDatabase } from './client.js';
 import {
   accountLedger,
-  apiRequestNonces,
   fundHolds,
   idempotencyRecords,
-  integrationClients,
   platformTasks,
   queueOutbox,
   studioAccounts,
@@ -40,16 +36,10 @@ async function main() {
     throw new Error('生产环境禁止运行 Stage 2 本地闭环验证');
   }
   const database = createDatabase(config.DATABASE_URL);
-  const nonces: string[] = [];
   let taskId: string | undefined;
   let reservedAmount: string | undefined;
-  let rateLimitClientId: string | undefined;
   try {
     await bootstrapStage2Local(database.db);
-    const secrets = new LocalDevelopmentSecretProvider(
-      config.WORKER_SHARED_SECRET,
-      config.NODE_ENV,
-    );
     const app = createApp({
       mappingRepository: new PostgresMappingRepository(
         database.db,
@@ -59,7 +49,6 @@ async function main() {
       workerSharedSecret: config.WORKER_SHARED_SECRET,
       externalRequestAuthenticator: new PostgresExternalRequestAuthenticator(
         database.db,
-        secrets,
       ),
       outboundTaskService: new PostgresOutboundTaskService(
         database.db,
@@ -70,8 +59,7 @@ async function main() {
         },
       ),
     });
-    const clientId = 'erp-local-01';
-    const secret = await secrets.getSecretBytes(`local-hkdf://${clientId}`);
+    const accessToken = 'erp-local-access-token';
     const suffix = randomUUID();
     const request: CreateOutboundTaskRequest = {
       schemaVersion: '1.0',
@@ -96,15 +84,13 @@ async function main() {
     const rawBody = Buffer.from(JSON.stringify(request));
     const idempotencyKey = `verify-${suffix}`;
 
-    const acceptedResponse = await signedRequest({
+    const acceptedResponse = await tokenRequest({
       app,
-      secret,
-      clientId,
+      accessToken,
       method: 'POST',
       path: '/openapi/v1/outbound/tasks',
       rawBody,
       idempotencyKey,
-      nonces,
     });
     assert.equal(acceptedResponse.status, 202);
     const accepted = taskAcceptedEnvelopeSchema.parse(
@@ -115,15 +101,13 @@ async function main() {
     const generatedTaskName = `${accepted.data.taskNo.slice(3, 11)}本地联调ERP婚礼邀约-${accepted.data.taskNo.slice(-5)}`;
     assert.equal(accepted.data.taskName, generatedTaskName);
 
-    const replayResponse = await signedRequest({
+    const replayResponse = await tokenRequest({
       app,
-      secret,
-      clientId,
+      accessToken,
       method: 'POST',
       path: '/openapi/v1/outbound/tasks',
       rawBody,
       idempotencyKey,
-      nonces,
     });
     assert.equal(replayResponse.status, 202);
     assert.equal(replayResponse.headers.get('idempotent-replayed'), 'true');
@@ -136,15 +120,13 @@ async function main() {
     const changedBody = Buffer.from(
       JSON.stringify({ ...request, taskName: '同键但不同报文' }),
     );
-    const conflictResponse = await signedRequest({
+    const conflictResponse = await tokenRequest({
       app,
-      secret,
-      clientId,
+      accessToken,
       method: 'POST',
       path: '/openapi/v1/outbound/tasks',
       rawBody: changedBody,
       idempotencyKey,
-      nonces,
     });
     assert.equal(conflictResponse.status, 409);
     assert.equal(
@@ -159,15 +141,13 @@ async function main() {
       expectedCode: string,
     ) => {
       rejectedExternalIds.push(changed.externalRequestId);
-      const response = await signedRequest({
+      const response = await tokenRequest({
         app,
-        secret,
-        clientId,
+        accessToken,
         method: 'POST',
         path: '/openapi/v1/outbound/tasks',
         rawBody: Buffer.from(JSON.stringify(changed)),
         idempotencyKey: `reject-${randomUUID()}`,
-        nonces,
       });
       assert.equal(response.status, expectedStatus);
       assert.equal(
@@ -247,16 +227,12 @@ async function main() {
     );
 
     const detailPath = accepted.data.statusUrl;
-    const detailNonce = randomUUID();
-    const detailResponse = await signedRequest({
+    const detailResponse = await tokenRequest({
       app,
-      secret,
-      clientId,
+      accessToken,
       method: 'GET',
       path: detailPath,
       rawBody: Buffer.alloc(0),
-      nonce: detailNonce,
-      nonces,
     });
     assert.equal(detailResponse.status, 200);
     const detail = taskDetailEnvelopeSchema.parse(await detailResponse.json());
@@ -265,98 +241,23 @@ async function main() {
     assert.equal(detail.data.billing.reservedAmount, reservedAmount);
     assert.equal(detail.data.mapping.variableCount, 3);
 
-    const replayedNonceResponse = await signedRequest({
-      app,
-      secret,
-      clientId,
-      method: 'GET',
-      path: detailPath,
-      rawBody: Buffer.alloc(0),
-      nonce: detailNonce,
-      nonces,
-    });
-    assert.equal(replayedNonceResponse.status, 409);
-    assert.equal(
-      externalApiErrorSchema.parse(await replayedNonceResponse.json()).code,
-      'REPLAY_DETECTED',
-    );
-
-    const badSignatureResponse = await app.request(`${baseUrl}${detailPath}`, {
+    const invalidTokenResponse = await app.request(`${baseUrl}${detailPath}`, {
       headers: {
-        'x-client-id': clientId,
-        'x-timestamp': String(Date.now()),
-        'x-nonce': randomUUID(),
-        'x-signature': 'invalid-signature',
+        'x-access-token': 'invalid-token',
       },
     });
-    assert.equal(badSignatureResponse.status, 401);
+    assert.equal(invalidTokenResponse.status, 401);
     assert.equal(
-      externalApiErrorSchema.parse(await badSignatureResponse.json()).code,
+      externalApiErrorSchema.parse(await invalidTokenResponse.json()).code,
       'AUTHENTICATION_FAILED',
     );
 
-    const expiredTimestampResponse = await signedRequest({
+    const callsResponse = await tokenRequest({
       app,
-      secret,
-      clientId,
-      method: 'GET',
-      path: detailPath,
-      rawBody: Buffer.alloc(0),
-      timestamp: String(Date.now() - 10 * 60 * 1000),
-      nonces,
-    });
-    assert.equal(expiredTimestampResponse.status, 401);
-    assert.equal(
-      externalApiErrorSchema.parse(await expiredTimestampResponse.json()).code,
-      'AUTHENTICATION_FAILED',
-    );
-
-    rateLimitClientId = `rate-limit-${suffix}`;
-    await database.db.insert(integrationClients).values({
-      clientId: rateLimitClientId,
-      sourceSystem: 'ERP',
-      displayName: 'Stage 2 限流验证客户端',
-      secretRef: `local-hkdf://${rateLimitClientId}`,
-      status: 'ACTIVE',
-      rateLimitPerMinute: 1,
-      createdBy: 'stage2-verifier',
-    });
-    const rateLimitSecret = await secrets.getSecretBytes(
-      `local-hkdf://${rateLimitClientId}`,
-    );
-    const firstRateResponse = await signedRequest({
-      app,
-      secret: rateLimitSecret,
-      clientId: rateLimitClientId,
-      method: 'GET',
-      path: detailPath,
-      rawBody: Buffer.alloc(0),
-      nonces,
-    });
-    assert.equal(firstRateResponse.status, 404);
-    const limitedResponse = await signedRequest({
-      app,
-      secret: rateLimitSecret,
-      clientId: rateLimitClientId,
-      method: 'GET',
-      path: detailPath,
-      rawBody: Buffer.alloc(0),
-      nonces,
-    });
-    assert.equal(limitedResponse.status, 429);
-    assert.equal(
-      externalApiErrorSchema.parse(await limitedResponse.json()).code,
-      'RATE_LIMITED',
-    );
-
-    const callsResponse = await signedRequest({
-      app,
-      secret,
-      clientId,
+      accessToken,
       method: 'GET',
       path: `${detailPath}/calls?limit=20`,
       rawBody: Buffer.alloc(0),
-      nonces,
     });
     assert.equal(callsResponse.status, 200);
     assert.deepEqual(
@@ -416,9 +317,7 @@ async function main() {
         {
           status: 'passed',
           checks: [
-            'HMAC authentication and raw-body signature',
-            'timestamp and nonce replay protection',
-            'per-client rate limiting',
+            'fixed request token authentication',
             'same-key replay returns the original task',
             'same-key changed payload returns IDEMPOTENCY_CONFLICT',
             'schema, studio, category, mapping and credential rejections leave no task',
@@ -435,51 +334,26 @@ async function main() {
     );
   } finally {
     if (taskId && reservedAmount) {
-      await cleanup(database.db, taskId, reservedAmount, nonces);
-    }
-    if (rateLimitClientId) {
-      await database.db
-        .delete(integrationClients)
-        .where(eq(integrationClients.clientId, rateLimitClientId));
+      await cleanup(database.db, taskId, reservedAmount);
     }
     await database.close();
   }
 }
 
-async function signedRequest(input: {
+async function tokenRequest(input: {
   app: ReturnType<typeof createApp>;
-  secret: Buffer;
-  clientId: string;
+  accessToken: string;
   method: 'GET' | 'POST';
   path: string;
   rawBody: Buffer;
   idempotencyKey?: string;
-  nonce?: string;
-  timestamp?: string;
-  nonces: string[];
 }) {
-  const timestamp = input.timestamp ?? String(Date.now());
-  const nonce = input.nonce ?? randomUUID();
-  input.nonces.push(nonce);
   const url = `${baseUrl}${input.path}`;
-  const signature = signRequest(
-    {
-      method: input.method,
-      url,
-      timestamp,
-      nonce,
-      rawBody: input.rawBody,
-    },
-    input.secret,
-  );
   return input.app.request(url, {
     method: input.method,
     headers: {
       'content-type': 'application/json',
-      'x-client-id': input.clientId,
-      'x-timestamp': timestamp,
-      'x-nonce': nonce,
-      'x-signature': signature,
+      'x-access-token': input.accessToken,
       ...(input.idempotencyKey
         ? { 'idempotency-key': input.idempotencyKey }
         : {}),
@@ -492,7 +366,6 @@ async function cleanup(
   db: ReturnType<typeof createDatabase>['db'],
   taskId: string,
   reservedAmount: string,
-  nonces: string[],
 ) {
   await db.transaction(async (tx) => {
     const [task] = await tx
@@ -522,23 +395,6 @@ async function cleanup(
           updatedAt: new Date(),
         })
         .where(eq(studioAccounts.studioId, task.studioId));
-    }
-    if (nonces.length) {
-      const [client] = await tx
-        .select({ id: integrationClients.id })
-        .from(integrationClients)
-        .where(eq(integrationClients.clientId, 'erp-local-01'))
-        .limit(1);
-      if (client) {
-        await tx
-          .delete(apiRequestNonces)
-          .where(
-            and(
-              eq(apiRequestNonces.integrationClientId, client.id),
-              inArray(apiRequestNonces.nonce, Array.from(new Set(nonces))),
-            ),
-          );
-      }
     }
   });
 }

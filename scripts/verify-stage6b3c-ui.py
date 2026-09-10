@@ -3,16 +3,16 @@ import json
 import re
 
 from playwright.sync_api import expect, sync_playwright
+from ui_auth import open_authenticated
 
 
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
-APP_URL = 'http://localhost:4173/'
 SCREENSHOT = Path('/tmp/outbound-platform-stage6b3c-callback-preview.png')
 MOBILE_SCREENSHOT = Path('/tmp/outbound-platform-stage6b3c-callback-preview-mobile.png')
 
 
 def open_preview(page) -> None:
-    page.goto(APP_URL, wait_until='networkidle')
+    open_authenticated(page)
     page.get_by_role('button', name=re.compile(r'^回调测试')).click()
     expect(page.locator('h2').filter(has_text='回调报文预览')).to_be_visible()
 
