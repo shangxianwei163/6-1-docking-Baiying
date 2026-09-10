@@ -30,6 +30,8 @@ yarn-error.log*
 .env*
 !.env.example
 !.env.postgres.example
+!.env.baota.example
+.env.baota.local
 
 # deployment and generated files
 .vercel
