@@ -162,6 +162,13 @@
       "when": 1789020000000,
       "tag": "0022_simple_access_token_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1789023600000,
+      "tag": "0023_seed_missing_integration_clients",
+      "breakpoints": true
     }
   ]
 }
