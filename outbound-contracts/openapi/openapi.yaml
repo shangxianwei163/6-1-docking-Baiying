@@ -381,7 +381,23 @@ paths:
         '401': { $ref: '#/components/responses/ExternalError' }
         '403': { $ref: '#/components/responses/ExternalError' }
         '404': { $ref: '#/components/responses/ExternalError' }
-        '409': { $ref: '#/components/responses/ExternalError' }
+        '409':
+          description: 幂等键冲突，或影楼可用余额不足；余额不足时返回公开充值二维码链接
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExternalErrorEnvelope' }
+              examples:
+                insufficientBalance:
+                  value:
+                    code: INSUFFICIENT_BALANCE
+                    message: 影楼可用余额不足
+                    requestId: 9bba018d-36b2-478d-af0a-af3f7d573937
+                    recharge_qr_code_url: https://scheduling.paiyide.cc/recharge/ums-recharge-qr-code.png
+                    details:
+                      availableBalance: '1.000000'
+                      reservedAmount: '9.600000'
         '413': { $ref: '#/components/responses/ExternalError' }
         '422': { $ref: '#/components/responses/ExternalError' }
         '503': { $ref: '#/components/responses/ExternalError' }
@@ -638,6 +654,10 @@ components:
             - SERVICE_TEMPORARILY_UNAVAILABLE
         message: { type: string, minLength: 1, maxLength: 1000 }
         requestId: { type: string, minLength: 1, maxLength: 128 }
+        recharge_qr_code_url:
+          type: string
+          format: uri
+          description: 新增外呼批次因可用余额不足被拒绝时返回的公开充值二维码链接。
         details: { type: object, additionalProperties: true }
     SourceSystem:
       type: string

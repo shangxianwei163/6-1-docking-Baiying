@@ -159,6 +159,21 @@ HTTP 状态码：`202 Accepted`
 
 `202` 只表示平台已经完整受理，不表示百应已经拨号。`task_count` 可能为 1，也可能大于 1。
 
+影楼可用余额不足时返回 `409 Conflict`，ERP/CRM 可以直接展示 `recharge_qr_code_url` 指向的图片供用户扫码充值：
+
+```json
+{
+  "code": "INSUFFICIENT_BALANCE",
+  "message": "影楼可用余额不足",
+  "requestId": "9bba018d-36b2-478d-af0a-af3f7d573937",
+  "recharge_qr_code_url": "https://scheduling.paiyide.cc/recharge/ums-recharge-qr-code.png",
+  "details": {
+    "availableBalance": "1.000000",
+    "reservedAmount": "9.600000"
+  }
+}
+```
+
 ### 4.4 GUID 与幂等规则
 
 | 场景                 | 调用要求                                                                              | 平台行为                        |
@@ -335,7 +350,7 @@ LOWERCASE_HEX_SHA256(RAW_BODY_BYTES)
 | 401  | `AUTHENTICATION_FAILED`                                            | `X-Access-Token` 缺失或无效                              |
 | 403  | `AUTHENTICATION_FAILED`                                            | 来源与请求 Token 不一致，或当前 Token 无权访问影楼       |
 | 404  | `STUDIO_NOT_FOUND` / `TASK_NOT_FOUND`                              | 影楼或批次不存在                                         |
-| 409  | `IDEMPOTENCY_CONFLICT` / `INSUFFICIENT_BALANCE`                    | 幂等冲突或可用余额不足                                   |
+| 409  | `IDEMPOTENCY_CONFLICT` / `INSUFFICIENT_BALANCE`                    | 幂等冲突或可用余额不足；余额不足时携带充值二维码图片链接 |
 | 413  | `INVALID_REQUEST`                                                  | 请求体超过 25 MiB                                        |
 | 422  | `GUID_DUPLICATED` / `PHONE_DUPLICATED` / `DATA_CATEGORY_NOT_FOUND` | 批次内 GUID 或手机号重复，或分类、话术、线路、映射未通过 |
 | 503  | `SERVICE_TEMPORARILY_UNAVAILABLE`                                  | 平台或依赖暂时不可用，使用原幂等键重试                   |

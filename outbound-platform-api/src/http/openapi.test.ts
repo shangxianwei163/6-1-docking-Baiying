@@ -271,6 +271,37 @@ describe('external outbound task HTTP API', () => {
     });
   });
 
+  it('returns the recharge QR code URL when a v2 batch is rejected for insufficient balance', async () => {
+    const { app, acceptV2 } = setup();
+    acceptV2.mockRejectedValueOnce(
+      new ExternalApiFailure('INSUFFICIENT_BALANCE', '影楼可用余额不足', 409, {
+        availableBalance: '1.000000',
+        reservedAmount: '9.600000',
+      }),
+    );
+    const response = await app.request('/openapi/v2/outbound/tasks', {
+      method: 'POST',
+      headers: {
+        'x-access-token': 'erp-local-access-token',
+        'idempotency-key': 'idempotency-v2-balance-001',
+      },
+      body: JSON.stringify(validV2Request),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      code: 'INSUFFICIENT_BALANCE',
+      message: '影楼可用余额不足',
+      requestId: 'request-001',
+      recharge_qr_code_url:
+        'https://scheduling.paiyide.cc/recharge/ums-recharge-qr-code.png',
+      details: {
+        availableBalance: '1.000000',
+        reservedAmount: '9.600000',
+      },
+    });
+  });
+
   it('does not leak unexpected failures or switch to the admin error envelope', async () => {
     const { app, accept } = setup();
     accept.mockRejectedValueOnce(new Error('database connection details'));

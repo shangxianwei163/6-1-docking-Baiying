@@ -1,5 +1,8 @@
 import type { ExternalApiErrorCode } from '@outbound/contracts';
 
+export const RECHARGE_QR_CODE_URL =
+  'https://scheduling.paiyide.cc/recharge/ums-recharge-qr-code.png';
+
 export type ExternalHttpStatus =
   | 400
   | 401

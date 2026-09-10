@@ -1,0 +1,10 @@
+{
+  "code": "INSUFFICIENT_BALANCE",
+  "message": "影楼可用余额不足",
+  "requestId": "9bba018d-36b2-478d-af0a-af3f7d573937",
+  "recharge_qr_code_url": "https://scheduling.paiyide.cc/recharge/ums-recharge-qr-code.png",
+  "details": {
+    "availableBalance": "1.000000",
+    "reservedAmount": "9.600000"
+  }
+}

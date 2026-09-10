@@ -22,6 +22,7 @@ type ApiDoc = {
   request?: string;
   response: string;
   responseLead?: string;
+  errorResponse?: string;
   rules: Rule[];
   errors?: Row[];
   sourceUrl?: string;
@@ -193,6 +194,16 @@ const createBatchResponse = `{
     "status_url": "/openapi/v2/outbound/batches/4f4f0d65-8d01-48c9-b87f-71569344cb63"
   }
 }`;
+const insufficientBalanceResponse = `{
+  "code": "INSUFFICIENT_BALANCE",
+  "message": "影楼可用余额不足",
+  "requestId": "9bba018d-36b2-478d-af0a-af3f7d573937",
+  "recharge_qr_code_url": "https://scheduling.paiyide.cc/recharge/ums-recharge-qr-code.png",
+  "details": {
+    "availableBalance": "1.000000",
+    "reservedAmount": "9.600000"
+  }
+}`;
 const batchDetailResponse = `{
   "code": "OK",
   "message": "success",
@@ -341,6 +352,7 @@ const apiDocs: ApiDoc[] = [
     ],
     request: createBatchRequest,
     response: createBatchResponse,
+    errorResponse: insufficientBalanceResponse,
     responseLead:
       'HTTP 202 表示整批已原子受理，不表示百应已经开始呼叫；batch_id 由平台生成。',
     rules: [
@@ -360,6 +372,10 @@ const apiDocs: ApiDoc[] = [
       [
         '全批屏障',
         '所有子任务全部创建并导入成功后才统一启动；任一子任务失败时不会放行剩余任务。',
+      ],
+      [
+        '余额不足充值',
+        '可用余额不足时返回 HTTP 409 和 INSUFFICIENT_BALANCE；recharge_qr_code_url 是可直接展示给用户扫码充值的公开图片地址。',
       ],
     ],
     errors: commonErrors,
@@ -1215,6 +1231,20 @@ export function ApiDocumentation({
                 HTTP 状态码表示传输结果，业务原因以响应体 code 和 message 为准。
               </p>
               <ParameterTable rows={active.errors} firstColumn="状态码" />
+            </section>
+          ) : null}
+          {active.errorResponse ? (
+            <section className="api-reference-section">
+              <div className="api-section-title">
+                <h3>余额不足响应</h3>
+                <CopyButton value={active.errorResponse} />
+              </div>
+              <p className="api-section-lead">
+                ERP/CRM 可直接展示 recharge_qr_code_url 指向的图片供用户扫码充值。
+              </p>
+              <pre className="api-code-block">
+                <code>{active.errorResponse}</code>
+              </pre>
             </section>
           ) : null}
           <section className="api-reference-section">

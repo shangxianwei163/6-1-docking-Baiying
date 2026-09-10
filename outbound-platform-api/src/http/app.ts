@@ -72,7 +72,7 @@ import {
 } from '../script/repository.js';
 import type { CategorySyncService } from '../source-category/sync-service.js';
 import type { ExternalRequestAuthenticator } from '../openapi/authenticator.js';
-import { ExternalApiFailure } from '../openapi/errors.js';
+import { ExternalApiFailure, RECHARGE_QR_CODE_URL } from '../openapi/errors.js';
 import { rawBodySha256, stableJsonSha256 } from '../openapi/request-hash.js';
 import type { OutboundTaskService } from '../outbound-task/service.js';
 import {
@@ -1594,11 +1594,20 @@ export function createApp(dependencies: AppDependencies) {
           error.status,
         );
       }
+      const isCreateBatchBalanceShortfall =
+        context.req.method === 'POST' &&
+        context.req.path === '/openapi/v2/outbound/tasks' &&
+        error.code === 'INSUFFICIENT_BALANCE' &&
+        error.details?.availableBalance !== undefined &&
+        error.details?.reservedAmount !== undefined;
       return context.json(
         {
           code: error.code,
           message: error.message,
           requestId,
+          ...(isCreateBatchBalanceShortfall
+            ? { recharge_qr_code_url: RECHARGE_QR_CODE_URL }
+            : {}),
           ...(error.details ? { details: error.details } : {}),
         },
         error.status,

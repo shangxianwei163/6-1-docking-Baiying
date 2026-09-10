@@ -54,6 +54,7 @@ export const externalApiErrorSchema = z.object({
   code: externalApiErrorCodeSchema,
   message: z.string().min(1).max(1000),
   requestId: z.string().min(1).max(128),
+  recharge_qr_code_url: z.url().optional(),
   details: z.record(z.string(), z.unknown()).optional(),
 });
 
