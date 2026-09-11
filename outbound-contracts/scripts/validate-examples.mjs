@@ -7,7 +7,7 @@ import {
   createOutboundTaskRequestSchema,
   externalApiErrorSchema,
   outboundCallResultCallbackEnvelopeV2Schema,
-  recordingAvailableBatchEventSchema,
+  outboundRecordingCallbackEnvelopeV2Schema,
   taskAcceptedEnvelopeSchema,
   taskCompletedEventSchema,
   taskStartedEventSchema,
@@ -33,7 +33,10 @@ const validExamples = [
   ['task-started.event.json', taskStartedEventSchema],
   ['task-start-failed.event.json', taskStartFailedEventSchema],
   ['call-result-batch.event.json', callResultBatchEventSchema],
-  ['recording-available-batch.event.json', recordingAvailableBatchEventSchema],
+  [
+    'recording-available-batch.event.json',
+    outboundRecordingCallbackEnvelopeV2Schema,
+  ],
   ['task-completed.event.json', taskCompletedEventSchema],
   ['callback-ack.response.json', callbackAckSchema],
 ];

@@ -354,37 +354,31 @@ Content-Type: application/json
 
 ## 7. 录音回传
 
-有录音时，平台归档完成后向影楼当前来源配置的录音地址发送 HTTP POST。没有实际拨号或百应没有生成录音时，不发送录音回调。
+有录音时，平台归档完成后向影楼当前来源配置的录音地址发送 HTTP POST。没有实际拨号或百应没有生成录音时，不发送录音回调。请求头 `X-Contract-Version` 固定为 `2.1`，Body 顶层只包含 `Token` 和 `Data`；`Token` 必须使用固定字面值 `^******^`，不可转义、脱敏、派生或替换。
 
 ```json
 {
-  "schemaVersion": "1.0",
-  "eventId": "33333333-3333-4333-8333-333333333333",
-  "eventType": "OUTBOUND_RECORDING_AVAILABLE_BATCH",
-  "occurredAt": "2026-09-09T10:31:00+08:00",
-  "sourceSystem": "ERP",
-  "mcCode": "5903679116",
-  "taskNo": "PT-20260909-00025",
-  "baiyingCallJobId": "279131720",
-  "batchNo": 1,
-  "isLastBatch": true,
-  "recordings": [
-    {
-      "recordingId": "44444444-4444-4444-8444-444444444444",
-      "platformCallId": "55555555-5555-4555-8555-555555555555",
-      "baiyingCallInstanceId": "3891451944180",
-      "kind": "FULL",
-      "contentType": "audio/mpeg",
-      "sizeBytes": 384210,
-      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "downloadUrl": "https://scheduling.paiyide.cc/api/v1/recordings/44444444-4444-4444-8444-444444444444/content?exp=1788662760&aud=...&sig=...",
-      "expiresAt": "2026-09-09T10:46:00+08:00"
-    }
-  ]
+  "Token": "^******^",
+  "Data": {
+    "event_id": "33333333-3333-4333-8333-333333333333",
+    "event_type": "OUTBOUND_RECORDING_AVAILABLE_BATCH",
+    "occurred_at": "2026-09-09T10:31:00+08:00",
+    "company_code": "5903679116",
+    "task_no": "PT-20260909-00025",
+    "recordings": [
+      {
+        "guid": "CRM-CUSTOMER-10001",
+        "phone_masked": "138****8888",
+        "recording_id": "44444444-4444-4444-8444-444444444444",
+        "recording_url": "https://scheduling.paiyide.cc/api/v1/recordings/44444444-4444-4444-8444-444444444444/content?exp=1788662760&aud=...&sig=...",
+        "expires_at": "2026-09-09T10:46:00+08:00"
+      }
+    ]
+  }
 }
 ```
 
-接收方应在 `expiresAt` 前下载录音并使用 `sha256` 校验文件完整性。录音下载地址不得写入普通日志、监控告警或工单。
+`guid`、`phone_masked` 和 `recording_url` 均从同一条平台通话记录生成，不使用百应回调中的手机号重新猜测客户关系。ERP/CRM 应以 `guid` 为主键关联客户，以 `phone_masked` 做人工核对，并在 `expires_at` 前下载录音；地址过期后使用 `recording_id` 调用重新签发接口。录音下载地址不得写入普通日志、监控告警或工单。
 
 ## 8. 回调验签与 ACK
 

@@ -3,9 +3,16 @@ import {
   recordingAvailableBatchEventSchema,
   type RecordingAvailableBatchEvent,
 } from '@outbound/contracts';
+import { maskPhoneForCallback } from '../callback/schema.js';
 import type { Database } from '../db/client.js';
-import { callInstances, platformTasks, recordingAssets } from '../db/schema.js';
+import {
+  callInstances,
+  platformTasks,
+  recordingAssets,
+  taskCallItems,
+} from '../db/schema.js';
 import type { RecordingAccess } from '../recording/access-service.js';
+import type { DataProtector } from '../security/data-protector.js';
 import { DeliveryMaterializationError } from './repository.js';
 import type { RecordingArchivedForDelivery } from './internal-event.js';
 
@@ -19,6 +26,7 @@ export class PostgresRecordingDeliveryEventBuilder implements RecordingDeliveryE
   constructor(
     private readonly db: Database,
     private readonly recordingAccess: RecordingAccess,
+    private readonly protector: Pick<DataProtector, 'decryptUtf8'>,
   ) {}
 
   async build(
@@ -34,6 +42,8 @@ export class PostgresRecordingDeliveryEventBuilder implements RecordingDeliveryE
         sha256: recordingAssets.sha256,
         platformCallId: callInstances.id,
         baiyingCallInstanceId: callInstances.callInstanceId,
+        guid: taskCallItems.externalCustomerId,
+        phoneCiphertext: taskCallItems.phoneCiphertext,
         taskId: platformTasks.id,
         taskNo: platformTasks.taskNo,
         sourceSystem: platformTasks.sourceSystem,
@@ -45,6 +55,10 @@ export class PostgresRecordingDeliveryEventBuilder implements RecordingDeliveryE
       .innerJoin(
         callInstances,
         eq(callInstances.id, recordingAssets.callInstanceId),
+      )
+      .innerJoin(
+        taskCallItems,
+        eq(taskCallItems.id, callInstances.taskCallItemId),
       )
       .innerJoin(platformTasks, eq(platformTasks.id, callInstances.taskId))
       .where(
@@ -75,8 +89,11 @@ export class PostgresRecordingDeliveryEventBuilder implements RecordingDeliveryE
       },
       `delivery-event:${descriptor.eventId}`,
     );
+    const phoneMasked = maskPhoneForCallback(
+      this.protector.decryptUtf8(row.phoneCiphertext),
+    );
     return recordingAvailableBatchEventSchema.parse({
-      schemaVersion: '1.0',
+      schemaVersion: '2.1',
       eventId: descriptor.eventId,
       eventType: 'OUTBOUND_RECORDING_AVAILABLE_BATCH',
       occurredAt: descriptor.occurredAt,
@@ -91,6 +108,8 @@ export class PostgresRecordingDeliveryEventBuilder implements RecordingDeliveryE
           recordingId: row.recordingId,
           platformCallId: row.platformCallId,
           baiyingCallInstanceId: row.baiyingCallInstanceId,
+          guid: row.guid,
+          phoneMasked,
           kind: row.kind,
           contentType: row.contentType,
           sizeBytes: Number(row.sizeBytes),

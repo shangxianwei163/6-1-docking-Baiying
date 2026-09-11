@@ -33,12 +33,15 @@ import type { DataProtector } from '../security/data-protector.js';
 import { buildCallItemCorrelationToken } from '../security/correlation-token.js';
 import {
   calculateBillingMinutes,
+  maskPhoneForCallback,
   normalizePhone,
   type BaiyingCallResult,
   type BaiyingJobResult,
   type NormalizedCallStatus,
   type ParsedBaiyingCallback,
 } from './schema.js';
+
+export { maskPhoneForCallback };
 
 type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 
@@ -760,12 +763,6 @@ function safeTokenEqual(actual: string, expected: string): boolean {
     Buffer.from(actual, 'hex'),
     Buffer.from(expected, 'hex'),
   );
-}
-
-export function maskPhoneForCallback(phone: string): string {
-  const normalized = normalizePhone(phone);
-  if (normalized.length < 7) return '*'.repeat(normalized.length);
-  return `${normalized.slice(0, 3)}${'*'.repeat(normalized.length - 7)}${normalized.slice(-4)}`;
 }
 
 function failedCustomerResult(summary: string) {

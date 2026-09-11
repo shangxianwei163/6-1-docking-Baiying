@@ -1,6 +1,6 @@
 import {
   outboundCallbackEventSchema,
-  outboundCallResultCallbackEnvelopeV2Schema,
+  outboundExternalCallbackEnvelopeV2Schema,
   outboundCallResultLegacyV2Schema,
 } from '@outbound/contracts';
 import { parseCallbackTargetUrl } from './callback-url.js';
@@ -98,13 +98,16 @@ export class LocalNoNetworkDeliveryTransport implements DeliveryTransport {
     const contractVersion = findHeader(request.headers, 'X-Contract-Version');
     let eventType: string;
     if (contractVersion === '2.1') {
-      const result = outboundCallResultCallbackEnvelopeV2Schema.parse(
+      const callback = outboundExternalCallbackEnvelopeV2Schema.parse(
         JSON.parse(raw),
       );
-      if (eventId !== result.Data.event_id) {
+      if (eventId !== callback.Data.event_id) {
         throw new Error('本地接收器拒绝 Header 与 Body 不一致的 eventId');
       }
-      eventType = 'OUTBOUND_CALL_RESULT_V2';
+      eventType =
+        callback.Data.event_type === 'OUTBOUND_CALL_RESULT'
+          ? 'OUTBOUND_CALL_RESULT_V2'
+          : 'OUTBOUND_RECORDING_AVAILABLE_BATCH';
     } else if (contractVersion === '2.0') {
       outboundCallResultLegacyV2Schema.parse(JSON.parse(raw));
       eventType = 'OUTBOUND_CALL_RESULT_V2';

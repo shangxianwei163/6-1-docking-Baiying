@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+export const outboundCallbackToken = '^******^' as const;
+
 export const sourceSystemSchema = z.enum(['ERP', 'CRM']);
 export type SourceSystem = z.infer<typeof sourceSystemSchema>;
 

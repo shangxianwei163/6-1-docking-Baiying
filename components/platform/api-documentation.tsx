@@ -248,7 +248,7 @@ const callbackHeaders: Row[] = [
     'X-Contract-Version',
     'Header · string',
     '是',
-    '业务结果回调为 2.1；录音回调按当前录音事件版本发送',
+    '业务结果与录音回调均固定为 2.1',
   ],
 ];
 const resultEvent = `{
@@ -309,27 +309,21 @@ const resultEvent = `{
   }
 }`;
 const recordingEvent = `{
-  "schemaVersion": "1.0",
-  "eventId": "11111111-1111-4111-8111-111111111114",
-  "eventType": "OUTBOUND_RECORDING_AVAILABLE_BATCH",
-  "occurredAt": "2026-09-07T10:31:00+08:00",
-  "sourceSystem": "ERP",
-  "mcCode": "MC-ZTY-001",
-  "taskNo": "PT-20260907-00023",
-  "baiyingCallJobId": "241491320",
-  "batchNo": 1,
-  "isLastBatch": true,
-  "recordings": [{
-    "recordingId": "33333333-3333-4333-8333-333333333333",
-    "platformCallId": "55555555-5555-4555-8555-555555555555",
-    "baiyingCallInstanceId": "3891451944180",
-    "kind": "FULL",
-    "contentType": "audio/mpeg",
-    "sizeBytes": 384210,
-    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "downloadUrl": "https://scheduling.paiyide.cc/api/v1/recordings/33333333-3333-4333-8333-333333333333/content?exp=1788662760&aud=...&sig=...",
-    "expiresAt": "2026-09-07T10:46:00+08:00"
-  }]
+  "Token": "^******^",
+  "Data": {
+    "event_id": "11111111-1111-4111-8111-111111111114",
+    "event_type": "OUTBOUND_RECORDING_AVAILABLE_BATCH",
+    "occurred_at": "2026-09-07T10:31:00+08:00",
+    "company_code": "5903679116",
+    "task_no": "PT-20260907-00023",
+    "recordings": [{
+      "guid": "CRM-CUSTOMER-10001",
+      "phone_masked": "138****8888",
+      "recording_id": "33333333-3333-4333-8333-333333333333",
+      "recording_url": "https://scheduling.paiyide.cc/api/v1/recordings/33333333-3333-4333-8333-333333333333/content?exp=1788662760&aud=...&sig=...",
+      "expires_at": "2026-09-07T10:46:00+08:00"
+    }]
+  }
 }`;
 
 const apiDocs: ApiDoc[] = [
@@ -614,58 +608,79 @@ const apiDocs: ApiDoc[] = [
     title: '录音可下载回传',
     path: '{studio.recordingCallbackUrl}',
     summary:
-      '百应录音由平台归档后，按最多 100 条一批发送短期下载地址和完整性校验信息。',
+      '平台归档百应录音后，只回传客户 GUID、脱敏手机号和短期录音下载信息。',
     status: '外部接收方实现',
     caller: '百应外呼调度台',
     receiver: 'ERP / CRM',
     contentType: 'application/json;charset=utf-8',
-    auth: 'X-Signature 回调签名 + X-Platform-Event-Id 幂等',
-    contractVersion: '1.0',
+    auth: 'Body Token + X-Signature 回调签名 + X-Platform-Event-Id 幂等',
+    contractVersion: '2.1',
     host: 'configured',
     params: [
       ...callbackHeaders,
       [
-        'eventType',
+        'Token',
+        'Body · string',
+        '是',
+        '固定字面值 ^******^，不可转义、脱敏或替换',
+      ],
+      ['Data.event_id', 'Body · uuid', '是', '与请求头事件 ID 一致'],
+      [
+        'Data.event_type',
         'Body · string',
         '是',
         '固定为 OUTBOUND_RECORDING_AVAILABLE_BATCH',
       ],
-      ['batchNo', 'Body · integer', '是', '批次号，从 1 开始'],
-      ['isLastBatch', 'Body · boolean', '是', '是否最后一批'],
-      ['recordings', 'Body · array', '是', '1～100 条录音'],
-      ['recordings[].platformCallId', 'Body · uuid', '是', '平台通话 ID'],
+      ['Data.occurred_at', 'Body · datetime', '是', '平台归档录音的时间'],
+      ['Data.company_code', 'Body · string', '是', '影楼 MC code'],
+      ['Data.task_no', 'Body · string', '是', '平台任务号'],
+      ['Data.recordings', 'Body · array', '是', '本次可下载的录音'],
       [
-        'recordings[].baiyingCallInstanceId',
+        'Data.recordings[].guid',
         'Body · string',
         '是',
-        '百应通话 ID',
+        'ERP/CRM 发起外呼时提交的客户 GUID',
       ],
-      ['recordings[].kind', 'Body · enum', '是', 'FULL 或 USER_ONLY'],
       [
-        'recordings[].sha256',
+        'Data.recordings[].phone_masked',
         'Body · string',
         '是',
-        '文件 SHA-256 小写十六进制值',
+        '同一客户原始记录生成的脱敏手机号',
       ],
       [
-        'recordings[].downloadUrl',
+        'Data.recordings[].recording_id',
+        'Body · uuid',
+        '是',
+        '平台录音 ID，地址过期后用于重新签发',
+      ],
+      [
+        'Data.recordings[].recording_url',
         'Body · https URL',
         '是',
         '平台签发的短期录音下载地址',
       ],
-      ['recordings[].expiresAt', 'Body · date-time', '是', '下载地址失效时间'],
+      [
+        'Data.recordings[].expires_at',
+        'Body · date-time',
+        '是',
+        '下载地址失效时间',
+      ],
     ],
     request: recordingEvent,
     response: callbackAck,
-    responseLead: '接收方应在 expiresAt 前下载，并以 sha256 校验文件完整性。',
+    responseLead: '接收方应以 guid 关联客户，并在 expires_at 前下载录音。',
     rules: [
+      [
+        '客户关联',
+        'guid、phone_masked 与 recording_url 来自同一条平台通话记录；以 guid 为主键，手机号用于人工核对。',
+      ],
       [
         '验签与幂等',
         '与业务结果回传使用相同算法；以 X-Platform-Event-Id 唯一落库，重复事件返回成功。',
       ],
       [
         '录音安全',
-        'downloadUrl 是平台签发的短期地址，不是百应临时地址；禁止写入日志、监控或工单。',
+        'recording_url 是平台签发的短期地址，不是百应临时地址；禁止写入日志、监控或工单。',
       ],
       ['重新签发', 'URL 过期后调用平台重新签发接口，不要继续重试旧 URL。'],
       ['配置位置', '在影楼新增/编辑弹窗分别配置 ERP/CRM 录音回传地址。'],

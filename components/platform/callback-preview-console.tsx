@@ -36,8 +36,8 @@ const eventOptions: Array<{
   },
   {
     value: 'OUTBOUND_RECORDING_AVAILABLE_BATCH',
-    label: '录音可用批次',
-    summary: '模拟 OSS 短链元数据，域名固定为 example.invalid',
+    label: '录音可下载回传',
+    summary: '模拟固定 Token、客户关联信息和短期下载地址',
   },
 ];
 

@@ -9,6 +9,7 @@ import { RecordingAccessService } from '../recording/access-service.js';
 import { LocalRecordingObjectStore } from '../recording/local-object-store.js';
 import { PostgresRecordingAccessRepository } from '../recording/postgres-access-repository.js';
 import { LocalRecordingUrlSigner } from '../recording/url-signer.js';
+import { LocalDataProtector } from '../security/data-protector.js';
 import { LocalDevelopmentSecretProvider } from '../security/secret-provider.js';
 import { DeliveryOutboxProjector } from './outbox-projector.js';
 import { PostgresDeliveryRepository } from './postgres-repository.js';
@@ -27,6 +28,10 @@ const secrets = new LocalDevelopmentSecretProvider(
   config.WORKER_SHARED_SECRET,
   config.NODE_ENV,
 );
+const protector = new LocalDataProtector(
+  config.WORKER_SHARED_SECRET,
+  config.NODE_ENV,
+);
 const access = new RecordingAccessService(
   new PostgresRecordingAccessRepository(database.db),
   new LocalRecordingObjectStore(resolve(config.RECORDING_LOCAL_ROOT)),
@@ -42,7 +47,7 @@ const workerSuffix = `${hostname()}-${process.pid}-${randomUUID().slice(0, 8)}`;
 const projector = new DeliveryOutboxProjector(
   new PostgresOutboxRepository(database.db),
   deliveryRepository,
-  new PostgresRecordingDeliveryEventBuilder(database.db, access),
+  new PostgresRecordingDeliveryEventBuilder(database.db, access, protector),
   {
     queueName: config.CALLBACK_DELIVERY_QUEUE_NAME,
     workerId: `delivery-projector-${workerSuffix}`.slice(0, 128),

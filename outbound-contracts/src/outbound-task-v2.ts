@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { outboundCallbackToken } from './envelope.js';
 
 export const outboundSourceCodeSchema = z.union([z.literal(0), z.literal(1)]);
 
@@ -275,7 +276,7 @@ export const outboundCallResultV2Schema = z
   })
   .strict();
 
-export const outboundCallResultCallbackTokenV2 = '^******^' as const;
+export const outboundCallResultCallbackTokenV2 = outboundCallbackToken;
 
 export const outboundCallResultCallbackEnvelopeV2Schema = z
   .object({

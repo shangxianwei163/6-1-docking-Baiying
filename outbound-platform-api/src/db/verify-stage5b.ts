@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
   outboundCallbackEventSchema,
+  outboundRecordingCallbackEnvelopeV2Schema,
   type CreateOutboundTaskRequest,
 } from '@outbound/contracts';
 import { LocalBaiyingCallJobClient } from '../baiying/local-call-job-client.js';
@@ -233,7 +234,11 @@ async function main() {
     const projector = new DeliveryOutboxProjector(
       outbox,
       deliveryRepository,
-      new PostgresRecordingDeliveryEventBuilder(database.db, recordingAccess),
+      new PostgresRecordingDeliveryEventBuilder(
+        database.db,
+        recordingAccess,
+        protector,
+      ),
       {
         queueName: deliveryQueue,
         workerId: `stage5b-projector-${suffix.slice(0, 8)}`,
@@ -381,6 +386,17 @@ async function main() {
     assert.equal(recordingReceipts[0]!.body, recordingReceipts[1]!.body);
     assert.equal(callReceipts[1]!.duplicate, true);
     assert.equal(recordingReceipts[1]!.duplicate, true);
+    const deliveredRecording = outboundRecordingCallbackEnvelopeV2Schema.parse(
+      JSON.parse(recordingReceipts[0]!.body),
+    );
+    assert.equal(deliveredRecording.Token, '^******^');
+    assert.deepEqual(deliveredRecording.Data.recordings[0], {
+      guid: `stage5b-customer-${suffix}`,
+      phone_masked: '139****0501',
+      recording_id: recording.id,
+      recording_url: deliveredRecording.Data.recordings[0]!.recording_url,
+      expires_at: deliveredRecording.Data.recordings[0]!.expires_at,
+    });
 
     const recordingPayload = outboundCallbackEventSchema.parse(
       recordingEvent.payload,
@@ -489,7 +505,7 @@ async function main() {
             '任意 2xx 成功，503 按计划重试，400 直接进入死信',
             '重试与人工重放沿用原 eventId 和完全相同的 Body',
             '人工重放保留累计 attempt 编号，并重新开始独立重试周期',
-            '录音事件只含平台短期签名 URL，下载可校验大小与 SHA-256',
+            '录音回调使用固定 Token，并从同一客户记录输出 GUID、脱敏手机号和平台短期 URL',
             '录音 URL 重签按客户端与幂等键持久化，同键重试返回原响应且跨录音冲突',
             '任务结果/录音投递状态及 discovered/archived/delivered 计数闭环',
           ],

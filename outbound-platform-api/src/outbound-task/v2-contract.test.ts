@@ -5,6 +5,7 @@ import {
   flattenOutboundCustomersV2,
   outboundCallResultCallbackEnvelopeV2Schema,
   outboundCallResultV2Schema,
+  outboundRecordingCallbackEnvelopeV2Schema,
   sourceSystemFromCodeV2,
 } from '@outbound/contracts';
 
@@ -187,6 +188,43 @@ describe('ERP/CRM v2 outbound contract', () => {
           ...result.customer_result,
           result_code: 'NOT_A_REAL_RESULT',
         },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('accepts only the fixed-token minimal recording callback', () => {
+    const data = {
+      event_id: '22222222-2222-4222-8222-222222222223',
+      event_type: 'OUTBOUND_RECORDING_AVAILABLE_BATCH' as const,
+      occurred_at: '2026-09-10T15:31:25+08:00',
+      company_code: '5903679116',
+      task_no: 'PT-20260910-00001',
+      recordings: [
+        {
+          guid: 'CRM-CUSTOMER-10001',
+          phone_masked: '138****8888',
+          recording_id: '33333333-3333-4333-8333-333333333333',
+          recording_url:
+            'https://scheduling.paiyide.cc/api/v1/recordings/33333333-3333-4333-8333-333333333333/content?exp=1788662760&aud=test&sig=test',
+          expires_at: '2026-09-10T15:46:25+08:00',
+        },
+      ],
+    };
+
+    expect(
+      outboundRecordingCallbackEnvelopeV2Schema.parse({
+        Token: '^******^',
+        Data: data,
+      }),
+    ).toEqual({ Token: '^******^', Data: data });
+    expect(
+      outboundRecordingCallbackEnvelopeV2Schema.safeParse({ Data: data })
+        .success,
+    ).toBe(false);
+    expect(
+      outboundRecordingCallbackEnvelopeV2Schema.safeParse({
+        Token: 'another-token',
+        Data: data,
       }).success,
     ).toBe(false);
   });

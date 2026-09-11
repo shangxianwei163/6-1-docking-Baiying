@@ -3,6 +3,7 @@ import {
   callbackPreviewSchema,
   recordingAvailableBatchEventSchema,
   taskCompletedEventSchema,
+  toOutboundRecordingCallbackEnvelopeV2,
   type CallbackPreview,
   type CallbackPreviewInput,
 } from '@outbound/contracts';
@@ -34,12 +35,17 @@ export class SafeCallbackPreviewService implements CallbackPreviewService {
       taskNo: `PT-${shanghaiDateStamp(generatedAt)}-90001`,
       baiyingCallJobId: 'SAFE-PREVIEW-JOB-001',
     };
-    const bodyObject = buildSyntheticEvent(
+    const internalEvent = buildSyntheticEvent(
       input,
       common,
       generatedAt,
       this.createId,
     );
+    const bodyObject =
+      internalEvent.eventType === 'OUTBOUND_RECORDING_AVAILABLE_BATCH' &&
+      internalEvent.schemaVersion === '2.1'
+        ? toOutboundRecordingCallbackEnvelopeV2(internalEvent)
+        : internalEvent;
     const body = `${JSON.stringify(bodyObject, null, 2)}\n`;
     const timestamp = String(generatedAt.getTime());
 
@@ -65,6 +71,9 @@ export class SafeCallbackPreviewService implements CallbackPreviewService {
           'X-Timestamp': timestamp,
           'X-Signature': 'SAFE_PREVIEW_UNSIGNED',
           'X-Preview-Mode': 'SAFE_PREVIEW',
+          ...(internalEvent.schemaVersion === '2.1'
+            ? { 'X-Contract-Version': '2.1' }
+            : {}),
         },
         body,
         bodySha256: sha256Hex(Buffer.from(body, 'utf8')),
@@ -112,6 +121,7 @@ function buildSyntheticEvent(
   if (input.eventType === 'OUTBOUND_RECORDING_AVAILABLE_BATCH') {
     return recordingAvailableBatchEventSchema.parse({
       ...common,
+      schemaVersion: '2.1',
       eventType: input.eventType,
       batchNo: 1,
       isLastBatch: true,
@@ -119,6 +129,8 @@ function buildSyntheticEvent(
         recordingId: createId(),
         platformCallId: createId(),
         baiyingCallInstanceId: `SAFE-PREVIEW-CALL-${index + 1}`,
+        guid: `SYNTHETIC-CUSTOMER-${String(index + 1).padStart(3, '0')}`,
+        phoneMasked: `138****${String(index).padStart(4, '0')}`,
         kind: 'FULL' as const,
         contentType: 'audio/mpeg',
         sizeBytes: 384_210 + index,

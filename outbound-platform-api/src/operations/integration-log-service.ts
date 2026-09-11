@@ -4,6 +4,8 @@ import {
   operatorIntegrationLogDetailSchema,
   operatorIntegrationLogPageSchema,
   outboundCallResultCallbackTokenV2,
+  recordingAvailableBatchEventV21Schema,
+  toOutboundRecordingCallbackEnvelopeV2,
   type IntegrationLogDirection,
   type IntegrationLogStatus,
   type IntegrationLogSystem,
@@ -517,6 +519,15 @@ function externalDeliveryBody(
     payload.result
   ) {
     return { Token: outboundCallResultCallbackTokenV2, Data: payload.result };
+  }
+  if (
+    eventType === 'OUTBOUND_RECORDING_AVAILABLE_BATCH' &&
+    payload?.schemaVersion === '2.1'
+  ) {
+    const parsed = recordingAvailableBatchEventV21Schema.safeParse(payload);
+    if (parsed.success) {
+      return toOutboundRecordingCallbackEnvelopeV2(parsed.data);
+    }
   }
   return payload;
 }

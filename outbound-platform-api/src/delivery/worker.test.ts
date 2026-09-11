@@ -252,6 +252,90 @@ describe('CallbackDeliveryWorker', () => {
     });
   });
 
+  it('delivers a minimal token-wrapped v2.1 recording body with the linked customer identity', async () => {
+    const recordingEvent = {
+      schemaVersion: '2.1',
+      eventId: '11111111-1111-4111-8111-111111111115',
+      eventType: 'OUTBOUND_RECORDING_AVAILABLE_BATCH',
+      occurredAt: '2026-09-06T10:36:00+08:00',
+      sourceSystem: 'ERP',
+      mcCode: '5903679116',
+      taskNo: 'PT-20260906-00026',
+      baiyingCallJobId: '241491320',
+      batchNo: 1,
+      isLastBatch: true,
+      recordings: [
+        {
+          recordingId: '33333333-3333-4333-8333-333333333333',
+          platformCallId: '44444444-4444-4444-8444-444444444444',
+          baiyingCallInstanceId: '70258002706',
+          guid: 'CRM-CUSTOMER-10001',
+          phoneMasked: '138****8888',
+          kind: 'FULL',
+          contentType: 'audio/mpeg',
+          sizeBytes: 384_210,
+          sha256: 'a'.repeat(64),
+          downloadUrl:
+            'https://recordings.mock.invalid/api/v1/recordings/33333333-3333-4333-8333-333333333333/content?exp=1788662760&aud=test&sig=test',
+          expiresAt: '2026-09-06T10:51:00+08:00',
+        },
+      ],
+    };
+    const recordingClaimed: ClaimedDeliveryEvent = {
+      ...claimed,
+      eventId: recordingEvent.eventId,
+      eventKey: `OUTBOUND_RECORDING_AVAILABLE_BATCH:${recordingEvent.eventId}`,
+      target: 'RECORDING',
+      eventType: recordingEvent.eventType,
+      targetUrl: 'https://erp.mock.invalid/callbacks/recordings',
+      payload: recordingEvent,
+    };
+    const send = vi.fn<DeliveryTransport['send']>(async (request) => {
+      const rawBody = Buffer.from(request.body).toString('utf8');
+      expect(request.headers['X-Contract-Version']).toBe('2.1');
+      expect(JSON.parse(rawBody)).toEqual({
+        Token: '^******^',
+        Data: {
+          event_id: recordingEvent.eventId,
+          event_type: 'OUTBOUND_RECORDING_AVAILABLE_BATCH',
+          occurred_at: recordingEvent.occurredAt,
+          company_code: recordingEvent.mcCode,
+          task_no: recordingEvent.taskNo,
+          recordings: [
+            {
+              guid: 'CRM-CUSTOMER-10001',
+              phone_masked: '138****8888',
+              recording_id: '33333333-3333-4333-8333-333333333333',
+              recording_url: recordingEvent.recordings[0]!.downloadUrl,
+              expires_at: recordingEvent.recordings[0]!.expiresAt,
+            },
+          ],
+        },
+      });
+      expect(rawBody).not.toContain('baiyingCallInstanceId');
+      expect(rawBody).not.toContain('sha256');
+      expect(
+        verifyCallbackRequestSignature(
+          {
+            url: request.url,
+            timestamp: request.headers['X-Timestamp']!,
+            eventId: request.headers['X-Platform-Event-Id']!,
+            rawBody: request.body,
+          },
+          secret,
+          request.headers['X-Signature']!,
+        ),
+      ).toBe(true);
+      return { status: 200, body: '{"code":200}' };
+    });
+    const worker = workerWith(repository({}, recordingClaimed), { send });
+
+    await expect(worker.runOnce()).resolves.toMatchObject({
+      status: 'SUCCEEDED',
+      eventType: 'OUTBOUND_RECORDING_AVAILABLE_BATCH',
+    });
+  });
+
   it.each([408, 429, 500, 503])(
     'retries documented retryable HTTP status %i',
     async (status) => {

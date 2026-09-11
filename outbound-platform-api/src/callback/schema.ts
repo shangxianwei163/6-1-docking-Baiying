@@ -372,6 +372,12 @@ export function normalizePhone(phone: string): string {
   return compact;
 }
 
+export function maskPhoneForCallback(phone: string): string {
+  const normalized = normalizePhone(phone);
+  if (normalized.length < 7) return '*'.repeat(normalized.length);
+  return `${normalized.slice(0, 3)}${'*'.repeat(normalized.length - 7)}${normalized.slice(-4)}`;
+}
+
 function parseProperties(value: unknown): Record<string, unknown> {
   const direct = asRecord(value);
   if (direct) return direct;

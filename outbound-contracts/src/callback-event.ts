@@ -1,9 +1,16 @@
 import { z } from 'zod';
-import { sourceSystemSchema } from './envelope.js';
+import { outboundCallbackToken, sourceSystemSchema } from './envelope.js';
 import { nonNegativeAmountSchema } from './billing.js';
-import { recordingDeliveryItemSchema } from './recording.js';
+import {
+  outboundRecordingCallbackEnvelopeV2Schema,
+  recordingDeliveryItemSchema,
+  recordingDeliveryItemV21Schema,
+} from './recording.js';
 import { taskFailureSchema } from './outbound-task.js';
-import { outboundCallResultInternalEventV2Schema } from './outbound-task-v2.js';
+import {
+  outboundCallResultCallbackEnvelopeV2Schema,
+  outboundCallResultInternalEventV2Schema,
+} from './outbound-task-v2.js';
 
 const callbackEventBaseShape = {
   schemaVersion: z.literal('1.0'),
@@ -59,7 +66,7 @@ export const callResultBatchEventSchema = z.object({
   calls: z.array(outboundCallResultSchema).min(1).max(200),
 });
 
-export const recordingAvailableBatchEventSchema = z.object({
+export const recordingAvailableBatchLegacyEventSchema = z.object({
   ...callbackEventBaseShape,
   baiyingCallJobId: z.string().min(1).max(64),
   eventType: z.literal('OUTBOUND_RECORDING_AVAILABLE_BATCH'),
@@ -67,6 +74,51 @@ export const recordingAvailableBatchEventSchema = z.object({
   isLastBatch: z.boolean(),
   recordings: z.array(recordingDeliveryItemSchema).min(1).max(100),
 });
+
+export const recordingAvailableBatchEventV21Schema = z.object({
+  ...callbackEventBaseShape,
+  schemaVersion: z.literal('2.1'),
+  baiyingCallJobId: z.string().min(1).max(64),
+  eventType: z.literal('OUTBOUND_RECORDING_AVAILABLE_BATCH'),
+  batchNo: z.number().int().positive(),
+  isLastBatch: z.boolean(),
+  recordings: z.array(recordingDeliveryItemV21Schema).min(1).max(100),
+});
+
+export const recordingAvailableBatchEventSchema = z.discriminatedUnion(
+  'schemaVersion',
+  [
+    recordingAvailableBatchLegacyEventSchema,
+    recordingAvailableBatchEventV21Schema,
+  ],
+);
+
+export const outboundExternalCallbackEnvelopeV2Schema = z.union([
+  outboundCallResultCallbackEnvelopeV2Schema,
+  outboundRecordingCallbackEnvelopeV2Schema,
+]);
+
+export function toOutboundRecordingCallbackEnvelopeV2(
+  event: RecordingAvailableBatchEventV21,
+) {
+  return outboundRecordingCallbackEnvelopeV2Schema.parse({
+    Token: outboundCallbackToken,
+    Data: {
+      event_id: event.eventId,
+      event_type: 'OUTBOUND_RECORDING_AVAILABLE_BATCH',
+      occurred_at: event.occurredAt,
+      company_code: event.mcCode,
+      task_no: event.taskNo,
+      recordings: event.recordings.map((recording) => ({
+        guid: recording.guid,
+        phone_masked: recording.phoneMasked,
+        recording_id: recording.recordingId,
+        recording_url: recording.downloadUrl,
+        expires_at: recording.expiresAt,
+      })),
+    },
+  });
+}
 
 export const taskCompletedEventSchema = z.object({
   ...callbackEventBaseShape,
@@ -111,6 +163,9 @@ export type OutboundCallResult = z.infer<typeof outboundCallResultSchema>;
 export type CallResultBatchEvent = z.infer<typeof callResultBatchEventSchema>;
 export type RecordingAvailableBatchEvent = z.infer<
   typeof recordingAvailableBatchEventSchema
+>;
+export type RecordingAvailableBatchEventV21 = z.infer<
+  typeof recordingAvailableBatchEventV21Schema
 >;
 export type TaskCompletedEvent = z.infer<typeof taskCompletedEventSchema>;
 export type OutboundResultEvent = z.infer<typeof outboundResultEventSchema>;

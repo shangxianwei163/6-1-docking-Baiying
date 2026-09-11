@@ -115,6 +115,60 @@ describe('LocalNoNetworkDeliveryTransport', () => {
     ]);
   });
 
+  it('accepts the fixed-token v2.1 recording body with identity in headers', async () => {
+    const transport = new LocalNoNetworkDeliveryTransport({
+      environment: 'test',
+      secretForUrl: async () => secret,
+    });
+    const eventId = '22222222-2222-4222-8222-222222222223';
+    const url = 'https://erp.mock.invalid/callbacks/recordings';
+    const timestamp = '1788661800000';
+    const body = serializeStableJson({
+      Token: '^******^',
+      Data: {
+        event_id: eventId,
+        event_type: 'OUTBOUND_RECORDING_AVAILABLE_BATCH',
+        occurred_at: '2026-09-10T15:31:25+08:00',
+        company_code: '5903679116',
+        task_no: 'PT-20260910-00001',
+        recordings: [
+          {
+            guid: 'CRM-CUSTOMER-10001',
+            phone_masked: '138****8888',
+            recording_id: '33333333-3333-4333-8333-333333333333',
+            recording_url:
+              'https://recordings.mock.invalid/api/v1/recordings/33333333-3333-4333-8333-333333333333/content?exp=1788662760&aud=test&sig=test',
+            expires_at: '2026-09-10T15:46:25+08:00',
+          },
+        ],
+      },
+    });
+    const response = await transport.send({
+      url,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Contract-Version': '2.1',
+        'X-Platform-Event-Id': eventId,
+        'X-Timestamp': timestamp,
+        'X-Signature': signCallbackRequest(
+          { url, timestamp, eventId, rawBody: body },
+          secret,
+        ),
+      },
+      body,
+      timeoutMs: 10_000,
+    });
+
+    expect(response.status).toBe(200);
+    expect(transport.receipts).toEqual([
+      expect.objectContaining({
+        eventId,
+        eventType: 'OUTBOUND_RECORDING_AVAILABLE_BATCH',
+        duplicate: false,
+      }),
+    ]);
+  });
+
   it('rejects a non-fixture destination without attempting a network call', async () => {
     const transport = new LocalNoNetworkDeliveryTransport({
       environment: 'test',

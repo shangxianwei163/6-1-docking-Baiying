@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   callResultBatchEventSchema,
-  recordingAvailableBatchEventSchema,
+  outboundRecordingCallbackEnvelopeV2Schema,
   taskCompletedEventSchema,
 } from '@outbound/contracts';
 import { SafeCallbackPreviewService } from './callback-preview-service.js';
@@ -70,12 +70,18 @@ describe('safe callback preview service', () => {
       eventType: 'OUTBOUND_RECORDING_AVAILABLE_BATCH',
       itemCount: 1,
     });
-    const recordingBody = recordingAvailableBatchEventSchema.parse(
+    const recordingBody = outboundRecordingCallbackEnvelopeV2Schema.parse(
       JSON.parse(recording.request.body),
     );
-    expect(recordingBody.recordings[0]?.downloadUrl).toContain(
+    expect(recordingBody.Token).toBe('^******^');
+    expect(recordingBody.Data.recordings[0]).toMatchObject({
+      guid: 'SYNTHETIC-CUSTOMER-001',
+      phone_masked: '138****0000',
+    });
+    expect(recordingBody.Data.recordings[0]?.recording_url).toContain(
       'example.invalid',
     );
+    expect(recording.request.headers['X-Contract-Version']).toBe('2.1');
     expect(recording.request.body).not.toMatch(
       /(?:erp|crm|oss)\.[a-z0-9-]+\.(?:com|cn)/i,
     );
