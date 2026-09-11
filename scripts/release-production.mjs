@@ -228,7 +228,7 @@ function createArtifact(commit, temporaryRoot) {
     `${managedFiles.join('\n')}\n`,
   );
 
-  run('tar', ['-czf', artifact, '-C', releaseDirectory, '.']);
+  run('tar', ['--no-xattrs', '-czf', artifact, '-C', releaseDirectory, '.']);
   return { artifact, sha256: sha256File(artifact) };
 }
 

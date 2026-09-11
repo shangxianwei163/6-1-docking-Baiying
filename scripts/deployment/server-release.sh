@@ -160,7 +160,7 @@ deploy_release() {
   local stage
   stage="$(mktemp -d /www/wwwroot/.scheduling-paiyide-release.XXXXXX)"
   local dependency_stage="${stage}.dependencies"
-  trap 'rm -rf -- "$stage" "$dependency_stage"' RETURN
+  trap "rm -rf -- '$stage' '$dependency_stage'" EXIT
   tar -xzf "$artifact" -C "$stage"
 
   [[ -f "$stage/package.json" ]] || fail 'package.json is missing from the release'
@@ -260,6 +260,8 @@ deploy_release() {
   log "release staged successfully: $expected_commit"
   log "backup id: $backup_id"
   printf 'DEPLOY_RESULT backup_id=%s dependencies_changed=%s\n' "$backup_id" "$dependencies_changed"
+  rm -rf -- "$stage" "$dependency_stage"
+  trap - EXIT
 }
 
 rollback_release() {
