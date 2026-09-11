@@ -7,5 +7,9 @@
 - 访问面板时必须绕过代理，直连 `8.160.187.243`；CLI 请求应使用等效的 `NO_PROXY=8.160.187.243` 配置。
 - 面板登录密码只保存在本机、被 Git 忽略的 `.env.baota.local` 中；不得写入提交、日志、截图或回复。
 - 宝塔中已经存在本项目。发布新版本时应更新现有项目，不得新建重复项目。
-- 发布顺序：推送 GitHub `main` → 在宝塔现有项目拉取对应提交 → 安装依赖并构建 → 执行数据库迁移 → 重启前端、API 与相关 Worker → 检查 `https://scheduling.paiyide.cc/health` → 验证本次变更对应的线上行为。
+- 后续所有正式环境发布（包括新对话中的发布）统一执行 `npm run release:production`，不得把手工面板上传或 Sites 发布作为常规流程。
+- 固定发布顺序：提交并推送 GitHub `main` → 执行一键发布命令 → 本地完成测试和构建 → 通过 SSH 上传 SHA-256 校验过的构建产物 → 更新宝塔现有项目 → 由宝塔重启前端、API 与全部 Worker → 自动执行健康检查、Token 认证检查和接口文档检查 → 验证本次变更对应的线上行为。
+- 一键发布只在 `package-lock.json` 变化时于服务器安装依赖；依赖未变化时复用现有 `node_modules`。服务器不再重复构建，也不依赖服务器安装 Git。
+- 发布脚本会保存上一版本并在重启或基础验收失败时自动回滚。服务器发布记录以 `.production-release.json` 中的 Git commit 为准。
+- SSH 私钥路径及面板凭据只保存在被 Git 忽略的 `.env.baota.local` 中，私钥本身不得放进仓库。首次初始化或故障恢复参见 `docs/正式环境一键发布.md`。
 - Token 认证发布验收：携带无效 `X-Access-Token` 请求 `/openapi/v2/outbound/batches/{batchId}` 时，应返回 Token 无效类提示，不得再提示缺少 `X-Client-Id`。

@@ -16,6 +16,9 @@
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "deploy:baota": "node scripts/start-baota.mjs",
+    "release:production": "node scripts/release-production.mjs",
+    "release:production:bootstrap": "node scripts/deployment/bootstrap-production-ssh.mjs",
+    "release:production:dry-run": "node scripts/release-production.mjs --dry-run",
     "backend:build": "npm run build --workspace @outbound/contracts && npm run build --workspace @outbound/platform-api",
     "backend:dev": "npm run dev --workspace @outbound/platform-api",
     "backend:test": "npm run test --workspace @outbound/platform-api",
@@ -106,7 +109,8 @@
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
     "vite": "8.0.13",
-    "wrangler": "4.92.0"
+    "wrangler": "4.92.0",
+    "ws": "8.18.0"
   },
   "type": "module"
 }
