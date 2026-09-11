@@ -11,6 +11,7 @@ from ui_auth import open_authenticated
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
 TASK_SCREENSHOT = Path('/tmp/outbound-platform-stage6b3b-task-control.png')
 RECOVERY_SCREENSHOT = Path('/tmp/outbound-platform-stage6b3b-recovery.png')
+RECOVERY_TABS_SCREENSHOT = Path('/tmp/outbound-platform-recovery-tabs.png')
 TASK_NO = 'PT-20260906-90001'
 
 
@@ -319,7 +320,18 @@ def main() -> None:
 
         page.get_by_role('button', name=re.compile(r'^异常中心')).click()
         expect(page.locator('h2').filter(has_text='异常中心')).to_be_visible()
+        reconciliation_tab = page.get_by_role('tab', name=re.compile(r'^通话记录核对'))
+        dead_letter_tab = page.get_by_role('tab', name=re.compile(r'^死信事件'))
+        expect(reconciliation_tab).to_have_attribute('aria-selected', 'true')
+        expect(dead_letter_tab).to_have_attribute('aria-selected', 'false')
+        expect(page.get_by_text('漏回调核对队列', exact=True)).to_be_visible()
+        expect(page.get_by_text('页面只显示脱敏摘要', exact=False)).not_to_be_visible()
+        dead_letter_tab.click()
+        expect(dead_letter_tab).to_have_attribute('aria-selected', 'true')
+        expect(reconciliation_tab).to_have_attribute('aria-selected', 'false')
         expect(page.get_by_text('页面只显示脱敏摘要', exact=False)).to_be_visible()
+        expect(page.get_by_text('漏回调核对队列', exact=True)).not_to_be_visible()
+        page.screenshot(path=str(RECOVERY_TABS_SCREENSHOT), full_page=True)
         outbox_row = page.locator('tr', has_text='编排队列重试已耗尽')
         outbox_row.get_by_role('button', name='处置').click()
         recovery_dialog = page.get_by_role('dialog').filter(has_text='编排队列重试已耗尽')
@@ -361,12 +373,20 @@ def main() -> None:
         open_authenticated(mobile)
         mobile.get_by_role('button', name=re.compile(r'^异常中心')).click()
         expect(mobile.locator('h2').filter(has_text='异常中心')).to_be_visible()
+        expect(
+            mobile.get_by_role('tab', name=re.compile(r'^通话记录核对'))
+        ).to_be_visible()
+        expect(
+            mobile.get_by_role('tab', name=re.compile(r'^死信事件'))
+        ).to_be_visible()
         document_width = mobile.evaluate('document.documentElement.scrollWidth')
         viewport_width = mobile.evaluate('window.innerWidth')
         if document_width > viewport_width + 1:
             raise AssertionError(
                 f'Mobile page overflows horizontally: {document_width}px > {viewport_width}px'
             )
+        mobile.close()
+        page.close()
         browser.close()
 
     if page_errors:
@@ -377,6 +397,7 @@ def main() -> None:
     )
     print(f'Task control screenshot: {TASK_SCREENSHOT}')
     print(f'Recovery screenshot: {RECOVERY_SCREENSHOT}')
+    print(f'Recovery tabs screenshot: {RECOVERY_TABS_SCREENSHOT}')
 
 
 if __name__ == '__main__':
