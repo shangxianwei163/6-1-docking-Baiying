@@ -1,13 +1,24 @@
-import { sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import {
+  operatorIntegrationLogDetailSchema,
   operatorIntegrationLogPageSchema,
   type IntegrationLogDirection,
   type IntegrationLogStatus,
   type IntegrationLogSystem,
   type OperatorIntegrationLog,
+  type OperatorIntegrationLogDetail,
   type OperatorIntegrationLogPage,
 } from '@outbound/contracts';
 import type { Database } from '../db/client.js';
+import {
+  callbackInbox,
+  deliveryAttempts,
+  deliveryEvents,
+  idempotencyRecords,
+  taskOperations,
+} from '../db/schema.js';
+import type { DataProtector } from '../security/data-protector.js';
 import { redactOperatorText, sanitizeOperatorDetail } from './redaction.js';
 
 export type IntegrationLogListInput = {
@@ -52,14 +63,20 @@ const operationLabels: Record<string, string> = {
   QUERY: '查询百应任务',
   RESULT: '回传外呼结果',
   RECORDING: '回传录音结果',
+  CALL_INSTANCE_RESULT: '单通电话结果回调',
+  JOB_INFO_RESULT: '外呼任务状态回调',
 };
 
 export interface IntegrationLogService {
   listLogs(input: IntegrationLogListInput): Promise<OperatorIntegrationLogPage>;
+  getLogDetail(id: string): Promise<OperatorIntegrationLogDetail | null>;
 }
 
 export class PostgresIntegrationLogService implements IntegrationLogService {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly protector?: Pick<DataProtector, 'decryptUtf8'>,
+  ) {}
 
   async listLogs(
     input: IntegrationLogListInput,
@@ -252,6 +269,173 @@ export class PostgresIntegrationLogService implements IntegrationLogService {
       items,
     });
   }
+
+  async getLogDetail(id: string): Promise<OperatorIntegrationLogDetail | null> {
+    if (id.startsWith('callback:')) {
+      return this.getCallbackDetail(id);
+    }
+    if (id.startsWith('delivery-attempt:')) {
+      return this.getDeliveryDetail(id);
+    }
+    if (id.startsWith('task-operation:')) {
+      return this.getProviderOperationDetail(id);
+    }
+    if (id.startsWith('task-intake:')) {
+      return this.getTaskIntakeDetail(id);
+    }
+    return null;
+  }
+
+  private async getCallbackDetail(
+    id: string,
+  ): Promise<OperatorIntegrationLogDetail | null> {
+    const inboxId = uuidOrNull(id.slice('callback:'.length));
+    if (!inboxId) return null;
+    const [row] = await this.db
+      .select()
+      .from(callbackInbox)
+      .where(eq(callbackInbox.id, inboxId))
+      .limit(1);
+    if (!row) return null;
+
+    let body: unknown = null;
+    let note: string | null = null;
+    if (this.protector) {
+      try {
+        body = parseJsonText(this.protector.decryptUtf8(row.rawBodyCiphertext));
+      } catch {
+        note = '原始回调正文解密失败，已显示其余完整处理字段。';
+      }
+    } else {
+      note = '当前运行环境未配置回调正文解密器，已显示其余完整处理字段。';
+    }
+
+    return operatorIntegrationLogDetailSchema.parse({
+      id,
+      detailLevel: body === null ? 'STORED_SNAPSHOT' : 'FULL',
+      request: {
+        headers: row.headers,
+        body,
+        bodySha256: row.rawBodySha256,
+      },
+      response: {
+        provider: row.provider,
+        callbackType: row.callbackType,
+        eventKey: row.eventKey,
+        companyId: row.companyId,
+        callJobId: row.callJobId,
+        callInstanceId: row.callInstanceId,
+        parseStatus: row.parseStatus,
+        processStatus: row.processStatus,
+        processAttempts: row.processAttempts,
+        parseError: row.parseError,
+        processError: row.processError,
+        deadLetteredAt: row.deadLetteredAt?.toISOString() ?? null,
+        receivedAt: row.receivedAt.toISOString(),
+        processedAt: row.processedAt?.toISOString() ?? null,
+      },
+      note,
+    });
+  }
+
+  private async getDeliveryDetail(
+    id: string,
+  ): Promise<OperatorIntegrationLogDetail | null> {
+    const attemptId = uuidOrNull(id.slice('delivery-attempt:'.length));
+    if (!attemptId) return null;
+    const [row] = await this.db
+      .select({ event: deliveryEvents, attempt: deliveryAttempts })
+      .from(deliveryAttempts)
+      .innerJoin(
+        deliveryEvents,
+        eq(deliveryEvents.id, deliveryAttempts.deliveryEventId),
+      )
+      .where(eq(deliveryAttempts.id, attemptId))
+      .limit(1);
+    if (!row) return null;
+
+    const note = row.event.payload
+      ? null
+      : '请求正文保存在对象存储中，当前详情接口只能显示对象键。';
+    return operatorIntegrationLogDetailSchema.parse({
+      id,
+      detailLevel: row.event.payload ? 'FULL' : 'STORED_SNAPSHOT',
+      request: {
+        targetUrl: row.event.targetUrlSnapshot,
+        eventId: row.event.eventId,
+        eventType: row.event.eventType,
+        target: row.event.target,
+        body: externalDeliveryBody(row.event.eventType, row.event.payload),
+        payloadObjectKey: row.event.payloadObjectKey,
+      },
+      response: {
+        httpStatus: row.attempt.responseStatus,
+        body: parseJsonText(row.attempt.responseSummary),
+        status: row.attempt.status,
+        attemptNo: row.attempt.attemptNo,
+        errorClass: row.attempt.errorClass,
+        errorMessage: row.attempt.errorMessage,
+        durationMs: row.attempt.durationMs,
+        requestedAt: row.attempt.requestedAt.toISOString(),
+      },
+      note,
+    });
+  }
+
+  private async getProviderOperationDetail(
+    id: string,
+  ): Promise<OperatorIntegrationLogDetail | null> {
+    const operationId = uuidOrNull(id.slice('task-operation:'.length));
+    if (!operationId) return null;
+    const [row] = await this.db
+      .select()
+      .from(taskOperations)
+      .where(eq(taskOperations.id, operationId))
+      .limit(1);
+    if (!row) return null;
+    return operatorIntegrationLogDetailSchema.parse({
+      id,
+      detailLevel: 'STORED_SNAPSHOT',
+      request: row.requestPayloadRedacted,
+      response: row.responsePayloadRedacted,
+      note: '百应编排历史记录仅保存了安全快照，无法恢复当时未落库的敏感字段。',
+    });
+  }
+
+  private async getTaskIntakeDetail(
+    id: string,
+  ): Promise<OperatorIntegrationLogDetail | null> {
+    const [sourceSystem, clientId, ...keyParts] = id
+      .slice('task-intake:'.length)
+      .split(':');
+    const idempotencyKey = keyParts.join(':');
+    if (!sourceSystem || !clientId || !idempotencyKey) return null;
+    const [row] = await this.db
+      .select()
+      .from(idempotencyRecords)
+      .where(
+        and(
+          eq(idempotencyRecords.sourceSystem, sourceSystem),
+          eq(idempotencyRecords.clientId, clientId),
+          eq(idempotencyRecords.idempotencyKey, idempotencyKey),
+        ),
+      )
+      .limit(1);
+    if (!row) return null;
+    return operatorIntegrationLogDetailSchema.parse({
+      id,
+      detailLevel: 'STORED_SNAPSHOT',
+      request: {
+        sourceSystem: row.sourceSystem,
+        clientId: row.clientId,
+        idempotencyKey: row.idempotencyKey,
+        requestId: row.requestId,
+        requestBodySha256: row.requestBodySha256,
+      },
+      response: row.responseBody,
+      note: '任务受理历史记录仅保存请求摘要与完整响应，原始请求正文未落库。',
+    });
+  }
 }
 
 function toOperatorLog(row: IntegrationDbRow): OperatorIntegrationLog {
@@ -311,4 +495,28 @@ function humanize(value: string) {
 
 function toIso(value: Date | string) {
   return (value instanceof Date ? value : new Date(value)).toISOString();
+}
+
+function parseJsonText(value: string | null): unknown {
+  if (value === null || value === '') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function externalDeliveryBody(
+  eventType: string,
+  payload: Record<string, unknown> | null,
+) {
+  if (eventType === 'OUTBOUND_CALL_RESULT_V2' && payload?.result) {
+    return payload.result;
+  }
+  return payload;
+}
+
+function uuidOrNull(value: string) {
+  const parsed = z.uuid().safeParse(value);
+  return parsed.success ? parsed.data : null;
 }

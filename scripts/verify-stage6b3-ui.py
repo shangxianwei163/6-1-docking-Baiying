@@ -19,7 +19,15 @@ def main() -> None:
     )
     if logs['total'] < 1 or not logs['items']:
         raise AssertionError('Stage 6B-3 UI verification needs one real integration log')
-    first_log = logs['items'][0]
+    first_log = next(
+        (item for item in logs['items'] if item['category'] == 'CALLBACK'),
+        logs['items'][0],
+    )
+    full_detail = authenticated_api_json(
+        f"/api/v1/integration-logs/{first_log['id']}/detail"
+    )
+    if first_log['category'] == 'CALLBACK' and full_detail['detailLevel'] != 'FULL':
+        raise AssertionError('Callback detail should expose the complete stored body')
     page_errors: list[str] = []
 
     with sync_playwright() as playwright:
@@ -52,14 +60,17 @@ def main() -> None:
         page.get_by_role('button', name=re.compile(r'^接口日志')).click()
         expect(page.locator('h2').filter(has_text='接口日志')).to_be_visible()
         expect(page.get_by_text('数据库接口调用记录', exact=True)).to_be_visible()
-        expect(page.get_by_text('页面不读取原始回调正文', exact=False)).to_be_visible()
+        expect(page.get_by_text('点击“详情”后再单独读取完整请求', exact=False)).to_be_visible()
         log_row = page.locator('tbody tr').filter(has_text=first_log['requestId']).first
         expect(log_row).to_contain_text(first_log['operationLabel'])
         log_row.get_by_role('button', name='详情').click()
 
         dialog = page.get_by_role('dialog')
         expect(dialog.get_by_text('接口调用详情', exact=True)).to_be_visible()
-        expect(dialog.get_by_text('已脱敏请求 / 响应快照', exact=True)).to_be_visible()
+        expect(dialog.get_by_text('请求 / 响应完整字段', exact=True)).to_be_visible()
+        expect(dialog.get_by_role('tab', name=re.compile(r'^REQUEST'))).to_be_visible()
+        expect(dialog.get_by_role('tab', name=re.compile(r'^RESPONSE'))).to_be_visible()
+        expect(dialog.get_by_role('button', name='复制 JSON')).to_be_visible()
         expect(dialog.get_by_text(first_log['requestId'], exact=True)).to_be_visible()
         assert_dialog_has_no_outer_overflow(page, dialog, 'Integration detail dialog')
         page.set_viewport_size({'width': 1024, 'height': 640})
@@ -95,13 +106,15 @@ def main() -> None:
             raise AssertionError(
                 f'Mobile page overflows horizontally: {document_width}px > {viewport_width}px'
             )
+        mobile.close()
+        page.close()
         browser.close()
 
     if page_errors:
         raise AssertionError(f'Browser page errors: {page_errors}')
     print(
         'Stage 6B-3 UI verification passed '
-        '(real overview + real integration logs + redacted detail + mobile layout)'
+        '(real overview + on-demand full integration detail + mobile layout)'
     )
     print(f'Overview screenshot: {OVERVIEW_SCREENSHOT}')
     print(f'Integration log screenshot: {LOG_SCREENSHOT}')

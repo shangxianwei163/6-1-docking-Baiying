@@ -6,6 +6,7 @@ import { readConfig } from '../config.js';
 import { PostgresIntegrationLogService } from '../operations/integration-log-service.js';
 import { PostgresOperationsOverviewService } from '../operations/overview-service.js';
 import { PostgresCallbackInboxRepository } from '../callback/postgres-repository.js';
+import { LocalDataProtector } from '../security/data-protector.js';
 import { createDatabase } from './client.js';
 import {
   callbackInbox,
@@ -29,11 +30,27 @@ const outboxId = randomUUID();
 const deadLetterId = randomUUID();
 const secret = 'must-never-reach-the-operator';
 const phone = '13800138000';
+const fullCallbackBody = {
+  data: {
+    callbackType: 'CALL_INSTANCE_RESULT',
+    data: {
+      callInstance: {
+        finishStatus: 3,
+        customerTelephone: phone,
+        diagnostics: { providerCode: 'LINE_REJECTED' },
+      },
+    },
+  },
+};
+const protector = new LocalDataProtector(
+  config.WORKER_SHARED_SECRET,
+  config.NODE_ENV,
+);
 const overviewService = new PostgresOperationsOverviewService(
   database.db,
   () => now,
 );
-const logService = new PostgresIntegrationLogService(database.db);
+const logService = new PostgresIntegrationLogService(database.db, protector);
 const callbackRepository = new PostgresCallbackInboxRepository(database.db, {
   clock: () => now,
 });
@@ -46,7 +63,9 @@ try {
       id: callbackIds[0],
       callbackType: 'STAGE6B3_PENDING_VERIFY',
       eventKey: `${marker}:pending`,
-      rawBodyCiphertext: 'local-verifier-ciphertext',
+      rawBodyCiphertext: protector.encryptUtf8(
+        JSON.stringify(fullCallbackBody),
+      ),
       rawBodySha256: 'a'.repeat(64),
       headers: {
         authorization: `Bearer ${secret}`,
@@ -186,6 +205,22 @@ try {
   assert.doesNotMatch(failedLog?.errorMessage ?? '', new RegExp(secret));
   assert.doesNotMatch(failedLog?.errorMessage ?? '', new RegExp(phone));
 
+  const fullDetail = await logService.getLogDetail(
+    `callback:${callbackIds[0]}`,
+  );
+  assert.ok(fullDetail);
+  assert.equal(fullDetail.detailLevel, 'FULL');
+  assert.deepEqual(
+    (fullDetail.request as { body: unknown }).body,
+    fullCallbackBody,
+  );
+  assert.equal(
+    (fullDetail.request as { headers: Record<string, string> }).headers[
+      'x-contact-phone'
+    ],
+    phone,
+  );
+
   console.info(
     JSON.stringify(
       {
@@ -196,6 +231,7 @@ try {
           callbackAndOutboxStaleness: true,
           deadLetterAttention: true,
           unifiedIntegrationLog: true,
+          onDemandFullIntegrationDetail: true,
           recursiveCredentialAndPhoneRedaction: true,
           callbackDuplicatePersistence: true,
           categoryAmbiguityMetric: true,

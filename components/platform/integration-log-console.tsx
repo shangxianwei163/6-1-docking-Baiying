@@ -5,12 +5,14 @@ import {
   Activity,
   ArrowDownToLine,
   ArrowUpFromLine,
+  Check,
   Clock3,
+  Copy,
   Eye,
+  FileJson2,
   Fingerprint,
   RefreshCw,
   Search,
-  ShieldCheck,
   TriangleAlert,
 } from 'lucide-react';
 import type {
@@ -18,9 +20,14 @@ import type {
   IntegrationLogStatus,
   IntegrationLogSystem,
   OperatorIntegrationLog,
+  OperatorIntegrationLogDetail,
   OperatorIntegrationLogPage,
 } from '@outbound/contracts';
-import { loadIntegrationLogs, PlatformApiError } from '@/lib/platform-api';
+import {
+  loadIntegrationLogDetail,
+  loadIntegrationLogs,
+  PlatformApiError,
+} from '@/lib/platform-api';
 import {
   Dialog,
   DialogContent,
@@ -84,6 +91,21 @@ export function IntegrationLogConsole() {
   const [error, setError] = useState('');
   const [refreshToken, setRefreshToken] = useState(0);
   const [detail, setDetail] = useState<OperatorIntegrationLog | null>(null);
+  const [detailPayload, setDetailPayload] =
+    useState<OperatorIntegrationLogDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState('');
+
+  const openDetail = (item: OperatorIntegrationLog) => {
+    setDetail(item);
+    setDetailPayload(null);
+    setDetailError('');
+    setDetailLoading(true);
+    void loadIntegrationLogDetail(item.id)
+      .then(setDetailPayload)
+      .catch((caught) => setDetailError(apiErrorMessage(caught)))
+      .finally(() => setDetailLoading(false));
+  };
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -139,11 +161,11 @@ export function IntegrationLogConsole() {
     <div className="integration-console">
       <header className="ops-page-intro integration-intro">
         <div>
-          <span>END-TO-END TRACE / REDACTED</span>
+          <span>END-TO-END TRACE / FULL CONTEXT</span>
           <h2>接口日志</h2>
           <p>
             统一追踪任务受理、百应编排、供应商回调和 ERP/CRM
-            投递；明细由服务端先脱敏再返回。
+            投递；登录管理员可按需查看完整故障上下文。
           </p>
         </div>
         <button
@@ -194,10 +216,9 @@ export function IntegrationLogConsole() {
         className="ops-panel integration-panel"
       >
         <div className="integration-redaction-seal">
-          <ShieldCheck aria-hidden="true" size={14} />
+          <FileJson2 aria-hidden="true" size={14} />
           <span>
-            页面不读取原始回调正文和密文；手机号、Token、签名、Cookie
-            及敏感键已在 API 层递归替换。
+            列表保持轻量；点击“详情”后再单独读取完整请求与处理结果，便于定位字段、状态码和回传异常。
           </span>
         </div>
         <div className="ops-toolbar integration-toolbar">
@@ -296,7 +317,9 @@ export function IntegrationLogConsole() {
                   <td>
                     <b className="table-primary">{item.operationLabel}</b>
                     <small className="table-meta">
-                      {categoryLabels[item.category]} · {item.endpointLabel}
+                      {categoryLabels[item.category]}
+                      {item.category === 'CALLBACK' ? '接收' : ''} ·{' '}
+                      {item.endpointLabel}
                     </small>
                   </td>
                   <td>
@@ -328,7 +351,7 @@ export function IntegrationLogConsole() {
                     <button
                       type="button"
                       className="table-action"
-                      onClick={() => setDetail(item)}
+                      onClick={() => openDetail(item)}
                     >
                       <Eye aria-hidden="true" size={12} />
                       详情
@@ -394,17 +417,28 @@ export function IntegrationLogConsole() {
       <Dialog
         open={Boolean(detail)}
         onOpenChange={(open) => {
-          if (!open) setDetail(null);
+          if (!open) {
+            setDetail(null);
+            setDetailPayload(null);
+            setDetailError('');
+          }
         }}
       >
         <DialogContent className="ops-dialog integration-detail-dialog">
           <DialogHeader>
             <DialogTitle>接口调用详情</DialogTitle>
             <DialogDescription>
-              请求与响应只显示服务端允许下发的脱敏快照。
+              完整呈现已保存的请求字段、响应正文与平台处理状态。
             </DialogDescription>
           </DialogHeader>
-          {detail ? <IntegrationDetail item={detail} /> : null}
+          {detail ? (
+            <IntegrationDetail
+              item={detail}
+              payload={detailPayload}
+              loading={detailLoading}
+              error={detailError}
+            />
+          ) : null}
           <DialogFooter>
             <button
               type="button"
@@ -445,7 +479,22 @@ function SummaryMetric({
   );
 }
 
-function IntegrationDetail({ item }: { item: OperatorIntegrationLog }) {
+function IntegrationDetail({
+  item,
+  payload,
+  loading,
+  error,
+}: {
+  item: OperatorIntegrationLog;
+  payload: OperatorIntegrationLogDetail | null;
+  loading: boolean;
+  error: string;
+}) {
+  const [activePayload, setActivePayload] = useState<'request' | 'response'>(
+    'request',
+  );
+  const fallback = detailFallback(item);
+  const selectedValue = payload?.[activePayload] ?? fallback[activePayload];
   return (
     <div className="integration-detail">
       <dl>
@@ -491,30 +540,129 @@ function IntegrationDetail({ item }: { item: OperatorIntegrationLog }) {
         </div>
       ) : null}
       <section>
-        <header>
-          <ShieldCheck aria-hidden="true" size={13} />
-          已脱敏请求 / 响应快照
+        <header className="integration-payload-heading">
+          <span>
+            <FileJson2 aria-hidden="true" size={14} />
+            请求 / 响应完整字段
+          </span>
+          {payload ? (
+            <em
+              className={
+                payload.detailLevel === 'FULL' ? 'is-complete' : 'is-snapshot'
+              }
+            >
+              {payload.detailLevel === 'FULL' ? '完整记录' : '历史快照'}
+            </em>
+          ) : null}
         </header>
-        <div>
-          {Object.entries(item.detail).map(([key, value]) => (
-            <article key={key}>
-              <span>{key === 'request' ? 'REQUEST' : 'RESPONSE'}</span>
-              <pre>{prettyDetail(value)}</pre>
-            </article>
-          ))}
+        <div className="integration-payload-tabs" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activePayload === 'request'}
+            className={activePayload === 'request' ? 'is-active' : ''}
+            onClick={() => setActivePayload('request')}
+          >
+            REQUEST 请求字段
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activePayload === 'response'}
+            className={activePayload === 'response' ? 'is-active' : ''}
+            onClick={() => setActivePayload('response')}
+          >
+            RESPONSE 响应与处理结果
+          </button>
         </div>
+        {loading ? (
+          <div className="integration-payload-state">正在读取完整字段…</div>
+        ) : error ? (
+          <div className="integration-payload-state is-error">{error}</div>
+        ) : (
+          <PayloadDocument
+            key={`${item.id}:${activePayload}`}
+            label={activePayload === 'request' ? '请求字段' : '响应与处理结果'}
+            value={selectedValue}
+          />
+        )}
+        {payload?.note ? (
+          <p className="integration-payload-note">{payload.note}</p>
+        ) : null}
       </section>
     </div>
   );
 }
 
-function prettyDetail(value: string | number | boolean | null) {
-  if (typeof value !== 'string') return String(value);
-  try {
-    return JSON.stringify(JSON.parse(value), null, 2);
-  } catch {
-    return value;
+function PayloadDocument({ label, value }: { label: string; value: unknown }) {
+  const [copied, setCopied] = useState(false);
+  const text = prettyDetail(value);
+  const copy = async () => {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  };
+  return (
+    <article className="integration-payload-document">
+      <div>
+        <span>{label}</span>
+        <button type="button" onClick={copy}>
+          {copied ? (
+            <Check aria-hidden="true" size={13} />
+          ) : (
+            <Copy aria-hidden="true" size={13} />
+          )}
+          {copied ? '已复制' : '复制 JSON'}
+        </button>
+      </div>
+      <pre>{text}</pre>
+    </article>
+  );
+}
+
+function detailFallback(item: OperatorIntegrationLog) {
+  return {
+    request: normalizeNestedJson(item.detail.request ?? null),
+    response: normalizeNestedJson(item.detail.response ?? null),
+  };
+}
+
+function prettyDetail(value: unknown) {
+  const normalized = normalizeNestedJson(value);
+  if (normalized === null) return 'null';
+  if (typeof normalized === 'string') return normalized;
+  if (typeof normalized === 'number' || typeof normalized === 'boolean') {
+    return String(normalized);
   }
+  if (typeof normalized === 'undefined') return 'undefined';
+  return JSON.stringify(normalized, null, 2) ?? '[无法序列化该字段]';
+}
+
+function normalizeNestedJson(value: unknown, depth = 0): unknown {
+  if (depth > 12) return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed || (!trimmed.startsWith('{') && !trimmed.startsWith('['))) {
+      return value;
+    }
+    try {
+      return normalizeNestedJson(JSON.parse(trimmed), depth + 1);
+    } catch {
+      return value;
+    }
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeNestedJson(item, depth + 1));
+  }
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [
+        key,
+        normalizeNestedJson(child, depth + 1),
+      ]),
+    );
+  }
+  return value;
 }
 
 function formatDuration(value: number | null) {

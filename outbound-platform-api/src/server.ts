@@ -121,7 +121,10 @@ const operatorAuditService = new PostgresOperatorAuditService(database.db);
 const operationsOverviewService = new PostgresOperationsOverviewService(
   database.db,
 );
-const integrationLogService = new PostgresIntegrationLogService(database.db);
+const integrationLogService = new PostgresIntegrationLogService(
+  database.db,
+  localDataProtector,
+);
 const recoveryOperationsService = new PostgresRecoveryOperationsService(
   database.db,
 );

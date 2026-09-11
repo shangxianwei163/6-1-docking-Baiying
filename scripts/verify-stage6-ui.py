@@ -10,6 +10,26 @@ from ui_auth import authenticated_api_json, open_authenticated
 SCREENSHOT = Path('/tmp/outbound-platform-stage6-task.png')
 LIST_SCREENSHOT = Path('/tmp/outbound-platform-stage6-list.png')
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+FINISH_STATUS_LABELS = {
+    0: '已接通',
+    1: '客户拒接',
+    2: '无法接通',
+    3: '外呼失败',
+    4: '空号',
+    5: '已关机',
+    6: '客户占线',
+    7: '号码停机',
+    8: '无人接听',
+    9: '主叫欠费',
+    10: '呼损',
+    11: '号码在黑名单中',
+    12: '天盾拦截',
+    22: '线路盲区',
+    23: '呼出拦截',
+    25: '无可用线路',
+}
+
+
 def find_fixtures() -> tuple[dict, dict, dict]:
     tasks = authenticated_api_json(
         '/api/v1/outbound-tasks?pageNum=0&pageSize=100'
@@ -117,6 +137,15 @@ def main() -> None:
         expect(
             dialog.get_by_text(completed_call['baiyingCallInstanceId'], exact=True)
         ).to_be_visible()
+        finish_status = completed_call['finishStatus']
+        if finish_status is not None:
+            expected_result = FINISH_STATUS_LABELS.get(
+                finish_status, f'未知结果 {finish_status}'
+            )
+            expect(dialog.get_by_text(expected_result, exact=True)).to_be_visible()
+            expect(
+                dialog.get_by_text(f'finishStatus: {finish_status}', exact=True)
+            ).to_be_visible()
         assert_dialog_has_no_outer_overflow(page, dialog, 'Task detail dialog')
         page.set_viewport_size({'width': 1024, 'height': 640})
         assert_dialog_has_no_outer_overflow(
@@ -139,6 +168,7 @@ def main() -> None:
             page.get_by_role('cell', name=delivery_pending_task['taskNo'])
         ).to_be_visible()
         expect(page.get_by_role('cell', name=calling_task['taskNo'])).not_to_be_visible()
+        page.close()
         browser.close()
 
     if page_errors:

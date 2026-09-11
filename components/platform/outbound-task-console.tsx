@@ -109,6 +109,25 @@ const callStatusMeta: Record<
   UNKNOWN: { label: '未知', tone: 'gray' },
 };
 
+const finishStatusMeta: Record<number, { label: string; tone: StatusTone }> = {
+  0: { label: '已接通', tone: 'green' },
+  1: { label: '客户拒接', tone: 'red' },
+  2: { label: '无法接通', tone: 'amber' },
+  3: { label: '外呼失败', tone: 'red' },
+  4: { label: '空号', tone: 'amber' },
+  5: { label: '已关机', tone: 'amber' },
+  6: { label: '客户占线', tone: 'amber' },
+  7: { label: '号码停机', tone: 'amber' },
+  8: { label: '无人接听', tone: 'amber' },
+  9: { label: '主叫欠费', tone: 'red' },
+  10: { label: '呼损', tone: 'red' },
+  11: { label: '号码在黑名单中', tone: 'red' },
+  12: { label: '天盾拦截', tone: 'red' },
+  22: { label: '线路盲区', tone: 'red' },
+  23: { label: '呼出拦截', tone: 'red' },
+  25: { label: '无可用线路', tone: 'red' },
+};
+
 export function OutboundTaskConsole() {
   const [keywordDraft, setKeywordDraft] = useState('');
   const [keyword, setKeyword] = useState('');
@@ -1187,7 +1206,13 @@ function CallList({
           </thead>
           <tbody>
             {calls.map((call) => {
-              const status = callStatusMeta[call.callStatus];
+              const status =
+                call.finishStatus === null
+                  ? callStatusMeta[call.callStatus]
+                  : (finishStatusMeta[call.finishStatus] ?? {
+                      label: `未知结果 ${call.finishStatus}`,
+                      tone: 'gray' as const,
+                    });
               return (
                 <tr key={call.platformCallId}>
                   <td>
@@ -1199,6 +1224,11 @@ function CallList({
                   </td>
                   <td>
                     <Status tone={status.tone}>{status.label}</Status>
+                    {call.finishStatus !== null ? (
+                      <span className="table-meta">
+                        finishStatus: {call.finishStatus}
+                      </span>
+                    ) : null}
                   </td>
                   <td>{formatDuration(call.durationSeconds)}</td>
                   <td>

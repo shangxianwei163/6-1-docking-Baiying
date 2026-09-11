@@ -23,6 +23,7 @@ import type {
   OperatorAuditCategory,
   OperatorAuditPage,
   OperatorOperationsOverview,
+  OperatorIntegrationLogDetail,
   OperatorIntegrationLogPage,
   OperatorDeadLetterActionResult,
   OperatorDeadLetterPage,
@@ -63,6 +64,7 @@ import {
   operatorAccountAdjustmentSchema,
   operatorAuditPageSchema,
   operatorOperationsOverviewSchema,
+  operatorIntegrationLogDetailSchema,
   operatorIntegrationLogPageSchema,
   operatorDeadLetterActionResultSchema,
   operatorDeadLetterPageSchema,
@@ -695,6 +697,14 @@ export async function loadIntegrationLogs(
   return operatorIntegrationLogPageSchema.parse(
     await request<unknown>(`/api/v1/integration-logs?${search}`),
   ) as OperatorIntegrationLogPage;
+}
+
+export async function loadIntegrationLogDetail(id: string) {
+  return operatorIntegrationLogDetailSchema.parse(
+    await request<unknown>(
+      `/api/v1/integration-logs/${encodeURIComponent(id)}/detail`,
+    ),
+  ) as OperatorIntegrationLogDetail;
 }
 
 export async function generateCallbackPreview(input: {

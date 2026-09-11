@@ -238,8 +238,8 @@ function validateTarget(rawUrl: string): URL {
 }
 
 function summarizeResponse(response: DeliveryHttpResponse): string | null {
-  const body = redactOperatorText(response.body.trim());
-  return body ? body.slice(0, 2_000) : null;
+  const body = response.body.trim();
+  return body || null;
 }
 
 function safeErrorClass(error: unknown): string {

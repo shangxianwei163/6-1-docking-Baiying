@@ -19,6 +19,13 @@ function setup() {
     summary: { all: 0 },
     items: [],
   }));
+  const getLogDetail = vi.fn(async (id: string) => ({
+    id,
+    detailLevel: 'FULL' as const,
+    request: { data: { finishStatus: 3 } },
+    response: { processStatus: 'SUCCEEDED' },
+    note: null,
+  }));
   const app = createApp({
     mappingRepository: {} as MappingRepository,
     operationsOverviewService: {
@@ -26,12 +33,13 @@ function setup() {
     } as unknown as OperationsOverviewService,
     integrationLogService: {
       listLogs,
+      getLogDetail,
     } as unknown as IntegrationLogService,
     consoleOrigin: 'http://localhost:4173',
     workerSharedSecret: 'test-worker-secret-at-least-24',
     createId: () => 'request-monitoring-001',
   });
-  return { app, getOverview, listLogs };
+  return { app, getOverview, listLogs, getLogDetail };
 }
 
 describe('operator monitoring HTTP API', () => {
@@ -76,5 +84,24 @@ describe('operator monitoring HTTP API', () => {
     );
     expect(response.status).toBe(400);
     expect(listLogs).not.toHaveBeenCalled();
+  });
+
+  it('loads the complete detail for one selected interface log', async () => {
+    const { app, getLogDetail } = setup();
+    const logId = 'callback:11111111-1111-4111-8111-111111111111';
+    const response = await app.request(
+      `/api/v1/integration-logs/${encodeURIComponent(logId)}/detail`,
+      { headers: actorHeaders },
+    );
+
+    expect(response.status).toBe(200);
+    expect(getLogDetail).toHaveBeenCalledWith(logId);
+    await expect(response.json()).resolves.toMatchObject({
+      data: {
+        id: logId,
+        detailLevel: 'FULL',
+        request: { data: { finishStatus: 3 } },
+      },
+    });
   });
 });

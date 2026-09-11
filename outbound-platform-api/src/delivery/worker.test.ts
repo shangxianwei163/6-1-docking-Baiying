@@ -110,6 +110,28 @@ describe('CallbackDeliveryWorker', () => {
     });
   });
 
+  it('persists the complete receiver response for operator diagnostics', async () => {
+    const responseBody = JSON.stringify({
+      code: 400,
+      message: '参数校验失败',
+      fields: Array.from({ length: 300 }, (_, index) => ({
+        path: `data.items[${index}]`,
+        reason: '字段值不符合接收端约束',
+      })),
+    });
+    const complete = vi.fn<DeliveryRepository['complete']>();
+    const worker = workerWith(repository({ complete }), {
+      send: async () => ({ status: 200, body: responseBody }),
+    });
+
+    await expect(worker.runOnce()).resolves.toMatchObject({
+      status: 'SUCCEEDED',
+    });
+    expect(complete).toHaveBeenCalledWith(
+      expect.objectContaining({ responseSummary: responseBody }),
+    );
+  });
+
   it.each([
     'ftp://erp.example.com/callback',
     'http://erp.example.com/callback?token=secret',

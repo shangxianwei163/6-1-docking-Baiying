@@ -718,6 +718,21 @@ export function createApp(dependencies: AppDependencies) {
     return context.json(success(context.get('requestId'), data));
   });
 
+  app.get('/api/v1/integration-logs/:logId/detail', async (context) => {
+    requireActor(context.req.header('x-actor-id'));
+    const logId = z.string().min(1).max(600).parse(context.req.param('logId'));
+    const data =
+      await integrationLogDependency(dependencies).getLogDetail(logId);
+    if (!data) {
+      throw new ExternalApiFailure(
+        'INTEGRATION_LOG_NOT_FOUND',
+        '接口日志不存在或已清理',
+        404,
+      );
+    }
+    return context.json(success(context.get('requestId'), data));
+  });
+
   app.post('/api/v1/callback-previews', async (context) => {
     requireActor(context.req.header('x-actor-id'));
     const input = callbackPreviewInputSchema.parse(await context.req.json());
@@ -1283,7 +1298,10 @@ export function createApp(dependencies: AppDependencies) {
         413,
       );
     }
-    const principal = await authenticateExternal(authenticator, context.req.raw);
+    const principal = await authenticateExternal(
+      authenticator,
+      context.req.raw,
+    );
     const idempotencyKey = context.req.header('idempotency-key')?.trim();
     if (
       !idempotencyKey ||
@@ -1353,7 +1371,10 @@ export function createApp(dependencies: AppDependencies) {
         413,
       );
     }
-    const principal = await authenticateExternal(authenticator, context.req.raw);
+    const principal = await authenticateExternal(
+      authenticator,
+      context.req.raw,
+    );
     const idempotencyKey = context.req.header('idempotency-key')?.trim();
     if (
       !idempotencyKey ||
@@ -1420,7 +1441,10 @@ export function createApp(dependencies: AppDependencies) {
   app.get('/openapi/v2/outbound/batches/:batchId', async (context) => {
     const { authenticator, taskService } =
       externalApiDependencies(dependencies);
-    const principal = await authenticateExternal(authenticator, context.req.raw);
+    const principal = await authenticateExternal(
+      authenticator,
+      context.req.raw,
+    );
     const batchId = z.uuid().parse(context.req.param('batchId'));
     return context.json({
       code: 'OK',
@@ -1433,7 +1457,10 @@ export function createApp(dependencies: AppDependencies) {
   app.get('/openapi/v1/outbound/tasks/:taskNo', async (context) => {
     const { authenticator, taskService } =
       externalApiDependencies(dependencies);
-    const principal = await authenticateExternal(authenticator, context.req.raw);
+    const principal = await authenticateExternal(
+      authenticator,
+      context.req.raw,
+    );
     const taskNo = z
       .string()
       .regex(/^PT-\d{8}-\d{5,}$/)
@@ -1449,7 +1476,10 @@ export function createApp(dependencies: AppDependencies) {
   app.get('/openapi/v1/outbound/tasks/:taskNo/calls', async (context) => {
     const { authenticator, taskService } =
       externalApiDependencies(dependencies);
-    const principal = await authenticateExternal(authenticator, context.req.raw);
+    const principal = await authenticateExternal(
+      authenticator,
+      context.req.raw,
+    );
     const taskNo = z
       .string()
       .regex(/^PT-\d{8}-\d{5,}$/)

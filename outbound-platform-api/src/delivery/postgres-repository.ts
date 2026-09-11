@@ -269,7 +269,7 @@ export class PostgresDeliveryRepository implements DeliveryRepository {
         status: 'SUCCEEDED',
         requestedAt: input.requestedAt,
         responseStatus: input.responseStatus,
-        responseSummary: truncateNullable(input.responseSummary, 2_000),
+        responseSummary: input.responseSummary,
         durationMs: safeDuration(input.durationMs),
       });
       const changed = await tx
@@ -328,7 +328,7 @@ export class PostgresDeliveryRepository implements DeliveryRepository {
         status: input.retryable ? 'RETRYABLE_FAILURE' : 'PERMANENT_FAILURE',
         requestedAt: input.requestedAt,
         responseStatus: input.responseStatus,
-        responseSummary: truncateNullable(input.responseSummary, 2_000),
+        responseSummary: input.responseSummary,
         errorClass: truncate(input.errorClass, 128),
         errorMessage,
         durationMs: safeDuration(input.durationMs),
@@ -662,11 +662,4 @@ function claimLost(deliveryEventId: string): DeliveryClaimLostError {
 
 function truncate(value: string, maxLength: number): string {
   return value.length <= maxLength ? value : value.slice(0, maxLength);
-}
-
-function truncateNullable(
-  value: string | null,
-  maxLength: number,
-): string | null {
-  return value === null ? null : truncate(value, maxLength);
 }

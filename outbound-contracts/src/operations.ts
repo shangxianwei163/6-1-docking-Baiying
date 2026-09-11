@@ -816,6 +816,14 @@ export const operatorIntegrationLogPageSchema = z.object({
   items: z.array(operatorIntegrationLogSchema),
 });
 
+export const operatorIntegrationLogDetailSchema = z.object({
+  id: z.string().min(1).max(600),
+  detailLevel: z.enum(['FULL', 'STORED_SNAPSHOT']),
+  request: z.unknown(),
+  response: z.unknown(),
+  note: z.string().max(1000).nullable(),
+});
+
 export const operatorDeadLetterSourceTypeSchema = z.enum([
   'OUTBOX',
   'CALLBACK',
@@ -984,6 +992,9 @@ export type OperatorIntegrationLog = z.infer<
 >;
 export type OperatorIntegrationLogPage = z.infer<
   typeof operatorIntegrationLogPageSchema
+>;
+export type OperatorIntegrationLogDetail = z.infer<
+  typeof operatorIntegrationLogDetailSchema
 >;
 export type OperatorDeadLetterSourceType = z.infer<
   typeof operatorDeadLetterSourceTypeSchema
