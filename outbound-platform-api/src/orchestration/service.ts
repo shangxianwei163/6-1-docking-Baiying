@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { TaskExecutionStatus } from '@outbound/contracts';
 import {
   BaiyingProviderError,
@@ -238,7 +237,7 @@ export class TaskOrchestrationService {
   }
 
   private async createCallJob(task: OrchestrationTask, retry: boolean) {
-    const callJobName = buildCallJobName(task.taskNo, task.id);
+    const callJobName = buildCallJobName(task.taskName);
     const request = {
       callJobName,
       // 使用手动任务；定时任务（1）必须额外传 startDate，不适合平台异步编排。
@@ -290,7 +289,7 @@ export class TaskOrchestrationService {
       operationType: 'CREATE',
       message: 'Worker 在保存创建结果前中断，改用确定性任务名查询恢复',
     });
-    const callJobName = buildCallJobName(task.taskNo, task.id);
+    const callJobName = buildCallJobName(task.taskName);
     const operation = await this.repository.beginOperation({
       taskId: task.id,
       operationType: 'QUERY',
@@ -750,13 +749,11 @@ export class TaskOrchestrationService {
   }
 }
 
-export function buildCallJobName(taskNo: string, taskId: string): string {
-  const normalizedTaskNo = taskNo.replace(/^PT-/, '');
-  const shortHash = createHash('sha256')
-    .update(taskId, 'utf8')
-    .digest('hex')
-    .slice(0, 8);
-  return `PT-${normalizedTaskNo}-${shortHash}`;
+export function buildCallJobName(taskName: string): string {
+  if (!taskName.trim() || taskName.length > 200) {
+    throw new Error('平台任务名称必须为 1～200 个字符');
+  }
+  return taskName;
 }
 
 export function isStrictImportSuccess(

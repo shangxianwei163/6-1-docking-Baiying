@@ -10,17 +10,9 @@ import { LocalDataProtector } from '../security/data-protector.js';
 import { buildCallItemCorrelationToken } from '../security/correlation-token.js';
 
 describe('task orchestration helpers', () => {
-  it('builds a stable provider name without duplicating the PT prefix', () => {
-    const first = buildCallJobName(
-      'PT-20260906-00025',
-      '11111111-1111-4111-8111-111111111111',
-    );
-    const second = buildCallJobName(
-      'PT-20260906-00025',
-      '11111111-1111-4111-8111-111111111111',
-    );
-    expect(first).toMatch(/^PT-20260906-00025-[a-f0-9]{8}$/);
-    expect(second).toBe(first);
+  it('uses the exact platform task name for the Baiying call job', () => {
+    const taskName = '20260911排档孕妈-00003';
+    expect(buildCallJobName(taskName)).toBe(taskName);
   });
 
   it('binds a callback token to task, item and normalized phone hash', () => {
