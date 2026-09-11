@@ -21,16 +21,13 @@ for (const name of [
 
 const appConfig = readConfig();
 const baiyingConfig = readBaiyingConfig();
-if (appConfig.NODE_ENV === 'production')
-  throw new Error('本地轮询 worker 不能用于生产环境');
-
 const database = createDatabase(appConfig.DATABASE_URL);
 const repository = new PostgresMappingRepository(
   database.db,
   appConfig.VARIABLE_SYNC_QUEUE_NAME,
 );
 const outboxRepository = new PostgresOutboxRepository(database.db);
-const workerId = `local-baiying-sync:${process.pid}:${randomUUID().slice(0, 8)}`;
+const workerId = `baiying-sync:${process.pid}:${randomUUID().slice(0, 8)}`;
 const tokenProvider = new OAuthBaiyingTokenProvider({
   tokenUrl: baiyingConfig.BAIYING_TOKEN_URL,
   appKey: baiyingConfig.BAIYING_APP_KEY,
@@ -52,7 +49,7 @@ process.once('SIGTERM', () => {
 console.info(
   JSON.stringify({
     level: 'info',
-    message: 'Local Baiying OAuth v2 sync worker started',
+    message: 'Baiying OAuth v2 sync worker started',
   }),
 );
 while (!stopping) {

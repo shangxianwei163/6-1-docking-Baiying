@@ -2,20 +2,14 @@ import 'dotenv/config';
 import { hostname } from 'node:os';
 import { readConfig } from '../config.js';
 import { createDatabase } from '../db/client.js';
-import { LocalDataProtector } from '../security/data-protector.js';
+import { createRuntimeDataProtector } from '../security/data-protector.js';
 import { PostgresBaiyingCallbackProcessor } from './processor.js';
 import { PostgresCallbackInboxRepository } from './postgres-repository.js';
 import { BaiyingCallbackWorker } from './worker.js';
 
 const config = readConfig();
-if (config.NODE_ENV === 'production') {
-  throw new Error(
-    '生产环境禁止运行本地 Callback Worker；部署时必须注入 KMS DataProtector',
-  );
-}
-
 const database = createDatabase(config.DATABASE_URL);
-const protector = new LocalDataProtector(
+const protector = createRuntimeDataProtector(
   config.WORKER_SHARED_SECRET,
   config.NODE_ENV,
 );
@@ -24,7 +18,7 @@ const processor = new PostgresBaiyingCallbackProcessor(database.db, protector, {
   deliveryQueueName: config.CALLBACK_DELIVERY_QUEUE_NAME,
 });
 const worker = new BaiyingCallbackWorker(repository, processor, protector, {
-  workerId: `callback-local-${hostname()}-${process.pid}`.slice(0, 128),
+  workerId: `callback-${hostname()}-${process.pid}`.slice(0, 128),
 });
 
 let stopping = false;
@@ -32,7 +26,7 @@ let stopping = false;
 console.info(
   JSON.stringify({
     level: 'info',
-    message: 'Local Baiying callback worker started',
+    message: 'Baiying callback worker started',
   }),
 );
 

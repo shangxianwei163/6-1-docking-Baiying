@@ -19,3 +19,7 @@ export interface RecordingObjectReader {
     objectKey: string;
   }): Promise<OpenedRecordingObject>;
 }
+
+export interface RecordingObjectDeleter {
+  deleteObject(input: { bucket: string; objectKey: string }): Promise<void>;
+}

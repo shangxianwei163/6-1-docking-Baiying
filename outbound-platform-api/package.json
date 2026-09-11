@@ -39,6 +39,8 @@
     "stage4b:worker": "tsx src/reconciliation/local-worker.ts",
     "stage5:worker:local": "tsx src/recording/local-worker.ts",
     "recording:network-worker": "tsx src/recording/network-worker.ts",
+    "recording:verify-oss": "tsx src/recording/verify-oss-access.ts",
+    "recording:migrate-oss": "tsx src/recording/migrate-local-to-oss.ts",
     "stage5b:worker:local": "tsx src/delivery/local-worker.ts",
     "callback:delivery-worker": "tsx src/delivery/network-worker.ts",
     "preseed": "npm run build --workspace @outbound/contracts",
@@ -50,8 +52,10 @@
     "baiying:verify:live": "tsx src/baiying/verify-live-lifecycle.ts"
   },
   "dependencies": {
+    "@alicloud/credentials": "^2.4.7",
     "@hono/node-server": "2.1.1",
     "@outbound/contracts": "0.1.0",
+    "ali-oss": "^6.23.0",
     "dotenv": "17.4.2",
     "drizzle-orm": "0.45.2",
     "hono": "4.13.5",
@@ -59,6 +63,7 @@
     "zod": "4.5.4"
   },
   "devDependencies": {
+    "@types/ali-oss": "^6.23.3",
     "@types/node": "22.19.19",
     "drizzle-kit": "0.31.10",
     "tsx": "4.23.13",

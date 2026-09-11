@@ -37,6 +37,11 @@ describe('LocalRecordingObjectStore', () => {
     await expect(
       readdir(join(root, 'local-recordings/recordings/studio/task/call')),
     ).resolves.toEqual(['full.mp3']);
+    await store.deleteObject({
+      bucket: 'local-recordings',
+      objectKey: 'recordings/studio/task/call/full.mp3',
+    });
+    await expect(readFile(path)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('rejects path traversal and removes a partial file on stream failure', async () => {

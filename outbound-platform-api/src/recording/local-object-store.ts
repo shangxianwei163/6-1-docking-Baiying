@@ -8,12 +8,16 @@ import type {
   PutRecordingObjectInput,
   RecordingObjectStore,
   RecordingObjectReader,
+  RecordingObjectDeleter,
 } from './object-store.js';
 
 const SAFE_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 export class LocalRecordingObjectStore
-  implements RecordingObjectStore, RecordingObjectReader
+  implements
+    RecordingObjectStore,
+    RecordingObjectReader,
+    RecordingObjectDeleter
 {
   private readonly rootDirectory: string;
 
@@ -56,6 +60,12 @@ export class LocalRecordingObjectStore
       body: createReadStream(path),
       sizeBytes: BigInt(stats.size),
     };
+  }
+
+  async deleteObject(input: { bucket: string; objectKey: string }) {
+    const path = this.resolveObjectPath(input.bucket, input.objectKey);
+    await assertSafeExistingPath(this.rootDirectory, path);
+    await rm(path);
   }
 
   private resolveObjectPath(bucket: string, objectKey: string): string {

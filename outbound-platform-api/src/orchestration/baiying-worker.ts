@@ -5,7 +5,7 @@ import { OAuthBaiyingTokenProvider } from '../baiying/token-provider.js';
 import { readConfig } from '../config.js';
 import { createDatabase } from '../db/client.js';
 import { PostgresOutboxRepository } from '../outbox/postgres-repository.js';
-import { LocalDataProtector } from '../security/data-protector.js';
+import { createRuntimeDataProtector } from '../security/data-protector.js';
 import { PostgresTaskOrchestrationRepository } from './postgres-repository.js';
 import { TaskOrchestrationService } from './service.js';
 import { TaskOrchestrationWorker } from './worker.js';
@@ -25,12 +25,6 @@ if (
 ) {
   throw new Error('真实百应任务 Worker 未启动：百应 OAuth 配置不完整');
 }
-if (config.NODE_ENV === 'production') {
-  throw new Error(
-    '生产环境必须先接入 KMS DataProtector，不能使用本地密钥解密客户号码',
-  );
-}
-
 const tokenProvider = new OAuthBaiyingTokenProvider({
   tokenUrl: config.BAIYING_TOKEN_URL,
   appKey: config.BAIYING_APP_KEY,
@@ -50,7 +44,7 @@ const repository = new PostgresTaskOrchestrationRepository(database.db, {
 const orchestration = new TaskOrchestrationService(
   repository,
   client,
-  new LocalDataProtector(config.WORKER_SHARED_SECRET, config.NODE_ENV),
+  createRuntimeDataProtector(config.WORKER_SHARED_SECRET, config.NODE_ENV),
 );
 const worker = new TaskOrchestrationWorker(
   new PostgresOutboxRepository(database.db),

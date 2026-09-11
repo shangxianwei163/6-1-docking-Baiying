@@ -12,20 +12,13 @@ export interface DataProtector {
   correlationHmac(value: string): string;
 }
 
-export class LocalDataProtector implements DataProtector {
+class SharedSecretDataProtector implements DataProtector {
   private readonly encryptionKey: Buffer;
   private readonly phoneKey: Buffer;
   private readonly correlationKey: Buffer;
 
-  constructor(
-    rootSecret: string,
-    environment: 'development' | 'test' | 'production',
-  ) {
-    if (environment === 'production') {
-      throw new Error('生产环境禁止使用本地数据加密器');
-    }
-    if (rootSecret.length < 24)
-      throw new Error('本地根密钥长度至少为 24 个字符');
+  constructor(rootSecret: string) {
+    if (rootSecret.length < 24) throw new Error('根密钥长度至少为 24 个字符');
     this.encryptionKey = derive(rootSecret, 'data-encryption');
     this.phoneKey = derive(rootSecret, 'phone-hmac');
     this.correlationKey = derive(rootSecret, 'correlation-hmac');
@@ -71,6 +64,29 @@ export class LocalDataProtector implements DataProtector {
       .update(value, 'utf8')
       .digest('hex');
   }
+}
+
+export class LocalDataProtector extends SharedSecretDataProtector {
+  constructor(
+    rootSecret: string,
+    environment: 'development' | 'test' | 'production',
+  ) {
+    if (environment === 'production') {
+      throw new Error('生产环境禁止使用本地数据加密器');
+    }
+    super(rootSecret);
+  }
+}
+
+export class ServerEnvironmentDataProtector extends SharedSecretDataProtector {}
+
+export function createRuntimeDataProtector(
+  rootSecret: string,
+  environment: 'development' | 'test' | 'production',
+): DataProtector {
+  return environment === 'production'
+    ? new ServerEnvironmentDataProtector(rootSecret)
+    : new LocalDataProtector(rootSecret, environment);
 }
 
 function derive(rootSecret: string, purpose: string): Buffer {

@@ -4,7 +4,7 @@ import { readBaiyingConfig, readConfig } from '../config.js';
 import { createDatabase } from '../db/client.js';
 import { HttpBaiyingCallJobClient } from '../baiying/http-call-job-client.js';
 import { OAuthBaiyingTokenProvider } from '../baiying/token-provider.js';
-import { LocalDataProtector } from '../security/data-protector.js';
+import { createRuntimeDataProtector } from '../security/data-protector.js';
 import { PostgresCallbackInboxRepository } from '../callback/postgres-repository.js';
 import { BaiyingCallbackIngressService } from '../callback/ingress-service.js';
 import { PostgresReconciliationRepository } from './postgres-repository.js';
@@ -23,12 +23,6 @@ for (const name of [
 
 const config = readConfig();
 const baiying = readBaiyingConfig();
-if (config.NODE_ENV === 'production') {
-  throw new Error(
-    '阶段 2B KMS DataProtector 尚未接入，生产模式禁止使用本地密钥处理真实回调',
-  );
-}
-
 const database = createDatabase(config.DATABASE_URL);
 const tokenProvider = new OAuthBaiyingTokenProvider({
   tokenUrl: baiying.BAIYING_TOKEN_URL,
@@ -41,7 +35,7 @@ const client = new HttpBaiyingCallJobClient({
   tokenProvider,
   timeoutMs: config.BAIYING_REQUEST_TIMEOUT_MS,
 });
-const protector = new LocalDataProtector(
+const protector = createRuntimeDataProtector(
   config.WORKER_SHARED_SECRET,
   config.NODE_ENV,
 );

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { LocalDataProtector } from './data-protector.js';
+import {
+  LocalDataProtector,
+  createRuntimeDataProtector,
+} from './data-protector.js';
 
 describe('local data protector', () => {
   const protector = new LocalDataProtector(
@@ -33,6 +36,24 @@ describe('local data protector', () => {
     );
     expect(protector.correlationHmac('13800138000')).not.toBe(
       protector.phoneHmac('13800138000'),
+    );
+  });
+
+  it('keeps production ciphertext and hashes compatible with existing data', () => {
+    const production = createRuntimeDataProtector(
+      'test-root-secret-with-at-least-24-characters',
+      'production',
+    );
+    const legacyCiphertext = protector.encryptUtf8('13800138000');
+    const productionCiphertext = production.encryptUtf8('13900139000');
+
+    expect(production.decryptUtf8(legacyCiphertext)).toBe('13800138000');
+    expect(protector.decryptUtf8(productionCiphertext)).toBe('13900139000');
+    expect(production.phoneHmac('13800138000')).toBe(
+      protector.phoneHmac('13800138000'),
+    );
+    expect(production.correlationHmac('task\0item\0phone-hmac')).toBe(
+      protector.correlationHmac('task\0item\0phone-hmac'),
     );
   });
 });

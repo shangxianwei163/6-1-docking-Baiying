@@ -1,16 +1,15 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
-import { resolve } from 'node:path';
 import { readConfig } from '../config.js';
 import { createDatabase } from '../db/client.js';
 import { PostgresOutboxRepository } from '../outbox/postgres-repository.js';
 import { RecordingAccessService } from '../recording/access-service.js';
-import { LocalRecordingObjectStore } from '../recording/local-object-store.js';
 import { PostgresRecordingAccessRepository } from '../recording/postgres-access-repository.js';
-import { LocalRecordingUrlSigner } from '../recording/url-signer.js';
-import { LocalDataProtector } from '../security/data-protector.js';
-import { LocalDevelopmentSecretProvider } from '../security/secret-provider.js';
+import { createRuntimeRecordingStorage } from '../recording/runtime-object-store.js';
+import { createRuntimeRecordingUrlSigner } from '../recording/url-signer.js';
+import { createRuntimeDataProtector } from '../security/data-protector.js';
+import { createRuntimeSecretProvider } from '../security/secret-provider.js';
 import { DeliveryOutboxProjector } from './outbox-projector.js';
 import { PostgresDeliveryRepository } from './postgres-repository.js';
 import { PostgresRecordingDeliveryEventBuilder } from './recording-event-builder.js';
@@ -18,24 +17,20 @@ import { HttpDeliveryTransport } from './transport.js';
 import { CallbackDeliveryWorker } from './worker.js';
 
 const config = readConfig();
-if (config.NODE_ENV === 'production') {
-  throw new Error(
-    '正式生产环境必须先替换本地派生密钥提供器，再启用网络回调投递 Worker',
-  );
-}
 const database = createDatabase(config.DATABASE_URL);
-const secrets = new LocalDevelopmentSecretProvider(
+const secrets = createRuntimeSecretProvider(
   config.WORKER_SHARED_SECRET,
   config.NODE_ENV,
 );
-const protector = new LocalDataProtector(
+const protector = createRuntimeDataProtector(
   config.WORKER_SHARED_SECRET,
   config.NODE_ENV,
 );
+const recordingStorage = await createRuntimeRecordingStorage(config);
 const access = new RecordingAccessService(
   new PostgresRecordingAccessRepository(database.db),
-  new LocalRecordingObjectStore(resolve(config.RECORDING_LOCAL_ROOT)),
-  new LocalRecordingUrlSigner(config.WORKER_SHARED_SECRET, config.NODE_ENV),
+  recordingStorage.objectStore,
+  createRuntimeRecordingUrlSigner(config.WORKER_SHARED_SECRET, config.NODE_ENV),
   {
     publicBaseUrl: config.RECORDING_CALLBACK_BASE_URL,
     ttlSeconds: config.RECORDING_DOWNLOAD_TTL_SECONDS,
@@ -69,6 +64,7 @@ console.info(
   JSON.stringify({
     level: 'info',
     message: 'Network callback delivery worker started',
+    storageDriver: config.RECORDING_STORAGE_DRIVER,
   }),
 );
 

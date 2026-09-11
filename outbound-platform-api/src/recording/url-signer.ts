@@ -15,19 +15,13 @@ export interface RecordingUrlSigner {
   verify(input: RecordingUrlSignatureInput, signature: string): boolean;
 }
 
-export class LocalRecordingUrlSigner implements RecordingUrlSigner {
+class SharedSecretRecordingUrlSigner implements RecordingUrlSigner {
   private readonly audienceKey: Buffer;
   private readonly signatureKey: Buffer;
 
-  constructor(
-    rootSecret: string,
-    environment: 'development' | 'test' | 'production',
-  ) {
-    if (environment === 'production') {
-      throw new Error('生产环境禁止使用本地录音 URL 签名器');
-    }
+  constructor(rootSecret: string) {
     if (rootSecret.length < 24) {
-      throw new Error('本地录音 URL 根密钥长度至少为 24 个字符');
+      throw new Error('录音 URL 根密钥长度至少为 24 个字符');
     }
     this.audienceKey = derive(rootSecret, 'recording-url-audience');
     this.signatureKey = derive(rootSecret, 'recording-url-signature');
@@ -60,6 +54,29 @@ export class LocalRecordingUrlSigner implements RecordingUrlSigner {
       actual.length === expected.length && timingSafeEqual(actual, expected)
     );
   }
+}
+
+export class LocalRecordingUrlSigner extends SharedSecretRecordingUrlSigner {
+  constructor(
+    rootSecret: string,
+    environment: 'development' | 'test' | 'production',
+  ) {
+    if (environment === 'production') {
+      throw new Error('生产环境禁止使用本地录音 URL 签名器');
+    }
+    super(rootSecret);
+  }
+}
+
+export class ServerEnvironmentRecordingUrlSigner extends SharedSecretRecordingUrlSigner {}
+
+export function createRuntimeRecordingUrlSigner(
+  rootSecret: string,
+  environment: 'development' | 'test' | 'production',
+): RecordingUrlSigner {
+  return environment === 'production'
+    ? new ServerEnvironmentRecordingUrlSigner(rootSecret)
+    : new LocalRecordingUrlSigner(rootSecret, environment);
 }
 
 function canonical(input: RecordingUrlSignatureInput): string {

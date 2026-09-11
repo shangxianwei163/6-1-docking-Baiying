@@ -1,5 +1,4 @@
 import 'dotenv/config';
-import { resolve } from 'node:path';
 import { serve } from '@hono/node-server';
 import { readConfig } from './config.js';
 import { createDatabase } from './db/client.js';
@@ -13,8 +12,7 @@ import { PostgresScriptRepository } from './script/postgres-repository.js';
 import { PostgresLineRepository } from './line/postgres-repository.js';
 import { HttpSxErpCategoryClient } from './source-category/client.js';
 import { ErpCategorySyncService } from './source-category/sync-service.js';
-import { LocalDevelopmentSecretProvider } from './security/secret-provider.js';
-import { LocalDataProtector } from './security/data-protector.js';
+import { createRuntimeDataProtector } from './security/data-protector.js';
 import { PostgresExternalRequestAuthenticator } from './openapi/authenticator.js';
 import { PostgresOutboundTaskService } from './outbound-task/service.js';
 import { PostgresCallbackInboxRepository } from './callback/postgres-repository.js';
@@ -34,9 +32,9 @@ import {
 import { SafeCallbackPreviewService } from './operations/callback-preview-service.js';
 import { RecordingAccessService } from './recording/access-service.js';
 import { PostgresRecordingUrlReissueService } from './recording/reissue-service.js';
-import { LocalRecordingObjectStore } from './recording/local-object-store.js';
 import { PostgresRecordingAccessRepository } from './recording/postgres-access-repository.js';
-import { LocalRecordingUrlSigner } from './recording/url-signer.js';
+import { createRuntimeRecordingUrlSigner } from './recording/url-signer.js';
+import { createRuntimeRecordingStorage } from './recording/runtime-object-store.js';
 import { OperatorSessionService } from './security/operator-session.js';
 import { PostgresReconciliationRepository } from './reconciliation/postgres-repository.js';
 
@@ -81,38 +79,31 @@ const erpCategorySyncService = config.SX_ERP_CATEGORY_TOKEN
       plannedTaskRepository,
     )
   : undefined;
-const localSecretProvider =
-  config.NODE_ENV === 'production'
-    ? undefined
-    : new LocalDevelopmentSecretProvider(
-        config.WORKER_SHARED_SECRET,
-        config.NODE_ENV,
-      );
 const externalRequestAuthenticator = new PostgresExternalRequestAuthenticator(
   database.db,
 );
-const localDataProtector =
-  config.NODE_ENV === 'production'
-    ? undefined
-    : new LocalDataProtector(config.WORKER_SHARED_SECRET, config.NODE_ENV);
+const dataProtector = createRuntimeDataProtector(
+  config.WORKER_SHARED_SECRET,
+  config.NODE_ENV,
+);
 const supplierMonthlySettlementService =
   new PostgresSupplierMonthlySettlementService(database.db);
-const outboundTaskService = localSecretProvider
-  ? new PostgresOutboundTaskService(database.db, localDataProtector!, {
-      baiyingCompanyId: config.BAIYING_COMPANY_ID ?? 'LOCAL-MOCK',
-      queueName: config.TASK_ORCHESTRATION_QUEUE_NAME,
-      supplierMonthlySettlementService,
-    })
-  : undefined;
-const baiyingCallbackIngress = localDataProtector
-  ? new BaiyingCallbackIngressService(
-      new PostgresCallbackInboxRepository(database.db),
-      localDataProtector,
-    )
-  : undefined;
+const outboundTaskService = new PostgresOutboundTaskService(
+  database.db,
+  dataProtector,
+  {
+    baiyingCompanyId: config.BAIYING_COMPANY_ID ?? 'LOCAL-MOCK',
+    queueName: config.TASK_ORCHESTRATION_QUEUE_NAME,
+    supplierMonthlySettlementService,
+  },
+);
+const baiyingCallbackIngress = new BaiyingCallbackIngressService(
+  new PostgresCallbackInboxRepository(database.db),
+  dataProtector,
+);
 const operationsConsoleService = new PostgresOperationsConsoleService(
   database.db,
-  localDataProtector,
+  dataProtector,
 );
 const accountAdjustmentService = new PostgresAccountAdjustmentService(
   database.db,
@@ -123,7 +114,7 @@ const operationsOverviewService = new PostgresOperationsOverviewService(
 );
 const integrationLogService = new PostgresIntegrationLogService(
   database.db,
-  localDataProtector,
+  dataProtector,
 );
 const recoveryOperationsService = new PostgresRecoveryOperationsService(
   database.db,
@@ -132,28 +123,30 @@ const reconciliationOperations = new PostgresReconciliationRepository(
   database.db,
 );
 const callbackPreviewService = new SafeCallbackPreviewService();
-const recordingUrlSigner = localDataProtector
-  ? new LocalRecordingUrlSigner(config.WORKER_SHARED_SECRET, config.NODE_ENV)
-  : undefined;
-const recordingAccessService = recordingUrlSigner
-  ? new RecordingAccessService(
-      new PostgresRecordingAccessRepository(database.db),
-      new LocalRecordingObjectStore(resolve(config.RECORDING_LOCAL_ROOT)),
-      recordingUrlSigner,
-      {
-        publicBaseUrl: config.RECORDING_PUBLIC_BASE_URL,
-        ttlSeconds: config.RECORDING_DOWNLOAD_TTL_SECONDS,
-        environment: config.NODE_ENV,
-      },
-    )
-  : undefined;
-const recordingUrlReissueService = recordingUrlSigner
-  ? new PostgresRecordingUrlReissueService(database.db, recordingUrlSigner, {
-      publicBaseUrl: config.RECORDING_CALLBACK_BASE_URL,
-      ttlSeconds: config.RECORDING_DOWNLOAD_TTL_SECONDS,
-      environment: config.NODE_ENV,
-    })
-  : undefined;
+const recordingUrlSigner = createRuntimeRecordingUrlSigner(
+  config.WORKER_SHARED_SECRET,
+  config.NODE_ENV,
+);
+const recordingStorage = await createRuntimeRecordingStorage(config);
+const recordingAccessService = new RecordingAccessService(
+  new PostgresRecordingAccessRepository(database.db),
+  recordingStorage.objectStore,
+  recordingUrlSigner,
+  {
+    publicBaseUrl: config.RECORDING_PUBLIC_BASE_URL,
+    ttlSeconds: config.RECORDING_DOWNLOAD_TTL_SECONDS,
+    environment: config.NODE_ENV,
+  },
+);
+const recordingUrlReissueService = new PostgresRecordingUrlReissueService(
+  database.db,
+  recordingUrlSigner,
+  {
+    publicBaseUrl: config.RECORDING_CALLBACK_BASE_URL,
+    ttlSeconds: config.RECORDING_DOWNLOAD_TTL_SECONDS,
+    environment: config.NODE_ENV,
+  },
+);
 const baiyingTokenProvider =
   config.BAIYING_TOKEN_URL &&
   config.BAIYING_APP_KEY &&

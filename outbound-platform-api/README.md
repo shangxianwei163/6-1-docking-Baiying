@@ -61,7 +61,7 @@ npm run baiying:verify:live
 npm run baiying:task-worker
 ```
 
-开发环境未开启该开关时继续使用零网络模拟命令；生产环境在 KMS `DataProtector` 接入前拒绝启动真实任务 Worker。
+开发环境未开启该开关时继续使用零网络模拟命令；生产环境使用服务器环境中的现有共享秘钥，并保持历史 AES/HMAC/HKDF 算法和密文格式兼容。
 
 ## 阶段 1 数据底座
 
@@ -149,7 +149,7 @@ npm run db:verify:stage4b
 npm run stage4b:worker
 ```
 
-0019 为扩展式迁移；生产环境不通过破坏性 down 回滚。当前本地加密器在 `NODE_ENV=production` 下会拒绝启动，接入 KMS `DataProtector` 前部署环境应保持受控开发模式。
+0019 为扩展式迁移；生产环境不通过破坏性 down 回滚。真实服务通过运行时适配器读取服务器环境中的现有共享秘钥；本地 fixture 适配器仍会在 `NODE_ENV=production` 下拒绝启动。
 
 ## 阶段 5A 本地录音归档闭环
 
@@ -170,7 +170,11 @@ npm run db:verify:stage5a
 npm run stage5:worker:local
 ```
 
-`NODE_ENV=production` 会拒绝启动本地录音 Worker。0012 的开发/测试回滚脚本为 `drizzle/rollback/0012_recording_archive_worker.down.sql`；生产环境不执行破坏性 down 脚本。阿里云 OSS 私有 Bucket、SSE-KMS、面向 ERP/CRM 的鉴权重签接口和事件回传属于阶段 5B，在真实配置到位前不会进入生产启动路径。
+`NODE_ENV=production` 会拒绝启动本地 fixture 录音 Worker，但真实网络录音 Worker 可使用私有 OSS。0012 的开发/测试回滚脚本为 `drizzle/rollback/0012_recording_archive_worker.down.sql`；生产环境不执行破坏性 down 脚本。ERP/CRM 仍获取平台签名的短期下载地址，不会暴露 OSS Bucket 或对象键。
+
+### 正式 OSS 录音存储
+
+正式环境设置 `RECORDING_STORAGE_DRIVER=oss`，并配置 `OSS_BUCKET`、`OSS_ENDPOINT`、`OSS_REGION` 与 `OSS_ECS_RAM_ROLE_NAME`。应用通过 ECS RAM Role 的 IMDSv2 临时凭据访问私有 Bucket，不配置长期 AccessKey，也不启用 SSE-KMS。切换前运行 `npm run recording:verify-oss` 验证临时凭据及对象读、写、删权限；随后运行 `npm run recording:migrate-oss` 校验本地文件与数据库 SHA-256、上传并回读校验，最后仅更新数据库 Bucket，原本地副本保留用于回滚。
 
 ## 阶段 6A 真实任务运营页
 
@@ -303,7 +307,7 @@ npm run db:verify:stage7a
 npm run stage7:verify:local
 ```
 
-真实三方契约、百应限流、阿里云 OSS/KMS、生产 SSO/WAF 和小流量灰度仍需在相应测试资源到位后执行。
+真实三方契约、百应限流、阿里云 OSS 生产权限、生产 SSO/WAF 和小流量灰度仍需在相应测试资源到位后执行。
 
 ## 阶段 7B 供应商月结与账务核对
 
@@ -339,4 +343,4 @@ npm run stage7b:verify:ui
 
 阶段 0 契约、阶段 1 数据底座、阶段 2A 本地任务受理、阶段 3A 本地百应编排、阶段 4A 本地回调计费、阶段 5A/5B 本地录音归档与回传、阶段 6A/6B 真实运营后台，以及阶段 7A/7B 本地容量、并发和供应商月结验收均已完成，包括配置版本、任务模型、账户账本、双人复核、外部固定 Token 认证、原子受理、可恢复的 Callback Inbox、录音发现、投递/死信、人工重放、规范化话术绑定、PostgreSQL Outbox 安全领取与重试、10,000 条容量和回调突发恢复能力，以及可审计、可幂等、可检测迟到数据的月度成本封账。
 
-百应最新 OAuth v2 鉴权、公司发现、机器人/话术发现和话术变量查询已接入。可执行 `npm run baiying:check` 做只读链路检查，或执行 `npm run baiying:sync` 将真实变量快照幂等写入本地 PostgreSQL。真实 ERP/CRM 凭证、回调地址和阿里云 KMS 适配归入阶段 2B；真实百应写接口、回调联调和完成通话分页补偿归入阶段 3B/4B，当前不会拨号或调用真实 ERP/CRM。生产队列首期使用 PostgreSQL Outbox/Inbox Worker，达到方案阈值后接入阿里云 RocketMQ 5.x，事务 Outbox 与持久 Inbox 始终保留。
+百应最新 OAuth v2 鉴权、公司发现、机器人/话术发现和话术变量查询已接入。可执行 `npm run baiying:check` 做只读链路检查，或执行 `npm run baiying:sync` 将真实变量快照幂等写入本地 PostgreSQL。生产录音使用 ECS RAM Role 访问私有 OSS；服务器现有秘钥保持不变，不依赖 KMS。生产队列首期使用 PostgreSQL Outbox/Inbox Worker，达到方案阈值后接入阿里云 RocketMQ 5.x，事务 Outbox 与持久 Inbox 始终保留。

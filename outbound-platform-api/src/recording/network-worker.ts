@@ -1,23 +1,18 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
-import { resolve } from 'node:path';
 import { readConfig } from '../config.js';
 import { createDatabase } from '../db/client.js';
-import { LocalDataProtector } from '../security/data-protector.js';
+import { createRuntimeDataProtector } from '../security/data-protector.js';
 import { RecordingArchiveService } from './archive-service.js';
 import { parseRecordingSourceAllowedHosts } from './allowed-hosts.js';
-import { LocalRecordingObjectStore } from './local-object-store.js';
 import { PostgresRecordingArchiveRepository } from './postgres-repository.js';
+import { createRuntimeRecordingStorage } from './runtime-object-store.js';
 import { SecureHttpRecordingSource } from './safe-http-source.js';
 import { RecordingArchiveWorker } from './worker.js';
 
 const config = readConfig();
-if (config.NODE_ENV === 'production') {
-  throw new Error(
-    '正式生产环境必须先替换本地录音存储和本地数据加密适配器，再启用网络录音 Worker',
-  );
-}
+const recordingStorage = await createRuntimeRecordingStorage(config);
 const allowedHosts = parseRecordingSourceAllowedHosts(
   config.RECORDING_SOURCE_ALLOWED_HOSTS,
 );
@@ -28,11 +23,11 @@ const repository = new PostgresRecordingArchiveRepository(
   config.CALLBACK_DELIVERY_QUEUE_NAME,
 );
 const archiveService = new RecordingArchiveService(
-  new LocalDataProtector(config.WORKER_SHARED_SECRET, config.NODE_ENV),
+  createRuntimeDataProtector(config.WORKER_SHARED_SECRET, config.NODE_ENV),
   new SecureHttpRecordingSource(allowedHosts),
-  new LocalRecordingObjectStore(resolve(config.RECORDING_LOCAL_ROOT)),
+  recordingStorage.objectStore,
   {
-    bucket: config.RECORDING_LOCAL_BUCKET,
+    bucket: recordingStorage.bucket,
     maxBytes: config.RECORDING_MAX_BYTES,
     retentionDays: config.RECORDING_RETENTION_DAYS,
   },
@@ -53,6 +48,7 @@ console.info(
     level: 'info',
     message: 'Network recording archive worker started',
     allowedHostCount: allowedHosts.length,
+    storageDriver: config.RECORDING_STORAGE_DRIVER,
   }),
 );
 
