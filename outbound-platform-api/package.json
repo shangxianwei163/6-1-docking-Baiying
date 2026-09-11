@@ -41,6 +41,7 @@
     "recording:network-worker": "tsx src/recording/network-worker.ts",
     "recording:verify-oss": "tsx src/recording/verify-oss-access.ts",
     "recording:migrate-oss": "tsx src/recording/migrate-local-to-oss.ts",
+    "callback:ignore-unmanaged": "tsx src/callback/ignore-legacy-unmanaged.ts",
     "stage5b:worker:local": "tsx src/delivery/local-worker.ts",
     "callback:delivery-worker": "tsx src/delivery/network-worker.ts",
     "preseed": "npm run build --workspace @outbound/contracts",

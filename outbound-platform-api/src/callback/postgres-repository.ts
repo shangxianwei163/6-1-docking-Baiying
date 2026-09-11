@@ -8,6 +8,7 @@ import {
 import {
   CallbackClaimLostError,
   type CallbackFailureResult,
+  type CallbackIgnoredResult,
   type CallbackInboxRepository,
   type CallbackIngestResult,
   type ClaimedCallback,
@@ -189,6 +190,62 @@ export class PostgresCallbackInboxRepository implements CallbackInboxRepository 
           ),
         );
     });
+  }
+
+  async ignoreUnmanagedTask(input: {
+    inboxId: string;
+    workerId: string;
+  }): Promise<CallbackIgnoredResult> {
+    assertWorkerId(input.workerId);
+    await this.db.transaction(async (tx) => {
+      const inbox = await lockClaimedCallback(
+        tx,
+        input.inboxId,
+        input.workerId,
+      );
+      const now = this.clock();
+      await tx
+        .update(callbackInbox)
+        .set({
+          parseStatus: 'VALID',
+          processStatus: 'SUCCEEDED',
+          parseError: null,
+          processError: null,
+          lockedAt: null,
+          lockedBy: null,
+          processedAt: now,
+          deadLetteredAt: null,
+        })
+        .where(eq(callbackInbox.id, inbox.id));
+      await tx.insert(operationalMetricEvents).values({
+        metricCode: 'CALLBACK_UNMANAGED_TASK_IGNORED',
+        sourceSystem: this.provider,
+        objectRef: inbox.id,
+        detail: {
+          callbackType: inbox.callbackType,
+          eventKey: inbox.eventKey,
+          processAttempts: inbox.processAttempts,
+          reason: 'UNMANAGED_TASK',
+        },
+        occurredAt: now,
+      });
+      await tx
+        .update(deadLetterEvents)
+        .set({
+          status: 'IGNORED',
+          resolvedBy: input.workerId,
+          resolvedAt: now,
+          resolutionNote: '自动忽略：回调来自非本平台创建的百应任务',
+        })
+        .where(
+          and(
+            eq(deadLetterEvents.sourceType, 'CALLBACK'),
+            eq(deadLetterEvents.sourceId, inbox.id),
+            eq(deadLetterEvents.status, 'REPLAYING'),
+          ),
+        );
+    });
+    return { status: 'IGNORED', reason: 'UNMANAGED_TASK' };
   }
 
   async reject(input: {

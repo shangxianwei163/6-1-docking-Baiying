@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { DataProtector } from '../security/data-protector.js';
 import {
   CallbackBusinessConflictError,
+  CallbackTaskNotFoundError,
   type BaiyingCallbackProcessor,
 } from './processor.js';
 import type {
@@ -25,6 +26,12 @@ export type CallbackWorkerResult =
       settled: boolean;
     }
   | {
+      status: 'IGNORED';
+      inboxId: string;
+      callbackType: string;
+      reason: 'UNMANAGED_TASK';
+    }
+  | {
       status: 'REJECTED';
       inboxId: string;
       parseStatus: 'INVALID' | 'UNKNOWN_TYPE';
@@ -42,6 +49,7 @@ export class BaiyingCallbackWorker {
       retryDelaysMs?: number[];
       lockTimeoutSeconds?: number;
       eventKey?: string;
+      unmanagedTaskRetryDelaysMs?: number[];
     },
   ) {}
 
@@ -97,6 +105,14 @@ export class BaiyingCallbackWorker {
         ...outcome,
       };
     } catch (error) {
+      if (error instanceof CallbackTaskNotFoundError) {
+        return this.handleUnmanagedTask(
+          claimed.id,
+          claimed.processAttempts,
+          callback.callbackType,
+          error,
+        );
+      }
       return this.fail(
         claimed.id,
         claimed.processAttempts,
@@ -105,6 +121,33 @@ export class BaiyingCallbackWorker {
         error instanceof CallbackBusinessConflictError,
       );
     }
+  }
+
+  private async handleUnmanagedTask(
+    inboxId: string,
+    attempts: number,
+    callbackType: string,
+    error: CallbackTaskNotFoundError,
+  ): Promise<CallbackWorkerResult> {
+    const retryDelays = this.options.unmanagedTaskRetryDelaysMs ?? [
+      10_000, 50_000, 240_000,
+    ];
+    if (attempts > retryDelays.length) {
+      const ignored = await this.repository.ignoreUnmanagedTask({
+        inboxId,
+        workerId: this.options.workerId,
+      });
+      return { inboxId, callbackType, ...ignored };
+    }
+    const result = await this.repository.fail({
+      inboxId,
+      workerId: this.options.workerId,
+      error: errorMessage(error),
+      retryDelayMs: retryDelays[attempts - 1]!,
+      maxAttempts: retryDelays.length + 1,
+      parseStatus: 'VALID',
+    });
+    return { inboxId, ...result };
   }
 
   private async fail(

@@ -26,6 +26,11 @@ export type CallbackFailureResult = {
   availableAt: string | null;
 };
 
+export type CallbackIgnoredResult = {
+  status: 'IGNORED';
+  reason: 'UNMANAGED_TASK';
+};
+
 export class CallbackClaimLostError extends Error {}
 
 export interface CallbackInboxRepository {
@@ -45,6 +50,10 @@ export interface CallbackInboxRepository {
     eventKey?: string;
   }): Promise<ClaimedCallback | null>;
   complete(input: { inboxId: string; workerId: string }): Promise<void>;
+  ignoreUnmanagedTask(input: {
+    inboxId: string;
+    workerId: string;
+  }): Promise<CallbackIgnoredResult>;
   reject(input: {
     inboxId: string;
     workerId: string;

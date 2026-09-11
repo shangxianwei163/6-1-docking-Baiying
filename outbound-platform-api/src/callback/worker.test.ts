@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { LocalDataProtector } from '../security/data-protector.js';
 import {
   CallbackBusinessConflictError,
+  CallbackTaskNotFoundError,
   type BaiyingCallbackProcessor,
 } from './processor.js';
 import type { CallbackInboxRepository } from './repository.js';
@@ -96,6 +97,85 @@ describe('BaiyingCallbackWorker', () => {
     );
   });
 
+  it('briefly retries a callback for an unmanaged Baiying task', async () => {
+    const rawBody = jobCallback('JOB_INFO_RESULT');
+    const fail = vi.fn<CallbackInboxRepository['fail']>(async () => ({
+      status: 'RETRY_SCHEDULED',
+      attempts: 1,
+      availableAt: '2026-09-06T12:00:10.000Z',
+    }));
+    const ignoreUnmanagedTask =
+      vi.fn<CallbackInboxRepository['ignoreUnmanagedTask']>();
+    const worker = new BaiyingCallbackWorker(
+      repositoryFor(rawBody, { fail, ignoreUnmanagedTask }),
+      {
+        process: vi.fn(async () => {
+          throw new CallbackTaskNotFoundError('未找到百应任务');
+        }),
+      },
+      protector,
+      { workerId: 'worker-unmanaged-retry' },
+    );
+
+    await expect(worker.runOnce()).resolves.toMatchObject({
+      status: 'RETRY_SCHEDULED',
+      attempts: 1,
+    });
+    expect(fail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        retryDelayMs: 10_000,
+        maxAttempts: 4,
+        parseStatus: 'VALID',
+      }),
+    );
+    expect(ignoreUnmanagedTask).not.toHaveBeenCalled();
+  });
+
+  it('ignores an unmanaged Baiying task after the five-minute grace period', async () => {
+    const rawBody = jobCallback('JOB_INFO_RESULT');
+    const ignoreUnmanagedTask = vi.fn<
+      CallbackInboxRepository['ignoreUnmanagedTask']
+    >(async () => ({ status: 'IGNORED', reason: 'UNMANAGED_TASK' }));
+    const claimNext = vi.fn<CallbackInboxRepository['claimNext']>();
+    const fail = vi.fn<CallbackInboxRepository['fail']>();
+    const repository = repositoryFor(rawBody, {
+      claimNext,
+      fail,
+      ignoreUnmanagedTask,
+    });
+    claimNext.mockResolvedValueOnce({
+      id: '06dc2653-59e6-4150-92b7-f710575441cf',
+      callbackType: 'JOB_INFO_RESULT',
+      eventKey: 'event-key',
+      rawBodyCiphertext: protector.encryptUtf8(rawBody),
+      rawBodySha256: inspectBaiyingCallback(rawBody).rawBodySha256,
+      processAttempts: 4,
+      receivedAt: '2026-09-06T12:00:00.000Z',
+    });
+    const worker = new BaiyingCallbackWorker(
+      repository,
+      {
+        process: vi.fn(async () => {
+          throw new CallbackTaskNotFoundError('未找到百应任务');
+        }),
+      },
+      protector,
+      { workerId: 'worker-unmanaged-ignore' },
+    );
+
+    await expect(worker.runOnce()).resolves.toEqual({
+      status: 'IGNORED',
+      inboxId: '06dc2653-59e6-4150-92b7-f710575441cf',
+      callbackType: 'JOB_INFO_RESULT',
+      reason: 'UNMANAGED_TASK',
+    });
+    expect(ignoreUnmanagedTask).toHaveBeenCalledWith({
+      inboxId: '06dc2653-59e6-4150-92b7-f710575441cf',
+      workerId: 'worker-unmanaged-ignore',
+    });
+    expect(fail).not.toHaveBeenCalled();
+  });
+
   it('dead-letters a deterministic correlation conflict immediately', async () => {
     const rawBody = jobCallback('JOB_INFO_RESULT');
     const fail = vi.fn<CallbackInboxRepository['fail']>(async () => ({
@@ -140,6 +220,7 @@ function repositoryFor(
       receivedAt: '2026-09-06T12:00:00.000Z',
     })),
     complete: vi.fn(),
+    ignoreUnmanagedTask: vi.fn(),
     reject: vi.fn(),
     fail: vi.fn(),
     ...overrides,
