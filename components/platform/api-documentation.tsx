@@ -252,57 +252,60 @@ const callbackHeaders: Row[] = [
   ],
 ];
 const resultEvent = `{
-  "event_id": "8d87e451-8aad-4a48-90a1-b6e38429a964",
-  "event_type": "OUTBOUND_CALL_RESULT",
-  "occurred_at": "2026-09-10T15:30:25+08:00",
-  "company_code": "5903679116",
-  "batch_id": "59fd515e-00f2-4d62-93ec-8883fb3aa090",
-  "task_no": "PT-20260910-00001",
-  "customer": {
-    "guid": "CRM-CUSTOMER-10001",
-    "customer_name": "张女士",
-    "phone_masked": "138****8888"
-  },
-  "customer_result": {
-    "result_code": "HIGH_INTENT",
-    "result_text": "客户有明确意向，建议尽快跟进",
-    "contacted": true,
-    "intention_level": "A",
-    "intention_text": "高意向",
-    "summary": "客户计划近期拍摄婚纱照，关注套餐价格和外景拍摄。",
-    "follow_up_required": true,
-    "recommended_action": "建议销售人员尽快联系客户并发送套餐报价",
-    "customer_concerns": ["套餐价格", "外景拍摄"],
-    "customer_tags": ["婚纱照", "近期需求", "高意向"],
-    "collected_data": {
-      "拍摄类型": "婚纱照",
-      "预算": "5000元左右",
-      "意向门店": "海口店",
-      "期望拍摄时间": "2026年10月"
-    }
-  },
-  "call": {
-    "status": "ANSWERED",
-    "status_text": "已接通",
-    "called_at": "2026-09-10T15:28:30+08:00",
-    "duration_seconds": 115
-  },
-  "conversation_logs": [
-    {
-      "sequence": 1,
-      "speaker": "AI",
-      "content": "您好，请问近期有拍摄婚纱照的计划吗？"
+  "Token": "^******^",
+  "Data": {
+    "event_id": "8d87e451-8aad-4a48-90a1-b6e38429a964",
+    "event_type": "OUTBOUND_CALL_RESULT",
+    "occurred_at": "2026-09-10T15:30:25+08:00",
+    "company_code": "5903679116",
+    "batch_id": "59fd515e-00f2-4d62-93ec-8883fb3aa090",
+    "task_no": "PT-20260910-00001",
+    "customer": {
+      "guid": "CRM-CUSTOMER-10001",
+      "customer_name": "张女士",
+      "phone_masked": "138****8888"
     },
-    {
-      "sequence": 2,
-      "speaker": "CUSTOMER",
-      "content": "有的，我想了解一下你们的价格。"
+    "customer_result": {
+      "result_code": "HIGH_INTENT",
+      "result_text": "客户有明确意向，建议尽快跟进",
+      "contacted": true,
+      "intention_level": "A",
+      "intention_text": "高意向",
+      "summary": "客户计划近期拍摄婚纱照，关注套餐价格和外景拍摄。",
+      "follow_up_required": true,
+      "recommended_action": "建议销售人员尽快联系客户并发送套餐报价",
+      "customer_concerns": ["套餐价格", "外景拍摄"],
+      "customer_tags": ["婚纱照", "近期需求", "高意向"],
+      "collected_data": {
+        "拍摄类型": "婚纱照",
+        "预算": "5000元左右",
+        "意向门店": "海口店",
+        "期望拍摄时间": "2026年10月"
+      }
+    },
+    "call": {
+      "status": "ANSWERED",
+      "status_text": "已接通",
+      "called_at": "2026-09-10T15:28:30+08:00",
+      "duration_seconds": 115
+    },
+    "conversation_logs": [
+      {
+        "sequence": 1,
+        "speaker": "AI",
+        "content": "您好，请问近期有拍摄婚纱照的计划吗？"
+      },
+      {
+        "sequence": 2,
+        "speaker": "CUSTOMER",
+        "content": "有的，我想了解一下你们的价格。"
+      }
+    ],
+    "billing": {
+      "billing_minutes": 2,
+      "customer_charge": "0.960000",
+      "currency": "CNY"
     }
-  ],
-  "billing": {
-    "billing_minutes": 2,
-    "customer_charge": "0.960000",
-    "currency": "CNY"
   }
 }`;
 const recordingEvent = `{
@@ -455,98 +458,114 @@ const apiDocs: ApiDoc[] = [
     title: '业务结果回传',
     path: '{studio.resultCallbackUrl}',
     summary:
-      '每个 guid 投递一次业务结论；ERP/CRM 优先读取 customer_result，无需分析百应技术状态。',
+      '每个 guid 投递一次业务结论；顶层 Token 固定为 ^******^，ERP/CRM 优先读取 Data.customer_result。',
     status: '外部接收方实现',
     caller: '百应外呼调度台',
     receiver: 'ERP / CRM',
     contentType: 'application/json;charset=utf-8',
-    auth: 'X-Signature 回调签名 + X-Platform-Event-Id 幂等',
+    auth: 'Body Token + X-Signature 回调签名 + X-Platform-Event-Id 幂等',
     contractVersion: '2.1',
     host: 'configured',
     params: [
       ...callbackHeaders,
       [
-        'event_id',
+        'Token',
+        'Body · string',
+        '是',
+        '固定验证值 ^******^；按原样发送，不转义、不掩码、不派生',
+      ],
+      [
+        'Data.event_id',
         'Body · uuid',
         '是',
         '与 X-Platform-Event-Id 相同，用于幂等',
       ],
-      ['event_type', 'Body · string', '是', '固定为 OUTBOUND_CALL_RESULT'],
-      ['occurred_at', 'Body · datetime', '是', '平台形成最终结果的时间'],
-      ['company_code', 'Body · string', '是', '影楼编码'],
-      ['batch_id', 'Body · uuid|null', '是', '发起外呼时返回的批次 ID'],
-      ['task_no', 'Body · string', '是', '平台任务编号'],
+      ['Data.event_type', 'Body · string', '是', '固定为 OUTBOUND_CALL_RESULT'],
+      ['Data.occurred_at', 'Body · datetime', '是', '平台形成最终结果的时间'],
+      ['Data.company_code', 'Body · string', '是', '影楼编码'],
+      ['Data.batch_id', 'Body · uuid|null', '是', '发起外呼时返回的批次 ID'],
+      ['Data.task_no', 'Body · string', '是', '平台任务编号'],
       [
-        'customer.guid',
+        'Data.customer.guid',
         'Body · string',
         '是',
         'ERP/CRM 发起外呼时传入的客户唯一标识',
       ],
-      ['customer.customer_name', 'Body · string|null', '是', '客户姓名'],
+      ['Data.customer.customer_name', 'Body · string|null', '是', '客户姓名'],
       [
-        'customer.phone_masked',
+        'Data.customer.phone_masked',
         'Body · string',
         '是',
         '脱敏号码，不返回完整手机号',
       ],
       [
-        'customer_result.result_code',
+        'Data.customer_result.result_code',
         'Body · enum',
         '是',
         '最终业务分类；ERP/CRM 自动处理时优先读取',
       ],
       [
-        'customer_result.result_text',
+        'Data.customer_result.result_text',
         'Body · string',
         '是',
         '可以直接展示给业务人员的中文结论',
       ],
-      ['customer_result.contacted', 'Body · boolean', '是', '是否实际接通客户'],
       [
-        'customer_result.intention_level / intention_text',
+        'Data.customer_result.contacted',
+        'Body · boolean',
+        '是',
+        '是否实际接通客户',
+      ],
+      [
+        'Data.customer_result.intention_level / intention_text',
         'Body · string|null / string',
         '是',
         '百应原始意向值及平台归一化中文说明',
       ],
       [
-        'customer_result.summary',
+        'Data.customer_result.summary',
         'Body · string',
         '是',
         '可以直接展示的客户情况摘要',
       ],
       [
-        'customer_result.follow_up_required',
+        'Data.customer_result.follow_up_required',
         'Body · boolean',
         '是',
         '是否应在 ERP/CRM 创建跟进事项',
       ],
       [
-        'customer_result.recommended_action',
+        'Data.customer_result.recommended_action',
         'Body · string',
         '是',
         '建议业务人员采取的下一步动作',
       ],
       [
-        'customer_result.customer_concerns / customer_tags',
+        'Data.customer_result.customer_concerns / customer_tags',
         'Body · string[]',
         '是',
         '客户关注点和业务标签',
       ],
       [
-        'customer_result.collected_data',
+        'Data.customer_result.collected_data',
         'Body · object',
         '是',
         '仅包含本次通话实际采集到的业务数据',
       ],
-      ['call', 'Body · object', '是', '通话状态、中文状态、拨号时间和通话秒数'],
       [
-        'conversation_logs',
+        'Data.call',
+        'Body · object',
+        '是',
+        '通话状态、中文状态、拨号时间和通话秒数',
+      ],
+      [
+        'Data.conversation_logs',
         'Body · array',
         '是',
         '完整 AI/客户对话，speaker 为 AI 或 CUSTOMER',
       ],
       [
-        'billing',
+        'Data.billing',
         'Body · object',
         '是',
         'billing_minutes 为计费分钟数，customer_charge 为固定 6 位小数字符串，currency 固定为 CNY',
@@ -571,7 +590,7 @@ const apiDocs: ApiDoc[] = [
       ],
       [
         '业务读取顺序',
-        '程序优先读取 result_code 和 follow_up_required；页面优先展示 result_text、summary 和 recommended_action；conversation_logs 作为可展开明细。',
+        '程序优先读取 Data.customer_result.result_code 和 follow_up_required；页面优先展示 result_text、summary 和 recommended_action；Data.conversation_logs 作为可展开明细。',
       ],
       [
         '业务分类',

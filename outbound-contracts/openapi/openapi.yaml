@@ -456,9 +456,10 @@ webhooks:
       operationId: onOutboundCallResultV2
       summary: ERP/CRM 接收单号码最终业务结果
       description: |
-        每个 GUID 只投递一次最终业务结果。ERP/CRM 应优先读取 customer_result：
+        每个 GUID 只投递一次最终业务结果。Token 固定为 ^******^，必须按原始字面值发送；
+        ERP/CRM 应优先读取 Data.customer_result：
         result_code 适合程序分类，result_text、summary 和 recommended_action 可直接展示给业务人员。
-        conversation_logs 仅作为通话详情使用。完整手机号、百应任务/机器人/线路标识及平台内部字段不会对外返回。
+        Data.conversation_logs 仅作为通话详情使用。完整手机号、百应任务/机器人/线路标识及平台内部字段不会对外返回。
       security:
         - CallbackTimestampHeader: []
           CallbackSignatureHeader: []
@@ -474,7 +475,10 @@ webhooks:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/OutboundCallResultV2' }
+            schema:
+              {
+                $ref: '#/components/schemas/OutboundCallResultCallbackEnvelopeV2',
+              }
             examples:
               result:
                 $ref: '#/components/examples/OutboundCallResultV2'
@@ -878,6 +882,16 @@ components:
         sourceSystem: { $ref: '#/components/schemas/SourceSystem' }
         mcCode: { type: string, minLength: 1, maxLength: 64 }
         taskNo: { type: string, pattern: '^PT-\d{8}-\d{5,}$' }
+    OutboundCallResultCallbackEnvelopeV2:
+      type: object
+      additionalProperties: false
+      required: [Token, Data]
+      properties:
+        Token:
+          type: string
+          const: '^******^'
+          description: 接收方要求的固定验证值；不得转义、掩码、派生或替换。
+        Data: { $ref: '#/components/schemas/OutboundCallResultV2' }
     OutboundCallResultV2:
       type: object
       additionalProperties: false
@@ -1326,45 +1340,47 @@ components:
     OutboundCallResultV2:
       summary: 单个 GUID 的业务结论优先回调
       value:
-        event_id: 8d87e451-8aad-4a48-90a1-b6e38429a964
-        event_type: OUTBOUND_CALL_RESULT
-        occurred_at: '2026-09-10T15:30:25+08:00'
-        company_code: '5903679116'
-        batch_id: 59fd515e-00f2-4d62-93ec-8883fb3aa090
-        task_no: PT-20260910-00001
-        customer:
-          guid: CRM-CUSTOMER-10001
-          customer_name: 张女士
-          phone_masked: 138****8888
-        customer_result:
-          result_code: HIGH_INTENT
-          result_text: 客户有明确意向，建议尽快跟进
-          contacted: true
-          intention_level: A
-          intention_text: 高意向
-          summary: 客户计划近期拍摄婚纱照，关注套餐价格和外景拍摄。
-          follow_up_required: true
-          recommended_action: 建议销售人员尽快联系客户并发送套餐报价
-          customer_concerns: [套餐价格, 外景拍摄]
-          customer_tags: [婚纱照, 近期需求, 高意向]
-          collected_data:
-            拍摄类型: 婚纱照
-            预算: 5000元左右
-            意向门店: 海口店
-            期望拍摄时间: 2026年10月
-        call:
-          status: ANSWERED
-          status_text: 已接通
-          called_at: '2026-09-10T15:28:30+08:00'
-          duration_seconds: 115
-        conversation_logs:
-          - sequence: 1
-            speaker: AI
-            content: 您好，请问近期有拍摄婚纱照的计划吗？
-          - sequence: 2
-            speaker: CUSTOMER
-            content: 有的，我想了解一下你们的价格。
-        billing:
-          billing_minutes: 2
-          customer_charge: '0.960000'
-          currency: CNY
+        Token: '^******^'
+        Data:
+          event_id: 8d87e451-8aad-4a48-90a1-b6e38429a964
+          event_type: OUTBOUND_CALL_RESULT
+          occurred_at: '2026-09-10T15:30:25+08:00'
+          company_code: '5903679116'
+          batch_id: 59fd515e-00f2-4d62-93ec-8883fb3aa090
+          task_no: PT-20260910-00001
+          customer:
+            guid: CRM-CUSTOMER-10001
+            customer_name: 张女士
+            phone_masked: 138****8888
+          customer_result:
+            result_code: HIGH_INTENT
+            result_text: 客户有明确意向，建议尽快跟进
+            contacted: true
+            intention_level: A
+            intention_text: 高意向
+            summary: 客户计划近期拍摄婚纱照，关注套餐价格和外景拍摄。
+            follow_up_required: true
+            recommended_action: 建议销售人员尽快联系客户并发送套餐报价
+            customer_concerns: [套餐价格, 外景拍摄]
+            customer_tags: [婚纱照, 近期需求, 高意向]
+            collected_data:
+              拍摄类型: 婚纱照
+              预算: 5000元左右
+              意向门店: 海口店
+              期望拍摄时间: 2026年10月
+          call:
+            status: ANSWERED
+            status_text: 已接通
+            called_at: '2026-09-10T15:28:30+08:00'
+            duration_seconds: 115
+          conversation_logs:
+            - sequence: 1
+              speaker: AI
+              content: 您好，请问近期有拍摄婚纱照的计划吗？
+            - sequence: 2
+              speaker: CUSTOMER
+              content: 有的，我想了解一下你们的价格。
+          billing:
+            billing_minutes: 2
+            customer_charge: '0.960000'
+            currency: CNY

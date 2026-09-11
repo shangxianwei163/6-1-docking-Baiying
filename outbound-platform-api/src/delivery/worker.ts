@@ -1,4 +1,7 @@
-import { outboundCallbackEventSchema } from '@outbound/contracts';
+import {
+  outboundCallbackEventSchema,
+  outboundCallResultCallbackTokenV2,
+} from '@outbound/contracts';
 import { z } from 'zod';
 import { redactOperatorText } from '../operations/redaction.js';
 import type { SecretProvider } from '../security/secret-provider.js';
@@ -73,7 +76,12 @@ export class CallbackDeliveryWorker {
       }
       const target = validateTarget(claimed.targetUrl);
       const rawBody = serializeStableJson(
-        event.eventType === 'OUTBOUND_CALL_RESULT_V2' ? event.result : event,
+        event.eventType === 'OUTBOUND_CALL_RESULT_V2' &&
+          event.schemaVersion === '2.1'
+          ? { Token: outboundCallResultCallbackTokenV2, Data: event.result }
+          : event.eventType === 'OUTBOUND_CALL_RESULT_V2'
+            ? event.result
+            : event,
       );
       const timestamp = requestedAt.getTime().toString();
       const secret = await this.secrets.getSecretBytes(

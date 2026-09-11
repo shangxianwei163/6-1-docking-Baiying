@@ -163,7 +163,7 @@ describe('CallbackDeliveryWorker', () => {
     },
   );
 
-  it('delivers the business-first v2.1 customer result body', async () => {
+  it('delivers the token-wrapped business-first v2.1 customer result body', async () => {
     const result = {
       event_id: '11111111-1111-4111-8111-111111111114',
       event_type: 'OUTBOUND_CALL_RESULT',
@@ -225,7 +225,10 @@ describe('CallbackDeliveryWorker', () => {
     const send = vi.fn<DeliveryTransport['send']>(async (request) => {
       const rawBody = Buffer.from(request.body).toString('utf8');
       expect(request.headers['X-Contract-Version']).toBe('2.1');
-      expect(JSON.parse(rawBody)).toEqual(result);
+      expect(JSON.parse(rawBody)).toEqual({
+        Token: '^******^',
+        Data: result,
+      });
       expect(rawBody).not.toContain('baiyingCallJobId');
       expect(
         verifyCallbackRequestSignature(

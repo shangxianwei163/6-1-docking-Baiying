@@ -275,6 +275,15 @@ export const outboundCallResultV2Schema = z
   })
   .strict();
 
+export const outboundCallResultCallbackTokenV2 = '^******^' as const;
+
+export const outboundCallResultCallbackEnvelopeV2Schema = z
+  .object({
+    Token: z.literal(outboundCallResultCallbackTokenV2),
+    Data: outboundCallResultV2Schema,
+  })
+  .strict();
+
 export const outboundCallResultInternalEventLegacyV2Schema = z.object({
   schemaVersion: z.literal('2.0'),
   eventId: z.uuid(),
@@ -317,6 +326,9 @@ export type BatchAcceptedEnvelopeV2 = z.infer<
 >;
 export type BatchDetailV2 = z.infer<typeof batchDetailV2Schema>;
 export type OutboundCallResultV2 = z.infer<typeof outboundCallResultV2Schema>;
+export type OutboundCallResultCallbackEnvelopeV2 = z.infer<
+  typeof outboundCallResultCallbackEnvelopeV2Schema
+>;
 export type OutboundCallResultInternalEventV2 = z.infer<
   typeof outboundCallResultInternalEventV2Schema
 >;

@@ -3,6 +3,7 @@ import {
   createOutboundBatchRequestV2Schema,
   extractOutboundVariablesV2,
   flattenOutboundCustomersV2,
+  outboundCallResultCallbackEnvelopeV2Schema,
   outboundCallResultV2Schema,
   sourceSystemFromCodeV2,
 } from '@outbound/contracts';
@@ -163,6 +164,22 @@ describe('ERP/CRM v2 outbound contract', () => {
       },
     };
     expect(outboundCallResultV2Schema.parse(result)).toEqual(result);
+    expect(
+      outboundCallResultCallbackEnvelopeV2Schema.parse({
+        Token: '^******^',
+        Data: result,
+      }),
+    ).toEqual({ Token: '^******^', Data: result });
+    expect(
+      outboundCallResultCallbackEnvelopeV2Schema.safeParse({ Data: result })
+        .success,
+    ).toBe(false);
+    expect(
+      outboundCallResultCallbackEnvelopeV2Schema.safeParse({
+        Token: 'erp-local-access-token',
+        Data: result,
+      }).success,
+    ).toBe(false);
     expect(
       outboundCallResultV2Schema.safeParse({
         ...result,

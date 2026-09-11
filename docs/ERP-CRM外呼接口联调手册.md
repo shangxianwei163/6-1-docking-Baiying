@@ -243,94 +243,98 @@ Content-Type: application/json
 
 ```json
 {
-  "event_id": "8d87e451-8aad-4a48-90a1-b6e38429a964",
-  "event_type": "OUTBOUND_CALL_RESULT",
-  "occurred_at": "2026-09-10T15:30:25+08:00",
-  "company_code": "5903679116",
-  "batch_id": "59fd515e-00f2-4d62-93ec-8883fb3aa090",
-  "task_no": "PT-20260910-00001",
-  "customer": {
-    "guid": "CRM-CUSTOMER-10001",
-    "customer_name": "张女士",
-    "phone_masked": "138****8888"
-  },
-  "customer_result": {
-    "result_code": "HIGH_INTENT",
-    "result_text": "客户有明确意向，建议尽快跟进",
-    "contacted": true,
-    "intention_level": "A",
-    "intention_text": "高意向",
-    "summary": "客户计划近期拍摄婚纱照，关注套餐价格和外景拍摄。",
-    "follow_up_required": true,
-    "recommended_action": "建议销售人员尽快联系客户并发送套餐报价",
-    "customer_concerns": ["套餐价格", "外景拍摄"],
-    "customer_tags": ["婚纱照", "近期需求", "高意向"],
-    "collected_data": {
-      "拍摄类型": "婚纱照",
-      "预算": "5000元左右",
-      "意向门店": "海口店",
-      "期望拍摄时间": "2026年10月"
-    }
-  },
-  "call": {
-    "status": "ANSWERED",
-    "status_text": "已接通",
-    "called_at": "2026-09-10T15:28:30+08:00",
-    "duration_seconds": 115
-  },
-  "conversation_logs": [
-    {
-      "sequence": 1,
-      "speaker": "AI",
-      "content": "您好，请问近期有拍摄婚纱照的计划吗？"
+  "Token": "^******^",
+  "Data": {
+    "event_id": "8d87e451-8aad-4a48-90a1-b6e38429a964",
+    "event_type": "OUTBOUND_CALL_RESULT",
+    "occurred_at": "2026-09-10T15:30:25+08:00",
+    "company_code": "5903679116",
+    "batch_id": "59fd515e-00f2-4d62-93ec-8883fb3aa090",
+    "task_no": "PT-20260910-00001",
+    "customer": {
+      "guid": "CRM-CUSTOMER-10001",
+      "customer_name": "张女士",
+      "phone_masked": "138****8888"
     },
-    {
-      "sequence": 2,
-      "speaker": "CUSTOMER",
-      "content": "有的，我想了解一下你们的价格。"
+    "customer_result": {
+      "result_code": "HIGH_INTENT",
+      "result_text": "客户有明确意向，建议尽快跟进",
+      "contacted": true,
+      "intention_level": "A",
+      "intention_text": "高意向",
+      "summary": "客户计划近期拍摄婚纱照，关注套餐价格和外景拍摄。",
+      "follow_up_required": true,
+      "recommended_action": "建议销售人员尽快联系客户并发送套餐报价",
+      "customer_concerns": ["套餐价格", "外景拍摄"],
+      "customer_tags": ["婚纱照", "近期需求", "高意向"],
+      "collected_data": {
+        "拍摄类型": "婚纱照",
+        "预算": "5000元左右",
+        "意向门店": "海口店",
+        "期望拍摄时间": "2026年10月"
+      }
+    },
+    "call": {
+      "status": "ANSWERED",
+      "status_text": "已接通",
+      "called_at": "2026-09-10T15:28:30+08:00",
+      "duration_seconds": 115
+    },
+    "conversation_logs": [
+      {
+        "sequence": 1,
+        "speaker": "AI",
+        "content": "您好，请问近期有拍摄婚纱照的计划吗？"
+      },
+      {
+        "sequence": 2,
+        "speaker": "CUSTOMER",
+        "content": "有的，我想了解一下你们的价格。"
+      }
+    ],
+    "billing": {
+      "billing_minutes": 2,
+      "customer_charge": "0.960000",
+      "currency": "CNY"
     }
-  ],
-  "billing": {
-    "billing_minutes": 2,
-    "customer_charge": "0.960000",
-    "currency": "CNY"
   }
 }
 ```
 
-ERP/CRM 应优先读取 `customer_result`，不需要自行分析百应状态码或对话内容：
+顶层 `Token` 固定为 `^******^`，必须按原始字面值发送，不转义、不掩码、不派生。ERP/CRM 应优先读取 `Data.customer_result`，不需要自行分析百应状态码或对话内容：
 
-| 字段                                 | 类型          | 说明                                                        |
-| ------------------------------------ | ------------- | ----------------------------------------------------------- |
-| `event_id`                           | uuid          | 回调唯一标识，与请求头 `X-Platform-Event-Id` 相同，用于幂等 |
-| `event_type`                         | string        | 固定为 `OUTBOUND_CALL_RESULT`                               |
-| `occurred_at`                        | datetime      | 平台形成本次最终结果的时间                                  |
-| `company_code`                       | string        | 影楼编码                                                    |
-| `batch_id`                           | uuid/null     | 发起外呼时返回的批次 ID                                     |
-| `task_no`                            | string        | 平台任务编号                                                |
-| `customer.guid`                      | string        | ERP/CRM 发起外呼时传入的客户唯一标识                        |
-| `customer.customer_name`             | string/null   | 客户姓名                                                    |
-| `customer.phone_masked`              | string        | 脱敏手机号                                                  |
-| `customer_result.result_code`        | enum          | 最终业务分类，ERP/CRM 自动处理时优先读取                    |
-| `customer_result.result_text`        | string        | 可直接展示给业务人员的中文结论                              |
-| `customer_result.contacted`          | boolean       | 是否实际接通客户                                            |
-| `customer_result.intention_level`    | string/null   | 百应返回的原始意向值，例如 `A`                              |
-| `customer_result.intention_text`     | string        | 归一化后的中文意向说明                                      |
-| `customer_result.summary`            | string        | 客户情况摘要                                                |
-| `customer_result.follow_up_required` | boolean       | 是否应在 ERP/CRM 创建跟进事项                               |
-| `customer_result.recommended_action` | string        | 建议业务人员采取的下一步动作                                |
-| `customer_result.customer_concerns`  | string[]      | 客户关注点                                                  |
-| `customer_result.customer_tags`      | string[]      | 客户标签                                                    |
-| `customer_result.collected_data`     | object        | 本次通话实际采集到的业务数据                                |
-| `call.status` / `call.status_text`   | enum/string   | 标准通话状态及可直接展示的中文说明                          |
-| `call.called_at`                     | datetime/null | 开始拨号时间                                                |
-| `call.duration_seconds`              | integer       | 通话时长（秒）                                              |
-| `conversation_logs`                  | array         | 完整 AI/客户对话；`speaker` 为 `AI` 或 `CUSTOMER`           |
-| `conversation_logs[].sequence`       | integer       | 对话顺序，从 1 开始                                         |
-| `conversation_logs[].content`        | string        | 本轮对话文本                                                |
-| `billing.billing_minutes`            | integer       | 本次计费分钟数                                              |
-| `billing.customer_charge`            | string        | 本次客户费用，固定 6 位小数                                 |
-| `billing.currency`                   | string        | 固定为 `CNY`                                                |
+| 字段                                         | 类型          | 说明                                                        |
+| -------------------------------------------- | ------------- | ----------------------------------------------------------- |
+| `Token`                                      | string        | 固定验证值 `^******^`，接收方按该字面值校验                 |
+| `Data.event_id`                              | uuid          | 回调唯一标识，与请求头 `X-Platform-Event-Id` 相同，用于幂等 |
+| `Data.event_type`                            | string        | 固定为 `OUTBOUND_CALL_RESULT`                               |
+| `Data.occurred_at`                           | datetime      | 平台形成本次最终结果的时间                                  |
+| `Data.company_code`                          | string        | 影楼编码                                                    |
+| `Data.batch_id`                              | uuid/null     | 发起外呼时返回的批次 ID                                     |
+| `Data.task_no`                               | string        | 平台任务编号                                                |
+| `Data.customer.guid`                         | string        | ERP/CRM 发起外呼时传入的客户唯一标识                        |
+| `Data.customer.customer_name`                | string/null   | 客户姓名                                                    |
+| `Data.customer.phone_masked`                 | string        | 脱敏手机号                                                  |
+| `Data.customer_result.result_code`           | enum          | 最终业务分类，ERP/CRM 自动处理时优先读取                    |
+| `Data.customer_result.result_text`           | string        | 可直接展示给业务人员的中文结论                              |
+| `Data.customer_result.contacted`             | boolean       | 是否实际接通客户                                            |
+| `Data.customer_result.intention_level`       | string/null   | 百应返回的原始意向值，例如 `A`                              |
+| `Data.customer_result.intention_text`        | string        | 归一化后的中文意向说明                                      |
+| `Data.customer_result.summary`               | string        | 客户情况摘要                                                |
+| `Data.customer_result.follow_up_required`    | boolean       | 是否应在 ERP/CRM 创建跟进事项                               |
+| `Data.customer_result.recommended_action`    | string        | 建议业务人员采取的下一步动作                                |
+| `Data.customer_result.customer_concerns`     | string[]      | 客户关注点                                                  |
+| `Data.customer_result.customer_tags`         | string[]      | 客户标签                                                    |
+| `Data.customer_result.collected_data`        | object        | 本次通话实际采集到的业务数据                                |
+| `Data.call.status` / `Data.call.status_text` | enum/string   | 标准通话状态及可直接展示的中文说明                          |
+| `Data.call.called_at`                        | datetime/null | 开始拨号时间                                                |
+| `Data.call.duration_seconds`                 | integer       | 通话时长（秒）                                              |
+| `Data.conversation_logs`                     | array         | 完整 AI/客户对话；`speaker` 为 `AI` 或 `CUSTOMER`           |
+| `Data.conversation_logs[].sequence`          | integer       | 对话顺序，从 1 开始                                         |
+| `Data.conversation_logs[].content`           | string        | 本轮对话文本                                                |
+| `Data.billing.billing_minutes`               | integer       | 本次计费分钟数                                              |
+| `Data.billing.customer_charge`               | string        | 本次客户费用，固定 6 位小数                                 |
+| `Data.billing.currency`                      | string        | 固定为 `CNY`                                                |
 
 `result_code` 的取值：
 

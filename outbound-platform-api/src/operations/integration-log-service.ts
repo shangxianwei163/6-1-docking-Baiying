@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   operatorIntegrationLogDetailSchema,
   operatorIntegrationLogPageSchema,
+  outboundCallResultCallbackTokenV2,
   type IntegrationLogDirection,
   type IntegrationLogStatus,
   type IntegrationLogSystem,
@@ -510,8 +511,12 @@ function externalDeliveryBody(
   eventType: string,
   payload: Record<string, unknown> | null,
 ) {
-  if (eventType === 'OUTBOUND_CALL_RESULT_V2' && payload?.result) {
-    return payload.result;
+  if (
+    eventType === 'OUTBOUND_CALL_RESULT_V2' &&
+    payload?.schemaVersion === '2.1' &&
+    payload.result
+  ) {
+    return { Token: outboundCallResultCallbackTokenV2, Data: payload.result };
   }
   return payload;
 }

@@ -39,7 +39,7 @@ describe('LocalNoNetworkDeliveryTransport', () => {
     ]);
   });
 
-  it('accepts the business-first v2.1 result body with identity in headers', async () => {
+  it('accepts the token-wrapped business-first v2.1 result body with identity in headers', async () => {
     const transport = new LocalNoNetworkDeliveryTransport({
       environment: 'test',
       secretForUrl: async () => secret,
@@ -85,7 +85,10 @@ describe('LocalNoNetworkDeliveryTransport', () => {
     const eventId = '22222222-2222-4222-8222-222222222222';
     const url = 'https://erp.mock.invalid/callbacks/results';
     const timestamp = '1788661800000';
-    const body = serializeStableJson(result);
+    const body = serializeStableJson({
+      Token: '^******^',
+      Data: result,
+    });
     const response = await transport.send({
       url,
       headers: {

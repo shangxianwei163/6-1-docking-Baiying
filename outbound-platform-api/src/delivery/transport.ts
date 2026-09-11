@@ -1,7 +1,7 @@
 import {
   outboundCallbackEventSchema,
+  outboundCallResultCallbackEnvelopeV2Schema,
   outboundCallResultLegacyV2Schema,
-  outboundCallResultV2Schema,
 } from '@outbound/contracts';
 import { parseCallbackTargetUrl } from './callback-url.js';
 import { verifyCallbackRequestSignature } from './signature.js';
@@ -98,8 +98,10 @@ export class LocalNoNetworkDeliveryTransport implements DeliveryTransport {
     const contractVersion = findHeader(request.headers, 'X-Contract-Version');
     let eventType: string;
     if (contractVersion === '2.1') {
-      const result = outboundCallResultV2Schema.parse(JSON.parse(raw));
-      if (eventId !== result.event_id) {
+      const result = outboundCallResultCallbackEnvelopeV2Schema.parse(
+        JSON.parse(raw),
+      );
+      if (eventId !== result.Data.event_id) {
         throw new Error('本地接收器拒绝 Header 与 Body 不一致的 eventId');
       }
       eventType = 'OUTBOUND_CALL_RESULT_V2';
