@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 6+1 Outbound Platform API
-  version: 2.1.0
+  version: 2.2.0
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -20,6 +20,8 @@ security:
 tags:
   - name: Outbound Tasks
     description: ERP/CRM 外呼批次受理与查询
+  - name: Billing
+    description: ERP/CRM 查询影楼账户消费明细
   - name: Baiying Callbacks
     description: 百应供应商回调入口
 paths:
@@ -424,6 +426,52 @@ paths:
               schema: { $ref: '#/components/schemas/BatchDetailEnvelopeV2' }
         '401': { $ref: '#/components/responses/ExternalError' }
         '404': { $ref: '#/components/responses/ExternalError' }
+  /openapi/v2/billing/call-charges:
+    get:
+      tags: [Billing]
+      operationId: listStudioCallChargesV2
+      summary: 查询当前影楼的通话扣费明细
+      description: |
+        仅返回真实账户流水中类型为 CALL_CHARGE 的记录。平台使用 X-Access-Token 识别 ERP/CRM，
+        并再次校验 company_code 是否属于该 Token 获授权的影楼；调用方不能读取其他影楼的数据。
+        amount 保留真实账本中的负数扣款方向，total_charge 是所选时间范围内扣费绝对值之和。
+      security:
+        - AccessTokenHeader: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: company_code
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 64 }
+        - name: occurred_from
+          in: query
+          description: 扣费时间下限，包含该时刻。
+          schema: { type: string, format: date-time }
+        - name: occurred_before
+          in: query
+          description: 扣费时间上限，不包含该时刻。
+          schema: { type: string, format: date-time }
+        - name: cursor
+          in: query
+          description: 上一页返回的 next_cursor。
+          schema: { type: string, maxLength: 512 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        '200':
+          description: 当前影楼的通话扣费流水
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema:
+                { $ref: '#/components/schemas/ExternalCallChargeEnvelopeV2' }
+        '400': { $ref: '#/components/responses/ExternalError' }
+        '401': { $ref: '#/components/responses/ExternalError' }
+        '403': { $ref: '#/components/responses/ExternalError' }
+        '404': { $ref: '#/components/responses/ExternalError' }
+        '503': { $ref: '#/components/responses/ExternalError' }
   /api/v1/callbacks/baiying:
     post:
       tags: [Baiying Callbacks]
@@ -830,6 +878,76 @@ components:
         message: { const: success }
         request_id: { type: string }
         data: { $ref: '#/components/schemas/BatchDetailV2' }
+    ExternalCallChargeItemV2:
+      type: object
+      additionalProperties: false
+      required:
+        - ledger_id
+        - occurred_at
+        - type
+        - amount
+        - balance_after
+        - available_balance_after
+        - task_no
+        - platform_call_id
+        - remark
+      properties:
+        ledger_id: { type: string, format: uuid }
+        occurred_at: { type: string, format: date-time }
+        type: { const: CALL_CHARGE }
+        amount:
+          type: string
+          pattern: '^-?(?:0|[1-9]\d*)(?:\.\d{1,6})?$'
+          description: 真实账本金额；通话扣费为负数。
+        balance_after:
+          type: string
+          pattern: '^-?(?:0|[1-9]\d*)(?:\.\d{1,6})?$'
+        available_balance_after:
+          type: string
+          pattern: '^-?(?:0|[1-9]\d*)(?:\.\d{1,6})?$'
+        task_no:
+          type: [string, 'null']
+          pattern: '^PT-\d{8}-\d{5,}$'
+        platform_call_id: { type: [string, 'null'], format: uuid }
+        remark: { type: [string, 'null'], maxLength: 500 }
+    ExternalCallChargePageV2:
+      type: object
+      additionalProperties: false
+      required:
+        - company_code
+        - currency
+        - balance
+        - available_balance
+        - total_count
+        - total_charge
+        - items
+        - next_cursor
+      properties:
+        company_code: { type: string, minLength: 1, maxLength: 64 }
+        currency: { const: CNY }
+        balance:
+          type: string
+          pattern: '^-?(?:0|[1-9]\d*)(?:\.\d{1,6})?$'
+        available_balance:
+          type: string
+          pattern: '^-?(?:0|[1-9]\d*)(?:\.\d{1,6})?$'
+        total_count: { type: integer, minimum: 0 }
+        total_charge:
+          type: string
+          pattern: '^(?:0|[1-9]\d*)(?:\.\d{1,6})?$'
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ExternalCallChargeItemV2' }
+        next_cursor: { type: [string, 'null'] }
+    ExternalCallChargeEnvelopeV2:
+      type: object
+      additionalProperties: false
+      required: [code, message, request_id, data]
+      properties:
+        code: { const: OK }
+        message: { const: success }
+        request_id: { type: string }
+        data: { $ref: '#/components/schemas/ExternalCallChargePageV2' }
     TaskExecutionStatus:
       type: string
       enum:
@@ -1425,5 +1543,5 @@ components:
             - guid: CRM-CUSTOMER-10001
               phone_masked: '138****8888'
               recording_id: 33333333-3333-4333-8333-333333333333
-              recording_url: 'https://scheduling.paiyide.cc/api/v1/recordings/33333333-3333-4333-8333-333333333333/content?exp=1788662760&aud=...&sig=...'
+              recording_url: 'https://scheduling.paiyide.cc/api/v1/recordings/33333333-3333-4333-8333-333333333333/content?exp=1789026385&aud=...&sig=...'
               expires_at: '2026-09-10T15:46:25+08:00'

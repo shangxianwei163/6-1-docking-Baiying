@@ -86,6 +86,7 @@ import {
 } from '../operations/service.js';
 import type { AccountAdjustmentService } from '../operations/adjustment-service.js';
 import type { SupplierMonthlySettlementService } from '../billing/monthly-settlement-service.js';
+import type { ExternalCallChargeService } from '../billing/external-call-charge-service.js';
 import type { OperatorAuditService } from '../operations/audit-service.js';
 import type { OperationsOverviewService } from '../operations/overview-service.js';
 import type { IntegrationLogService } from '../operations/integration-log-service.js';
@@ -122,6 +123,7 @@ export type AppDependencies = {
   operationsConsoleService?: OperationsConsoleService;
   accountAdjustmentService?: AccountAdjustmentService;
   supplierMonthlySettlementService?: SupplierMonthlySettlementService;
+  externalCallChargeService?: ExternalCallChargeService;
   operatorAuditService?: OperatorAuditService;
   operationsOverviewService?: OperationsOverviewService;
   integrationLogService?: IntegrationLogService;
@@ -1454,6 +1456,54 @@ export function createApp(dependencies: AppDependencies) {
     });
   });
 
+  app.get('/openapi/v2/billing/call-charges', async (context) => {
+    const principal = await authenticateExternal(
+      externalAuthenticatorDependency(dependencies),
+      context.req.raw,
+    );
+    const query = z
+      .object({
+        company_code: z.string().trim().min(1).max(64),
+        occurred_from: z.iso.datetime({ offset: true }).optional(),
+        occurred_before: z.iso.datetime({ offset: true }).optional(),
+        cursor: z.string().trim().min(1).max(512).optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(100),
+      })
+      .superRefine((value, context) => {
+        if (
+          value.occurred_from &&
+          value.occurred_before &&
+          new Date(value.occurred_from) >= new Date(value.occurred_before)
+        ) {
+          context.addIssue({
+            code: 'custom',
+            path: ['occurred_before'],
+            message: 'occurred_before 必须晚于 occurred_from',
+          });
+        }
+      })
+      .parse(context.req.query());
+    const data = await externalCallChargeDependency(
+      dependencies,
+    ).listCallCharges(principal, {
+      companyCode: query.company_code,
+      occurredFrom: query.occurred_from
+        ? new Date(query.occurred_from)
+        : undefined,
+      occurredBefore: query.occurred_before
+        ? new Date(query.occurred_before)
+        : undefined,
+      cursor: query.cursor,
+      limit: query.limit,
+    });
+    return context.json({
+      code: 'OK',
+      message: 'success',
+      request_id: context.get('requestId'),
+      data,
+    });
+  });
+
   app.get('/openapi/v1/outbound/tasks/:taskNo', async (context) => {
     const { authenticator, taskService } =
       externalApiDependencies(dependencies);
@@ -1945,6 +1995,17 @@ function externalAuthenticatorDependency(dependencies: AppDependencies) {
     );
   }
   return dependencies.externalRequestAuthenticator;
+}
+
+function externalCallChargeDependency(dependencies: AppDependencies) {
+  if (!dependencies.externalCallChargeService) {
+    throw new ExternalApiFailure(
+      'SERVICE_TEMPORARILY_UNAVAILABLE',
+      '外部扣费明细服务尚未配置',
+      503,
+    );
+  }
+  return dependencies.externalCallChargeService;
 }
 
 function authenticateExternal(

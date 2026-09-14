@@ -20,6 +20,7 @@ import { BaiyingCallbackIngressService } from './callback/ingress-service.js';
 import { PostgresOperationsConsoleService } from './operations/service.js';
 import { PostgresAccountAdjustmentService } from './operations/adjustment-service.js';
 import { PostgresSupplierMonthlySettlementService } from './billing/monthly-settlement-service.js';
+import { PostgresExternalCallChargeService } from './billing/external-call-charge-service.js';
 import { PostgresOperatorAuditService } from './operations/audit-service.js';
 import { PostgresOperationsOverviewService } from './operations/overview-service.js';
 import { PostgresIntegrationLogService } from './operations/integration-log-service.js';
@@ -88,6 +89,9 @@ const dataProtector = createRuntimeDataProtector(
 );
 const supplierMonthlySettlementService =
   new PostgresSupplierMonthlySettlementService(database.db);
+const externalCallChargeService = new PostgresExternalCallChargeService(
+  database.db,
+);
 const outboundTaskService = new PostgresOutboundTaskService(
   database.db,
   dataProtector,
@@ -200,6 +204,7 @@ const app = createApp({
   operationsConsoleService,
   accountAdjustmentService,
   supplierMonthlySettlementService,
+  externalCallChargeService,
   operatorAuditService,
   operationsOverviewService,
   integrationLogService,

@@ -230,6 +230,33 @@ const batchDetailResponse = `{
     "completed_at": null
   }
 }`;
+const callChargeResponse = `{
+  "code": "OK",
+  "message": "success",
+  "request_id": "9bba018d-36b2-478d-af0a-af3f7d573937",
+  "data": {
+    "company_code": "5903679116",
+    "currency": "CNY",
+    "balance": "18152.650000",
+    "available_balance": "18152.650000",
+    "total_count": 2,
+    "total_charge": "1.920000",
+    "items": [
+      {
+        "ledger_id": "22222222-2222-4222-8222-222222222221",
+        "occurred_at": "2026-09-14T10:32:18+08:00",
+        "type": "CALL_CHARGE",
+        "amount": "-0.960000",
+        "balance_after": "18152.650000",
+        "available_balance_after": "18152.650000",
+        "task_no": "PT-20260914-00001",
+        "platform_call_id": "33333333-3333-4333-8333-333333333331",
+        "remark": "通话结算"
+      }
+    ],
+    "next_cursor": null
+  }
+}`;
 const callbackHeaders: Row[] = [
   [
     'X-Platform-Event-Id',
@@ -320,7 +347,7 @@ const recordingEvent = `{
       "guid": "CRM-CUSTOMER-10001",
       "phone_masked": "138****8888",
       "recording_id": "33333333-3333-4333-8333-333333333333",
-      "recording_url": "https://scheduling.paiyide.cc/api/v1/recordings/33333333-3333-4333-8333-333333333333/content?exp=1788662760&aud=...&sig=...",
+      "recording_url": "https://scheduling.paiyide.cc/api/v1/recordings/33333333-3333-4333-8333-333333333333/content?exp=1788749160&aud=...&sig=...",
       "expires_at": "2026-09-07T10:46:00+08:00"
     }]
   }
@@ -442,6 +469,62 @@ const apiDocs: ApiDoc[] = [
     ],
     errors: commonErrors.filter(([code]) =>
       ['401', '404', '503'].includes(code),
+    ),
+  }),
+  platformDoc({
+    id: 'list-call-charges',
+    method: 'GET',
+    title: '查询通话扣费明细',
+    path: '/openapi/v2/billing/call-charges',
+    summary:
+      'ERP/CRM 查询当前 Token 获授权影楼的真实账户流水；接口固定只返回通话扣费记录。',
+    params: [
+      ...requestHeaders,
+      [
+        'company_code',
+        'Query · string',
+        '是',
+        '影楼 MC code；必须属于当前请求 Token 的授权范围',
+      ],
+      [
+        'occurred_from',
+        'Query · datetime',
+        '否',
+        '扣费时间下限，包含该时刻；ISO 8601，例如 2026-09-01T00:00:00+08:00',
+      ],
+      [
+        'occurred_before',
+        'Query · datetime',
+        '否',
+        '扣费时间上限，不包含该时刻，且必须晚于 occurred_from',
+      ],
+      ['cursor', 'Query · string', '否', '上一页返回的 next_cursor，原样传回'],
+      ['limit', 'Query · integer', '否', '每页 1～500 条，默认 100 条'],
+    ],
+    response: callChargeResponse,
+    responseLead:
+      'items 来自不可变真实账户账本，按扣费时间倒序返回；amount 为实际负数扣款。',
+    rules: [
+      ...requestRules,
+      [
+        '数据隔离',
+        '服务端根据 X-Access-Token 校验 company_code；未授权影楼直接返回 403，不接受客户端指定任意影楼查询。',
+      ],
+      [
+        '流水范围',
+        '固定只返回 CALL_CHARGE；不返回充值、冻结、解冻、退款、超额扣款或人工调整流水。',
+      ],
+      [
+        '金额口径',
+        'amount 是真实账本中的负数变动，total_charge 是当前时间范围内扣费绝对值合计，金额均为 CNY 六位小数字符串。',
+      ],
+      [
+        '增量同步',
+        '按 occurred_at 倒序分页；有下一页时继续传 next_cursor，时间范围保持不变。',
+      ],
+    ],
+    errors: commonErrors.filter(([code]) =>
+      ['400', '401', '403', '404', '503'].includes(code),
     ),
   }),
   {

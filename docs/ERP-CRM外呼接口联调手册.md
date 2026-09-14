@@ -1,7 +1,7 @@
 # ERP / CRM 外呼接口联调手册
 
-> 契约版本：2.1.0
-> 文档日期：2026-09-10
+> 契约版本：2.2.0
+> 文档日期：2026-09-14
 > 适用系统：ERP、CRM 及百应外呼调度平台
 > 生产地址：`https://scheduling.paiyide.cc`
 
@@ -11,6 +11,7 @@
 | -------------- | -------------------------------------------- | -------------------------------- |
 | ERP/CRM → 平台 | `POST /openapi/v2/outbound/tasks`            | 新增一个外呼业务批次             |
 | ERP/CRM → 平台 | `GET /openapi/v2/outbound/batches/{batchId}` | 查询批次及执行任务状态           |
+| ERP/CRM → 平台 | `GET /openapi/v2/billing/call-charges`       | 查询本影楼通话扣费流水           |
 | 平台 → ERP/CRM | 运营端配置的结果回传地址                     | 每个 `guid` 回传一次最终业务结果 |
 | 平台 → ERP/CRM | 运营端配置的录音回传地址                     | 录音归档后回传下载信息           |
 
@@ -225,6 +226,56 @@ GET /openapi/v2/outbound/batches/{batchId}
 
 批次状态：`ACCEPTED`、`PREPARING`、`RUNNING`、`PARTIAL_FAILED`、`COMPLETED`、`FAILED`、`CANCELLED`。
 
+### 5.1 查询通话扣费明细
+
+```http
+GET /openapi/v2/billing/call-charges?company_code=5903679116&limit=100
+X-Access-Token: erp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+接口只返回真实账户流水中类型为 `CALL_CHARGE` 的通话扣费，不返回任务冻结、冻结释放、充值或人工调整流水。平台会验证 `company_code` 是否属于当前 Token 授权的影楼，不能查询其他影楼。
+
+可选参数：
+
+| 参数              | 类型     | 说明                                             |
+| ----------------- | -------- | ------------------------------------------------ |
+| `occurred_from`   | datetime | 时间下限，包含该时刻                             |
+| `occurred_before` | datetime | 时间上限，不包含该时刻，必须晚于 `occurred_from` |
+| `cursor`          | string   | 上一页的 `next_cursor`，原样传回                 |
+| `limit`           | integer  | 每页 1～500 条，默认 100 条                      |
+
+```json
+{
+  "code": "OK",
+  "message": "success",
+  "request_id": "9bba018d-36b2-478d-af0a-af3f7d573937",
+  "data": {
+    "company_code": "5903679116",
+    "currency": "CNY",
+    "balance": "18152.650000",
+    "available_balance": "18152.650000",
+    "total_count": 1,
+    "total_charge": "0.960000",
+    "items": [
+      {
+        "ledger_id": "22222222-2222-4222-8222-222222222221",
+        "occurred_at": "2026-09-14T10:32:18+08:00",
+        "type": "CALL_CHARGE",
+        "amount": "-0.960000",
+        "balance_after": "18152.650000",
+        "available_balance_after": "18152.650000",
+        "task_no": "PT-20260914-00001",
+        "platform_call_id": "33333333-3333-4333-8333-333333333331",
+        "remark": "通话结算"
+      }
+    ],
+    "next_cursor": null
+  }
+}
+```
+
+`amount` 保留真实账户流水的方向，扣费为负数；`total_charge` 是所选时间范围内扣费绝对值之和。响应中的余额均为固定最多 6 位小数的字符串，ERP/CRM 不应使用浮点数计算金额。
+
 ## 6. 业务结果回传
 
 平台向影楼当前来源配置的结果地址发送 HTTP POST。地址同时支持 HTTP 和 HTTPS，可以使用非标准端口；平台不接受新增任务请求临时指定回调地址，也不跟随 HTTP 3xx 跳转。
@@ -370,7 +421,7 @@ Content-Type: application/json
         "guid": "CRM-CUSTOMER-10001",
         "phone_masked": "138****8888",
         "recording_id": "44444444-4444-4444-8444-444444444444",
-        "recording_url": "https://scheduling.paiyide.cc/api/v1/recordings/44444444-4444-4444-8444-444444444444/content?exp=1788662760&aud=...&sig=...",
+        "recording_url": "https://scheduling.paiyide.cc/api/v1/recordings/44444444-4444-4444-8444-444444444444/content?exp=1788921960&aud=...&sig=...",
         "expires_at": "2026-09-09T10:46:00+08:00"
       }
     ]

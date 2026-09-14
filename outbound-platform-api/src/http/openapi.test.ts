@@ -60,6 +60,28 @@ const validV2Request = {
 
 function setup() {
   const authenticate = vi.fn(async (_input: AuthenticationInput) => principal);
+  const listCallCharges = vi.fn(async () => ({
+    company_code: '5903679116',
+    currency: 'CNY' as const,
+    balance: '18152.650000',
+    available_balance: '18152.650000',
+    total_count: 1,
+    total_charge: '0.960000',
+    items: [
+      {
+        ledger_id: '22222222-2222-4222-8222-222222222221',
+        occurred_at: '2026-09-14T02:32:18.000Z',
+        type: 'CALL_CHARGE' as const,
+        amount: '-0.960000',
+        balance_after: '18152.650000',
+        available_balance_after: '18152.650000',
+        task_no: 'PT-20260914-00001',
+        platform_call_id: '33333333-3333-4333-8333-333333333331',
+        remark: '通话结算',
+      },
+    ],
+    next_cursor: null,
+  }));
   const accept = vi.fn(async () => ({
     status: 202 as const,
     replayed: false,
@@ -118,9 +140,10 @@ function setup() {
     workerSharedSecret: 'test-worker-secret-at-least-24',
     externalRequestAuthenticator: authenticator,
     outboundTaskService: taskService,
+    externalCallChargeService: { listCallCharges },
     createId: () => 'request-001',
   });
-  return { app, authenticate, accept, acceptV2 };
+  return { app, authenticate, accept, acceptV2, listCallCharges };
 }
 
 describe('external outbound task HTTP API', () => {
@@ -185,6 +208,49 @@ describe('external outbound task HTTP API', () => {
         request: expect.objectContaining({ company_code: '5903679116' }),
       }),
     );
+  });
+
+  it('returns only the authorized studio call-charge ledger query', async () => {
+    const { app, authenticate, listCallCharges } = setup();
+    const response = await app.request(
+      '/openapi/v2/billing/call-charges?company_code=5903679116&occurred_from=2026-09-01T00%3A00%3A00%2B08%3A00&occurred_before=2026-10-01T00%3A00%3A00%2B08%3A00&limit=50',
+      { headers: { 'x-access-token': 'erp-local-access-token' } },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'OK',
+      request_id: 'request-001',
+      data: {
+        company_code: '5903679116',
+        items: [{ type: 'CALL_CHARGE', amount: '-0.960000' }],
+      },
+    });
+    expect(authenticate).toHaveBeenLastCalledWith({
+      accessToken: 'erp-local-access-token',
+    });
+    expect(listCallCharges).toHaveBeenCalledWith(principal, {
+      companyCode: '5903679116',
+      occurredFrom: new Date('2026-09-01T00:00:00+08:00'),
+      occurredBefore: new Date('2026-10-01T00:00:00+08:00'),
+      cursor: undefined,
+      limit: 50,
+    });
+  });
+
+  it('rejects an inverted call-charge time range before querying the ledger', async () => {
+    const { app, listCallCharges } = setup();
+    const response = await app.request(
+      '/openapi/v2/billing/call-charges?company_code=5903679116&occurred_from=2026-10-01T00%3A00%3A00%2B08%3A00&occurred_before=2026-09-01T00%3A00%3A00%2B08%3A00',
+      { headers: { 'x-access-token': 'erp-local-access-token' } },
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: '请求参数不合法',
+    });
+    expect(listCallCharges).not.toHaveBeenCalled();
   });
 
   it.each([

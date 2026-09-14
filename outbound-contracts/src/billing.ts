@@ -36,7 +36,10 @@ export const supplierSettlementIssueSchema = z.object({
     'SUPPLIER_TIER_OVERLAP',
     'FINALIZED_SOURCE_DRIFT',
   ]),
-  taskNo: z.string().regex(/^PT-\d{8}-\d{5,}$/).nullable(),
+  taskNo: z
+    .string()
+    .regex(/^PT-\d{8}-\d{5,}$/)
+    .nullable(),
   message: z.string().min(1).max(500),
 });
 
@@ -141,6 +144,32 @@ export const ledgerPageSchema = z.object({
   nextCursor: z.string().nullable(),
 });
 
+export const externalCallChargeItemSchema = z.object({
+  ledger_id: z.uuid(),
+  occurred_at: z.iso.datetime({ offset: true }),
+  type: z.literal('CALL_CHARGE'),
+  amount: decimalAmountSchema,
+  balance_after: decimalAmountSchema,
+  available_balance_after: decimalAmountSchema,
+  task_no: z
+    .string()
+    .regex(/^PT-\d{8}-\d{5,}$/)
+    .nullable(),
+  platform_call_id: z.uuid().nullable(),
+  remark: z.string().max(500).nullable(),
+});
+
+export const externalCallChargePageSchema = z.object({
+  company_code: z.string().min(1).max(64),
+  currency: z.literal('CNY'),
+  balance: decimalAmountSchema,
+  available_balance: decimalAmountSchema,
+  total_count: z.number().int().nonnegative(),
+  total_charge: nonNegativeAmountSchema,
+  items: z.array(externalCallChargeItemSchema),
+  next_cursor: z.string().nullable(),
+});
+
 export type DecimalAmount = z.infer<typeof decimalAmountSchema>;
 export type BillingStatus = z.infer<typeof billingStatusSchema>;
 export type SupplierSettlementMonth = z.infer<
@@ -163,3 +192,9 @@ export type StudioBalance = z.infer<typeof studioBalanceSchema>;
 export type LedgerEntryType = z.infer<typeof ledgerEntryTypeSchema>;
 export type LedgerEntry = z.infer<typeof ledgerEntrySchema>;
 export type LedgerPage = z.infer<typeof ledgerPageSchema>;
+export type ExternalCallChargeItem = z.infer<
+  typeof externalCallChargeItemSchema
+>;
+export type ExternalCallChargePage = z.infer<
+  typeof externalCallChargePageSchema
+>;
