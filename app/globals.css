@@ -5978,6 +5978,114 @@
 .unified-date-content [data-slot='calendar'] button {
   font-size: 9px;
 }
+.unified-date-range-trigger {
+  min-width: 220px;
+  font-variant-numeric: tabular-nums;
+}
+.unified-date-range-content.unified-date-range-content {
+  width: 602px !important;
+}
+.unified-date-range-content > .unified-date-popup-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.unified-date-range-content > .unified-date-popup-label small {
+  border-radius: 999px;
+  background: #e7f3eb;
+  padding: 4px 7px;
+  color: #39755a;
+  font-size: 7px;
+  letter-spacing: 0.04em;
+}
+.unified-date-range-selection {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #deebe3;
+  border-radius: 7px;
+  background: linear-gradient(135deg, #f3f9f5, #fbfdfb);
+  margin: 7px 5px 2px;
+  padding: 7px 8px;
+}
+.unified-date-range-selection > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.unified-date-range-selection small {
+  color: #84928a;
+  font-size: 7px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+}
+.unified-date-range-selection b {
+  overflow: hidden;
+  color: #315247;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.unified-date-range-selection > svg {
+  color: #73a087;
+}
+.unified-date-range-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border-top: 1px solid #edf1ee;
+  padding: 7px 4px 2px;
+}
+.unified-date-range-actions button {
+  height: 28px;
+  border: 1px solid #d7e2db;
+  border-radius: 5px;
+  background: #fff;
+  padding: 0 10px;
+  color: #587067;
+  font-size: 8px;
+  font-weight: 750;
+}
+.unified-date-range-actions button:hover:not(:disabled),
+.unified-date-range-actions button:focus-visible {
+  border-color: #90b6a1;
+  background: #f2f8f4;
+  color: #24684d;
+  outline: none;
+}
+.unified-date-range-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+.unified-date-range-actions .is-clear {
+  border-color: transparent;
+  background: transparent;
+  color: #7a8881;
+}
+.unified-date-range-actions .is-cancel {
+  margin-left: auto;
+}
+.unified-date-range-actions .is-primary {
+  border-color: #1f654b;
+  background: #1f654b;
+  color: #fff;
+}
+.unified-date-range-actions .is-primary:hover:not(:disabled),
+.unified-date-range-actions .is-primary:focus-visible {
+  border-color: #174e3a;
+  background: #174e3a;
+  color: #fff;
+}
+@media (max-width: 680px) {
+  .unified-date-range-content.unified-date-range-content {
+    width: 318px !important;
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+  }
+}
 .task-filter-toolbar {
   display: flex;
   align-items: center;
@@ -11061,6 +11169,9 @@
   width: 132px;
   height: 34px;
 }
+.real-task-date-field .unified-date-range-trigger {
+  width: 238px;
+}
 @media (max-width: 680px) {
   .finance-scope-tabs {
     grid-template-columns: 1fr;
@@ -14399,7 +14510,8 @@
       .recovery-console,
       .callback-preview-console,
       .api-docs-page,
-      .finance-console
+      .finance-console,
+      .platform-detail-console
     ) {
     width: 100%;
     height: 100%;
@@ -14618,6 +14730,502 @@
 
   .finance-tab-panel > .ops-panel .ops-pagination {
     flex: 0 0 auto;
+  }
+}
+
+/* Platform-to-Baiying cost ledger: dense, auditable and export-oriented. */
+.platform-detail-console {
+  padding-top: 10px;
+}
+
+.platform-detail-intro {
+  flex: none;
+}
+
+.platform-detail-export {
+  min-width: 138px;
+  justify-content: center;
+}
+
+.platform-detail-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+  margin-bottom: 10px;
+}
+
+.platform-detail-metric {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+  border: 1px solid #d8e3dc;
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(238, 247, 242, 0.58), transparent 58%),
+    #fff;
+  padding: 12px 13px;
+  box-shadow: 0 15px 34px -32px rgba(20, 61, 48, 0.78);
+}
+
+.platform-detail-metric > span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  place-items: center;
+  border: 1px solid #cee2d6;
+  border-radius: 8px;
+  background: #eaf5ee;
+  color: #2e7759;
+}
+
+.platform-detail-metric.is-cost > span {
+  border-color: #d8e0c6;
+  background: #f3f5e7;
+  color: #657c35;
+}
+
+.platform-detail-metric.is-profit > span {
+  border-color: #cae2d5;
+  background: #e5f4eb;
+  color: #236a4c;
+}
+
+.platform-detail-metric.is-warning > span {
+  border-color: #ebd6ab;
+  background: #fff4df;
+  color: #a36a16;
+}
+
+.platform-detail-metric > div {
+  min-width: 0;
+}
+
+.platform-detail-metric small,
+.platform-detail-metric b,
+.platform-detail-metric em {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.platform-detail-metric small {
+  color: #7e8b84;
+  font-size: 8px;
+}
+
+.platform-detail-metric b {
+  margin-top: 3px;
+  color: #214e3d;
+  font-family: 'Songti SC', 'STSong', serif;
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.platform-detail-metric em {
+  margin-top: 3px;
+  color: #85918b;
+  font-size: 8px;
+  font-style: normal;
+}
+
+.platform-detail-rule {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  border: 1px solid #cfe0d6;
+  border-left: 3px solid #397c60;
+  border-radius: 7px;
+  background: #eef7f2;
+  padding: 9px 12px;
+  color: #39705a;
+}
+
+.platform-detail-rule > svg {
+  flex: none;
+}
+
+.platform-detail-rule > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.platform-detail-rule b,
+.platform-detail-rule p {
+  display: block;
+}
+
+.platform-detail-rule b {
+  font-size: 9px;
+}
+
+.platform-detail-rule p {
+  margin-top: 2px;
+  color: #71857b;
+  font-size: 8px;
+}
+
+.platform-detail-rule > span {
+  flex: none;
+  border-radius: 999px;
+  background: rgba(45, 113, 83, 0.09);
+  padding: 5px 8px;
+  color: #42735e;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.platform-detail-panel > .panel-body {
+  padding: 0;
+}
+
+.platform-detail-scope-tabs {
+  display: flex;
+  min-height: 43px;
+  align-items: stretch;
+  gap: 5px;
+  border-bottom: 1px solid #e3ebe6;
+  background: linear-gradient(90deg, #f8fbf9, #fff);
+  padding: 0 14px;
+}
+
+.platform-detail-scope-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  padding: 0 9px;
+  color: #74827b;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.platform-detail-scope-tabs button:hover {
+  color: #245f48;
+}
+
+.platform-detail-scope-tabs button.is-active {
+  border-bottom-color: #2f7b59;
+  color: #205c44;
+}
+
+.platform-detail-scope-tabs small {
+  display: grid;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 999px;
+  background: #e8efeb;
+  color: #74827b;
+  font-size: 7px;
+}
+
+.platform-detail-scope-tabs button.is-active small {
+  background: #d8ebdf;
+  color: #246246;
+}
+
+.platform-detail-toolbar {
+  display: grid;
+  grid-template-columns:
+    minmax(250px, 1.35fr) minmax(230px, auto) minmax(170px, 0.75fr)
+    minmax(105px, auto) auto;
+  align-items: end;
+  gap: 7px;
+  border-bottom: 1px solid #e6ede8;
+  padding: 10px 14px 8px;
+}
+
+.platform-detail-search {
+  min-width: 0;
+}
+
+.platform-detail-date-field {
+  min-width: 0;
+}
+
+.platform-detail-date-field > span {
+  display: block;
+  margin: 0 0 4px 2px;
+  color: #849089;
+  font-size: 7px;
+  font-weight: 700;
+}
+
+.platform-detail-date-field .unified-date-trigger {
+  width: 100%;
+  min-width: 230px;
+  height: 34px;
+}
+
+.platform-detail-select,
+.platform-detail-page-size {
+  min-width: 0;
+}
+
+.platform-detail-quick-ranges {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border-bottom: 1px solid #edf1ee;
+  padding: 6px 14px;
+}
+
+.platform-detail-quick-ranges > span {
+  margin-right: 3px;
+  color: #8a9690;
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.platform-detail-quick-ranges button {
+  height: 23px;
+  border: 1px solid #dce5df;
+  border-radius: 999px;
+  background: #fff;
+  padding: 0 8px;
+  color: #698078;
+  font-size: 7px;
+}
+
+.platform-detail-quick-ranges button:hover,
+.platform-detail-quick-ranges button.is-active {
+  border-color: #94bea8;
+  background: #eaf5ee;
+  color: #286a4e;
+}
+
+.platform-detail-table-wrap {
+  min-height: 260px;
+  overflow: auto;
+}
+
+.platform-detail-table {
+  min-width: 1480px;
+}
+
+.platform-detail-table th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  background: #f5f8f6;
+  color: #718079;
+  font-size: 8px;
+}
+
+.platform-detail-table th,
+.platform-detail-table td {
+  padding: 9px 10px;
+}
+
+.platform-detail-table td {
+  color: #51645b;
+  font-size: 9px;
+  vertical-align: middle;
+}
+
+.platform-detail-table tbody tr:hover {
+  background: #f5faf7;
+}
+
+.platform-detail-table td b,
+.platform-detail-table td code,
+.platform-detail-table td .status,
+.platform-detail-table td .table-meta {
+  display: block;
+  width: max-content;
+  max-width: 190px;
+}
+
+.platform-detail-table td b {
+  color: #344f43;
+  font-size: 9px;
+}
+
+.platform-detail-table td code {
+  border-radius: 4px;
+  background: #edf4f0;
+  padding: 3px 5px;
+  color: #2e6b52;
+  font-size: 8px;
+}
+
+.platform-detail-table td .table-meta {
+  margin-top: 4px;
+  overflow: hidden;
+  color: #89948f;
+  font-size: 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.platform-detail-table td .status {
+  margin-top: 4px;
+}
+
+.platform-detail-task-name,
+.platform-detail-job-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.platform-detail-cost {
+  color: #64712f !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.platform-detail-profit {
+  color: #1f7650 !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.platform-detail-negative {
+  color: #ad4b43 !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.platform-detail-skeleton td > span,
+.platform-detail-skeleton td > small {
+  display: block;
+  border-radius: 4px;
+  background: linear-gradient(100deg, #e9efeb 25%, #f8faf9 45%, #e9efeb 65%);
+  background-size: 220% 100%;
+  animation: planned-shimmer 1.2s infinite;
+}
+
+.platform-detail-skeleton td > span {
+  width: 78%;
+  height: 11px;
+}
+
+.platform-detail-skeleton td > small {
+  width: 58%;
+  height: 8px;
+  margin-top: 6px;
+}
+
+@media (min-width: 721px) {
+  .platform-detail-console {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .platform-detail-console
+    > :where(
+      .ops-page-intro,
+      .ops-feedback,
+      .platform-detail-metrics,
+      .platform-detail-rule
+    ) {
+    flex: 0 0 auto;
+  }
+
+  .platform-detail-console > .platform-detail-panel {
+    display: flex;
+    min-height: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    margin-bottom: 0;
+  }
+
+  .platform-detail-panel > .panel-heading {
+    flex: 0 0 auto;
+  }
+
+  .platform-detail-panel > .panel-body {
+    display: flex;
+    min-height: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+  }
+
+  .platform-detail-table-wrap {
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+
+  .platform-detail-pagination {
+    flex: 0 0 auto;
+  }
+}
+
+@media (max-width: 1180px) {
+  .platform-detail-toolbar {
+    grid-template-columns:
+      minmax(240px, 1fr) minmax(230px, auto) minmax(150px, auto);
+  }
+
+  .platform-detail-select,
+  .platform-detail-page-size,
+  .platform-detail-toolbar > .ops-icon-button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 860px) {
+  .platform-detail-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .platform-detail-rule {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .platform-detail-rule > span {
+    margin-left: 26px;
+  }
+}
+
+@media (max-width: 720px) {
+  .platform-detail-console {
+    padding-top: 0;
+  }
+
+  .platform-detail-intro {
+    align-items: stretch;
+  }
+
+  .platform-detail-export {
+    width: 100%;
+  }
+
+  .platform-detail-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .platform-detail-scope-tabs {
+    overflow-x: auto;
+  }
+
+  .platform-detail-scope-tabs button {
+    flex: none;
+  }
+
+  .platform-detail-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .platform-detail-date-field .unified-date-trigger {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .platform-detail-quick-ranges {
+    overflow-x: auto;
+  }
+
+  .platform-detail-quick-ranges > * {
+    flex: none;
   }
 }
 

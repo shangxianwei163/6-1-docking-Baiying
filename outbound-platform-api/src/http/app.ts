@@ -43,6 +43,7 @@ import {
   operatorDeadLetterStatusSchema,
   operatorTaskCommandInputSchema,
   operatorTaskRetryInputSchema,
+  platformCostDetailStatusSchema,
   replayDeadLetterInputSchema,
   repairTaskReconciliationInputSchema,
   taskReconciliationStatusSchema,
@@ -87,6 +88,7 @@ import {
 import type { AccountAdjustmentService } from '../operations/adjustment-service.js';
 import type { SupplierMonthlySettlementService } from '../billing/monthly-settlement-service.js';
 import type { ExternalCallChargeService } from '../billing/external-call-charge-service.js';
+import type { PlatformCostDetailService } from '../billing/platform-cost-detail-service.js';
 import type { OperatorAuditService } from '../operations/audit-service.js';
 import type { OperationsOverviewService } from '../operations/overview-service.js';
 import type { IntegrationLogService } from '../operations/integration-log-service.js';
@@ -124,6 +126,7 @@ export type AppDependencies = {
   accountAdjustmentService?: AccountAdjustmentService;
   supplierMonthlySettlementService?: SupplierMonthlySettlementService;
   externalCallChargeService?: ExternalCallChargeService;
+  platformCostDetailService?: PlatformCostDetailService;
   operatorAuditService?: OperatorAuditService;
   operationsOverviewService?: OperationsOverviewService;
   integrationLogService?: IntegrationLogService;
@@ -161,7 +164,9 @@ export function createApp(dependencies: AppDependencies) {
       exposeHeaders: [
         'X-Request-Id',
         'Idempotent-Replayed',
+        'Content-Disposition',
         'X-Recording-Sha256',
+        'X-Export-Row-Count',
       ],
       credentials: true,
     }),
@@ -676,6 +681,30 @@ export function createApp(dependencies: AppDependencies) {
       success(context.get('requestId'), data),
       data.idempotentReplay ? 200 : 201,
     );
+  });
+
+  app.get('/api/v1/platform-cost-details', async (context) => {
+    requireActor(context.req.header('x-actor-id'));
+    const query = parsePlatformCostDetailQuery(context.req.query());
+    const data = await platformCostDetailDependency(dependencies).listDetails(
+      query,
+    );
+    return context.json(success(context.get('requestId'), data));
+  });
+
+  app.get('/api/v1/platform-cost-details/export', async (context) => {
+    requireActor(context.req.header('x-actor-id'));
+    const { pageNum: _pageNum, pageSize: _pageSize, ...query } =
+      parsePlatformCostDetailQuery(context.req.query());
+    const exported =
+      await platformCostDetailDependency(dependencies).exportDetails(query);
+    return context.body(exported.csv, 200, {
+      'Cache-Control': 'private, no-store',
+      'Content-Disposition': `attachment; filename="platform-cost-details.csv"; filename*=UTF-8''${encodeURIComponent(exported.fileName)}`,
+      'Content-Type': 'text/csv; charset=utf-8',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Export-Row-Count': String(exported.rowCount),
+    });
   });
 
   app.get('/api/v1/audit-logs', async (context) => {
@@ -1870,6 +1899,17 @@ function supplierSettlementDependency(dependencies: AppDependencies) {
   return dependencies.supplierMonthlySettlementService;
 }
 
+function platformCostDetailDependency(dependencies: AppDependencies) {
+  if (!dependencies.platformCostDetailService) {
+    throw new OperationsConsoleFailure(
+      'SERVICE_TEMPORARILY_UNAVAILABLE',
+      '平台费用明细服务尚未配置',
+      503,
+    );
+  }
+  return dependencies.platformCostDetailService;
+}
+
 function auditDependency(dependencies: AppDependencies) {
   if (!dependencies.operatorAuditService) {
     throw new OperationsConsoleFailure(
@@ -2104,6 +2144,54 @@ function managedLineRepository(dependencies: AppDependencies) {
 
 function success<T>(requestId: string, data: T) {
   return { requestId, data };
+}
+
+function parsePlatformCostDetailQuery(query: Record<string, string>) {
+  const parsed = z
+    .object({
+      keyword: z.string().trim().max(200).optional(),
+      studioId: z.uuid().optional(),
+      costStatus: platformCostDetailStatusSchema.optional(),
+      occurredFrom: z.iso.datetime({ offset: true }).optional(),
+      occurredBefore: z.iso.datetime({ offset: true }).optional(),
+      pageNum: z.coerce.number().int().min(0).default(0),
+      pageSize: z.coerce.number().int().min(1).max(100).default(20),
+    })
+    .parse(query);
+  const occurredFrom = parsed.occurredFrom
+    ? new Date(parsed.occurredFrom)
+    : undefined;
+  const occurredBefore = parsed.occurredBefore
+    ? new Date(parsed.occurredBefore)
+    : undefined;
+  if (occurredFrom && occurredBefore) {
+    if (occurredFrom >= occurredBefore) {
+      throw new OperationsConsoleFailure(
+        'INVALID_PLATFORM_DETAIL_DATE_RANGE',
+        '费用开始日期必须早于结束日期',
+        400,
+      );
+    }
+    if (
+      occurredBefore.getTime() - occurredFrom.getTime() >
+      366 * 24 * 60 * 60 * 1_000
+    ) {
+      throw new OperationsConsoleFailure(
+        'PLATFORM_DETAIL_DATE_RANGE_TOO_LARGE',
+        '单次查询或导出最多支持 366 天，请缩小日期范围',
+        400,
+      );
+    }
+  }
+  return {
+    keyword: parsed.keyword || undefined,
+    studioId: parsed.studioId,
+    costStatus: parsed.costStatus,
+    occurredFrom,
+    occurredBefore,
+    pageNum: parsed.pageNum,
+    pageSize: parsed.pageSize,
+  };
 }
 
 function latestLineSyncAt(lines: ManagedLine[]): string | null {

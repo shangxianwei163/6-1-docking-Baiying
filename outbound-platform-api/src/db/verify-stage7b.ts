@@ -5,6 +5,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { CreateOutboundTaskRequest } from '@outbound/contracts';
 import { LocalBaiyingCallJobClient } from '../baiying/local-call-job-client.js';
 import { PostgresSupplierMonthlySettlementService } from '../billing/monthly-settlement-service.js';
+import { PostgresPlatformCostDetailService } from '../billing/platform-cost-detail-service.js';
 import { addMoney } from '../billing/money.js';
 import { BaiyingCallbackIngressService } from '../callback/ingress-service.js';
 import { PostgresBaiyingCallbackProcessor } from '../callback/processor.js';
@@ -42,6 +43,8 @@ import {
   studios,
   supplierMonthlySettlements,
   supplierPricingTiers,
+  supplierSettlementAdjustments,
+  supplierSettlementCloseCycles,
   supplierSettlementTaskItems,
   taskCallItems,
   taskMappingSnapshots,
@@ -66,6 +69,7 @@ async function main() {
     throw new Error('阶段 7B 本地月结验收禁止在生产环境运行');
   }
   const database = createDatabase(config.DATABASE_URL);
+  await cleanupStaleStage7bFixtures(database.db);
   const protector = new LocalDataProtector(
     config.WORKER_SHARED_SECRET,
     config.NODE_ENV,
@@ -87,6 +91,9 @@ async function main() {
     const settlement = new PostgresSupplierMonthlySettlementService(
       database.db,
       () => FIXTURE_NOW,
+    );
+    const platformCostDetails = new PostgresPlatformCostDetailService(
+      database.db,
     );
     const emptyPreview = await settlement.preview('2000-12');
     assert.equal(emptyPreview.taskCount, 0);
@@ -243,7 +250,7 @@ async function main() {
       1,
     );
     const preview = await settlement.preview(SETTLEMENT_MONTH);
-    assert.equal(preview.status, 'OPEN');
+    assert.equal(preview.status, 'RECONCILING');
     assert.equal(preview.reconciliation.status, 'BALANCED');
     assert.equal(preview.taskCount, 2);
     assert.equal(preview.totalBillingMinutes, '10000');
@@ -260,6 +267,27 @@ async function main() {
     assert.equal(provisionalTask.billing.platformRate, '0.180000');
     assert.equal(provisionalTask.billing.platformCost, '1799.820000');
     assert.equal(provisionalTask.billing.profit, '2999.700000');
+    const detailRange = {
+      occurredFrom: new Date('2000-12-31T16:00:00.000Z'),
+      occurredBefore: new Date('2001-01-31T16:00:00.000Z'),
+    };
+    const provisionalDetails = await platformCostDetails.listDetails({
+      ...detailRange,
+      pageNum: 0,
+      pageSize: 20,
+    });
+    assert.equal(provisionalDetails.total, 2);
+    assert.equal(provisionalDetails.summary.totalBillingMinutes, '10000');
+    assert.equal(provisionalDetails.summary.totalPlatformCost, '1800.000000');
+    assert.equal(provisionalDetails.summary.totalProfit, '3000.000000');
+    assert.equal(provisionalDetails.summary.statusCounts.provisional, 2);
+    assert.ok(
+      provisionalDetails.items.every(
+        (item) =>
+          item.costStatus === 'PROVISIONAL' &&
+          item.platformRate === '0.180000',
+      ),
+    );
 
     await assert.rejects(
       settlement.finalize(
@@ -320,6 +348,18 @@ async function main() {
 
     const finalPreview = await settlement.preview(SETTLEMENT_MONTH);
     assert.equal(finalPreview.sourceHash, preview.sourceHash);
+    const precloseRequestId = `supplier-preclose:${SETTLEMENT_MONTH}`;
+    auditRequestIds.push(precloseRequestId);
+    const preclosed = await settlement.preclose(SETTLEMENT_MONTH);
+    assert.ok(preclosed.automation.preclosedAt);
+    assert.equal(
+      preclosed.automation.precloseScheduledAt,
+      '2001-01-31T15:30:00.000Z',
+    );
+    assert.equal(
+      preclosed.automation.autoFinalizeScheduledAt,
+      '2001-01-31T16:10:00.000Z',
+    );
     const finalizationInput = {
       expectedSourceHash: finalPreview.sourceHash,
       reason: '阶段 7B 本地账务核对无差异，批准封账',
@@ -397,6 +437,20 @@ async function main() {
     const finalTask = await intake.getTask(fixture.principal, largeTask.taskNo);
     assert.equal(finalTask.billing.platformRateStatus, 'FINAL');
     assert.equal(finalTask.billing.platformCost, '1799.820000');
+    const finalizedDetails = await platformCostDetails.listDetails({
+      ...detailRange,
+      costStatus: 'FINAL',
+      pageNum: 0,
+      pageSize: 20,
+    });
+    assert.equal(finalizedDetails.total, 2);
+    assert.equal(finalizedDetails.summary.statusCounts.final, 2);
+    assert.ok(
+      finalizedDetails.items.every(
+        (item) =>
+          item.costStatus === 'FINAL' && item.relatedSettlementId === settlementId,
+      ),
+    );
     const audits = await database.db
       .select({ id: auditLogs.id })
       .from(auditLogs)
@@ -429,6 +483,39 @@ async function main() {
         (issue) => issue.code === 'FINALIZED_SOURCE_DRIFT',
       ),
     );
+    assert.equal(
+      await settlement.capturePostCloseAdjustment(SETTLEMENT_MONTH),
+      true,
+    );
+    assert.equal(
+      await settlement.capturePostCloseAdjustment(SETTLEMENT_MONTH),
+      false,
+    );
+    const adjusted = await settlement.preview(SETTLEMENT_MONTH);
+    assert.equal(adjusted.automation.openAdjustmentCount, 1);
+    assert.ok(adjusted.automation.latestAdjustmentDetectedAt);
+    const adjustmentDetails = await platformCostDetails.listDetails({
+      ...detailRange,
+      costStatus: 'ADJUSTMENT_PENDING',
+      pageNum: 0,
+      pageSize: 20,
+    });
+    assert.equal(adjustmentDetails.total, 1);
+    assert.equal(adjustmentDetails.items[0]?.billingMinutes, 0);
+    assert.equal(adjustmentDetails.items[0]?.platformCost, '0.000000');
+    const keywordDetails = await platformCostDetails.listDetails({
+      ...detailRange,
+      keyword: adjustmentDetails.items[0]!.taskNo,
+      pageNum: 0,
+      pageSize: 20,
+    });
+    assert.equal(keywordDetails.total, 1);
+    const exportedDetails = await platformCostDetails.exportDetails({
+      ...detailRange,
+    });
+    assert.equal(exportedDetails.rowCount, 3);
+    assert.match(exportedDetails.csv, /任务编号/);
+    assert.match(exportedDetails.csv, /PT-20010120-/);
 
     console.info(
       JSON.stringify(
@@ -443,9 +530,11 @@ async function main() {
             '账务差异会阻止封账，预览哈希变化会拒绝过期确认',
             '当前月份不能提前封账',
             '无任务月份无需供应阶梯且不会生成空月结单',
+            '月末 23:30 预封账会固化快照并登记自动封账时间',
             '并发封账只生成一个不可变结算批次和一份审计记录',
             '任务详情封账前显示暂估值，封账后写入并显示最终成本、收益及批次关联',
-            '重复封账幂等返回，封账后迟到任务触发来源漂移告警',
+            '平台明细按日期与状态查询暂估、封账和调整记录，并导出相同口径 CSV',
+            '重复封账幂等返回，封账后迟到任务触发来源漂移告警和唯一调整单',
           ],
           totals: {
             taskCount: finalPreview.taskCount,
@@ -728,7 +817,25 @@ async function cleanup(
         .from(supplierMonthlySettlements)
         .where(eq(supplierMonthlySettlements.settlementMonth, '2001-01-01'))
     ).map((settlement) => settlement.id);
+    const adjustmentIds = settlementIds.length
+      ? (
+          await tx
+            .select({ id: supplierSettlementAdjustments.id })
+            .from(supplierSettlementAdjustments)
+            .where(
+              inArray(
+                supplierSettlementAdjustments.settlementId,
+                settlementIds,
+              ),
+            )
+        ).map((adjustment) => adjustment.id)
+      : [];
     if (settlementIds.length) {
+      if (adjustmentIds.length) {
+        await tx
+          .delete(auditLogs)
+          .where(inArray(auditLogs.objectId, adjustmentIds));
+      }
       await tx
         .delete(supplierSettlementTaskItems)
         .where(
@@ -797,6 +904,19 @@ async function cleanup(
       .where(eq(callbackInbox.provider, input.callbackProvider));
     if (settlementIds.length) {
       await tx
+        .delete(supplierSettlementAdjustments)
+        .where(
+          inArray(supplierSettlementAdjustments.settlementId, settlementIds),
+        );
+      await tx
+        .delete(supplierSettlementCloseCycles)
+        .where(
+          inArray(
+            supplierSettlementCloseCycles.finalizedSettlementId,
+            settlementIds,
+          ),
+        );
+      await tx
         .delete(auditLogs)
         .where(inArray(auditLogs.objectId, settlementIds));
       await tx
@@ -844,6 +964,25 @@ async function cleanup(
         sql`${supplierPricingTiers.tierCode} LIKE ${`${input.supplierTierCodePrefix}%`}`,
       );
   });
+}
+
+async function cleanupStaleStage7bFixtures(db: Database) {
+  const staleStudios = await db
+    .select({ id: studios.id })
+    .from(studios)
+    .where(sql`${studios.name} LIKE '阶段七月结验收影楼 %'`);
+  for (const studio of staleStudios) {
+    await cleanup(db, {
+      studioId: studio.id,
+      taskFixtures: [],
+      inboxIds: [],
+      auditRequestIds: [],
+      orchestrationQueue: '__stale_stage7b__',
+      deliveryQueue: '__stale_stage7b__',
+      callbackProvider: '__stale_stage7b__',
+      supplierTierCodePrefix: 'stage7b-',
+    });
+  }
 }
 
 function hasCode(code: string) {

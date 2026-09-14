@@ -1230,7 +1230,11 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
       const taskHasIssue = summary?.reconciliation.issues.some(
         (issue) => issue.taskNo === null || issue.taskNo === row.task.taskNo,
       );
-      if (!summary?.tier || summary.status !== 'OPEN' || taskHasIssue) {
+      if (
+        !summary?.tier ||
+        summary.status === 'FINALIZED' ||
+        taskHasIssue
+      ) {
         return row;
       }
       const platformRate = normalizeMoney(summary.tier.voiceRate);

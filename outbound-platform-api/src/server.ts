@@ -20,7 +20,9 @@ import { BaiyingCallbackIngressService } from './callback/ingress-service.js';
 import { PostgresOperationsConsoleService } from './operations/service.js';
 import { PostgresAccountAdjustmentService } from './operations/adjustment-service.js';
 import { PostgresSupplierMonthlySettlementService } from './billing/monthly-settlement-service.js';
+import { createSupplierSettlementScheduler } from './billing/monthly-settlement-scheduler.js';
 import { PostgresExternalCallChargeService } from './billing/external-call-charge-service.js';
+import { PostgresPlatformCostDetailService } from './billing/platform-cost-detail-service.js';
 import { PostgresOperatorAuditService } from './operations/audit-service.js';
 import { PostgresOperationsOverviewService } from './operations/overview-service.js';
 import { PostgresIntegrationLogService } from './operations/integration-log-service.js';
@@ -89,8 +91,16 @@ const dataProtector = createRuntimeDataProtector(
   config.NODE_ENV,
 );
 const supplierMonthlySettlementService =
-  new PostgresSupplierMonthlySettlementService(database.db);
+  new PostgresSupplierMonthlySettlementService(
+    database.db,
+    undefined,
+    undefined,
+    config.SUPPLIER_SETTLEMENT_AUTO_FINALIZE_DELAY_MINUTES,
+  );
 const externalCallChargeService = new PostgresExternalCallChargeService(
+  database.db,
+);
+const platformCostDetailService = new PostgresPlatformCostDetailService(
   database.db,
 );
 const outboundTaskService = new PostgresOutboundTaskService(
@@ -206,6 +216,7 @@ const app = createApp({
   accountAdjustmentService,
   supplierMonthlySettlementService,
   externalCallChargeService,
+  platformCostDetailService,
   operatorAuditService,
   operationsOverviewService,
   integrationLogService,
@@ -246,6 +257,39 @@ const variableSyncScheduler = workflowClient
         ),
     })
   : undefined;
+const supplierSettlementScheduler = createSupplierSettlementScheduler({
+  intervalMs: config.SUPPLIER_SETTLEMENT_SCHEDULER_INTERVAL_MS,
+  retryIntervalMs: config.SUPPLIER_SETTLEMENT_RETRY_INTERVAL_MS,
+  autoFinalizeDelayMinutes:
+    config.SUPPLIER_SETTLEMENT_AUTO_FINALIZE_DELAY_MINUTES,
+  service: supplierMonthlySettlementService,
+  onResult: ({ trigger, action, month, summary, adjustmentCreated }) =>
+    console.info(
+      JSON.stringify({
+        level: 'info',
+        message: 'Supplier settlement automation completed',
+        trigger,
+        action,
+        month,
+        status: summary?.status,
+        taskCount: summary?.taskCount,
+        totalBillingMinutes: summary?.totalBillingMinutes,
+        tierCode: summary?.tier?.tierCode,
+        adjustmentCreated,
+      }),
+    ),
+  onError: ({ trigger, action, month, error }) =>
+    console.error(
+      JSON.stringify({
+        level: 'error',
+        message: 'Supplier settlement automation failed',
+        trigger,
+        action,
+        month,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    ),
+});
 
 const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
   console.info(
@@ -253,6 +297,7 @@ const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
   );
 });
 variableSyncScheduler?.start();
+supplierSettlementScheduler.start();
 
 let categorySyncTimer: NodeJS.Timeout | undefined;
 async function synchronizeErpCategories(trigger: 'startup' | 'schedule') {
@@ -295,6 +340,7 @@ async function shutdown(signal: string) {
   server.close();
   if (categorySyncTimer) clearInterval(categorySyncTimer);
   variableSyncScheduler?.stop();
+  supplierSettlementScheduler.stop();
   await database.close();
 }
 

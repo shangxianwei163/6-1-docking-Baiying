@@ -42,7 +42,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { UnifiedSelect } from '@/components/ui/unified-select';
-import { UnifiedDatePicker } from '@/components/ui/unified-date-picker';
+import { UnifiedDateRangePicker } from '@/components/ui/unified-date-picker';
 import { Panel, Status } from './shared';
 
 type DetailTab = 'summary' | 'calls';
@@ -280,29 +280,15 @@ export function OutboundTaskConsole() {
             />
           </label>
           <div className="real-task-date-field">
-            <span>创建日期从</span>
-            <UnifiedDatePicker
-              ariaLabel="任务创建开始日期"
-              value={startDate}
-              max={endDate || undefined}
+            <span>创建日期</span>
+            <UnifiedDateRangePicker
+              ariaLabel="任务创建日期范围"
+              value={{ start: startDate, end: endDate }}
               clearable
-              popupLabel="选择开始日期"
-              onValueChange={(value) => {
-                setStartDate(value);
-                setPageNum(0);
-              }}
-            />
-          </div>
-          <div className="real-task-date-field">
-            <span>至</span>
-            <UnifiedDatePicker
-              ariaLabel="任务创建结束日期"
-              value={endDate}
-              min={startDate || undefined}
-              clearable
-              popupLabel="选择结束日期"
-              onValueChange={(value) => {
-                setEndDate(value);
+              popupLabel="选择创建日期范围"
+              onValueChange={(range) => {
+                setStartDate(range.start);
+                setEndDate(range.end);
                 setPageNum(0);
               }}
             />

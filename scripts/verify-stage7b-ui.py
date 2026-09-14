@@ -26,7 +26,7 @@ def settlement_summary(finalized: bool) -> dict:
         'timezone': 'Asia/Shanghai',
         'periodStart': '2026-07-31T16:00:00.000Z',
         'periodEnd': '2026-08-31T16:00:00.000Z',
-        'status': 'FINALIZED' if finalized else 'OPEN',
+        'status': 'FINALIZED' if finalized else 'RECONCILING',
         'taskCount': 12,
         'totalBillingMinutes': '10000',
         'tier': {
@@ -52,6 +52,15 @@ def settlement_summary(finalized: bool) -> dict:
         'finalizedBy': 'stage7b-ui-verifier' if finalized else None,
         'finalizedAt': '2026-09-06T08:30:00.000Z' if finalized else None,
         'idempotentReplay': False,
+        'automation': {
+            'precloseScheduledAt': '2026-08-31T15:30:00.000Z',
+            'autoFinalizeScheduledAt': '2026-08-31T16:10:00.000Z',
+            'preclosedAt': '2026-08-31T15:30:00.000Z',
+            'lastAttemptAt': '2026-08-31T16:10:00.000Z',
+            'lastError': None,
+            'openAdjustmentCount': 0,
+            'latestAdjustmentDetectedAt': None,
+        },
     }
 
 
@@ -62,7 +71,7 @@ def empty_settlement_summary() -> dict:
         'timezone': 'Asia/Shanghai',
         'periodStart': '2026-06-30T16:00:00.000Z',
         'periodEnd': '2026-07-31T16:00:00.000Z',
-        'status': 'OPEN',
+        'status': 'RECONCILING',
         'taskCount': 0,
         'totalBillingMinutes': '0',
         'tier': None,
@@ -81,6 +90,15 @@ def empty_settlement_summary() -> dict:
         'finalizedBy': None,
         'finalizedAt': None,
         'idempotentReplay': False,
+        'automation': {
+            'precloseScheduledAt': '2026-07-31T15:30:00.000Z',
+            'autoFinalizeScheduledAt': '2026-07-31T16:10:00.000Z',
+            'preclosedAt': None,
+            'lastAttemptAt': None,
+            'lastError': None,
+            'openAdjustmentCount': 0,
+            'latestAdjustmentDetectedAt': None,
+        },
     }
 
 
@@ -175,7 +193,7 @@ def main() -> None:
         open_settlement(page)
 
         panel = page.locator('.ops-settlement-panel')
-        expect(panel.get_by_text('待封账', exact=True)).to_be_visible()
+        expect(panel.get_by_text('自动核对中', exact=True)).to_be_visible()
         expect(panel.get_by_text('¥4,800.00', exact=True)).to_be_visible()
         expect(panel.get_by_text('¥1,800.00', exact=True)).to_be_visible()
         expect(panel.get_by_text('¥3,000.00', exact=True)).to_be_visible()

@@ -59,11 +59,50 @@ export function settlementMonthWindow(month: string): {
   return { month, start, end };
 }
 
+export function supplierSettlementSchedule(
+  month: string,
+  autoFinalizeDelayMinutes = 10,
+): {
+  precloseAt: Date;
+  autoFinalizeAt: Date;
+} {
+  if (
+    !Number.isInteger(autoFinalizeDelayMinutes) ||
+    autoFinalizeDelayMinutes < 0 ||
+    autoFinalizeDelayMinutes > 180
+  ) {
+    throw new TypeError('自动封账延迟必须是 0～180 分钟的整数');
+  }
+  const { end } = settlementMonthWindow(month);
+  return {
+    precloseAt: new Date(end.getTime() - 30 * 60 * 1_000),
+    autoFinalizeAt: new Date(
+      end.getTime() + autoFinalizeDelayMinutes * 60 * 1_000,
+    ),
+  };
+}
+
+export function previousShanghaiMonth(instant: Date): string {
+  const shifted = new Date(instant.getTime() + SHANGHAI_OFFSET_MS);
+  return formatMonth(
+    new Date(Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth() - 1, 1)),
+  );
+}
+
+export function currentShanghaiMonth(instant: Date): string {
+  const shifted = new Date(instant.getTime() + SHANGHAI_OFFSET_MS);
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
 export function shanghaiSettlementMonth(instant: Date): string {
   if (Number.isNaN(instant.getTime())) throw new TypeError('结算时间无效');
   return new Date(instant.getTime() + SHANGHAI_OFFSET_MS)
     .toISOString()
     .slice(0, 7);
+}
+
+function formatMonth(utcMonth: Date): string {
+  return `${utcMonth.getUTCFullYear()}-${String(utcMonth.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
 export function buildSupplierSettlementProjection(input: {

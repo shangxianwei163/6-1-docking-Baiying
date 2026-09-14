@@ -12,6 +12,7 @@ import {
   FileCog,
   Gauge,
   PhoneCall,
+  ReceiptText,
   LogOut,
   Settings2,
   ShieldAlert,
@@ -41,6 +42,7 @@ import { OperationsOverviewConsole } from '@/components/platform/operations-over
 import { IntegrationLogConsole } from '@/components/platform/integration-log-console';
 import { RecoveryOperationsConsole } from '@/components/platform/recovery-operations-console';
 import { CallbackPreviewConsole } from '@/components/platform/callback-preview-console';
+import { PlatformCostDetailConsole } from '@/components/platform/platform-cost-detail-console';
 import {
   OperatorLogin,
   OperatorLoginLoading,
@@ -54,6 +56,7 @@ export type PlatformSection =
   | '线路管理'
   | '数据分类'
   | '呼叫任务'
+  | '平台明细'
   | '充值记录'
   | '话费设置'
   | '操作日志'
@@ -74,6 +77,7 @@ const navigation: Array<{
   { label: '数据分类', icon: Tags },
   { label: '话术列表', icon: CalendarClock },
   { label: '呼叫任务', icon: PhoneCall },
+  { label: '平台明细', icon: ReceiptText },
   { label: '话费设置', icon: BadgeDollarSign },
   { label: '充值记录', icon: CircleDollarSign },
   { label: '接口日志', icon: Activity },
@@ -248,6 +252,8 @@ function renderSection(
       return <DataCategoryView />;
     case '呼叫任务':
       return <TaskView />;
+    case '平台明细':
+      return <PlatformCostDetailConsole />;
     case '充值记录':
       return <RechargeLedgerConsole />;
     case '话费设置':

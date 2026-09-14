@@ -34,6 +34,8 @@ import type {
   IntegrationLogStatus,
   IntegrationLogSystem,
   OperatorLedgerPage,
+  PlatformCostDetailPage,
+  PlatformCostDetailStatus,
   OperatorStudio,
   OperatorStudioPage,
   OperatorStudioStatus,
@@ -70,6 +72,7 @@ import {
   operatorDeadLetterPageSchema,
   operatorTaskActionResultSchema,
   operatorLedgerPageSchema,
+  platformCostDetailPageSchema,
   operatorStudioPageSchema,
   operatorStudioSchema,
   operatorTopUpResultSchema,
@@ -865,6 +868,54 @@ export async function finalizeSupplierSettlement(
   ) as SupplierSettlementSummary;
 }
 
+export type PlatformCostDetailFilters = {
+  keyword?: string;
+  studioId?: string;
+  costStatus?: PlatformCostDetailStatus;
+  occurredFrom?: string;
+  occurredBefore?: string;
+};
+
+export async function loadPlatformCostDetails(
+  input: PlatformCostDetailFilters & {
+    pageNum?: number;
+    pageSize?: number;
+  } = {},
+) {
+  const search = platformCostDetailSearch(input);
+  search.set('pageNum', String(input.pageNum ?? 0));
+  search.set('pageSize', String(input.pageSize ?? 20));
+  return platformCostDetailPageSchema.parse(
+    await request<unknown>(`/api/v1/platform-cost-details?${search}`),
+  ) as PlatformCostDetailPage;
+}
+
+export async function exportPlatformCostDetails(
+  input: PlatformCostDetailFilters = {},
+) {
+  const search = platformCostDetailSearch(input);
+  const response = await requestFile(
+    `/api/v1/platform-cost-details/export?${search}`,
+  );
+  return {
+    blob: await response.blob(),
+    fileName:
+      exportedFileName(response.headers.get('content-disposition')) ??
+      '平台明细.csv',
+    rowCount: Number(response.headers.get('x-export-row-count') ?? '0'),
+  };
+}
+
+function platformCostDetailSearch(input: PlatformCostDetailFilters) {
+  const search = new URLSearchParams();
+  if (input.keyword?.trim()) search.set('keyword', input.keyword.trim());
+  if (input.studioId) search.set('studioId', input.studioId);
+  if (input.costStatus) search.set('costStatus', input.costStatus);
+  if (input.occurredFrom) search.set('occurredFrom', input.occurredFrom);
+  if (input.occurredBefore) search.set('occurredBefore', input.occurredBefore);
+  return search;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
   try {
@@ -896,4 +947,48 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     );
   }
   return payload.data;
+}
+
+async function requestFile(path: string): Promise<Response> {
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl}${path}`, {
+      credentials: 'include',
+      headers: { 'x-actor-id': platformActorId },
+    });
+  } catch {
+    throw new PlatformApiError(
+      '无法连接平台 API，请确认本地后端已启动',
+      'NETWORK_ERROR',
+    );
+  }
+  if (response.ok) return response;
+  let payload: ApiErrorEnvelope = {};
+  try {
+    payload = (await response.json()) as ApiErrorEnvelope;
+  } catch {
+    payload = {};
+  }
+  const error = payload.error;
+  if (response.status === 401 && typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('operator-session-expired'));
+  }
+  throw new PlatformApiError(
+    error?.message || '平台明细导出失败',
+    error?.code || 'API_ERROR',
+    error?.requestId,
+  );
+}
+
+function exportedFileName(contentDisposition: string | null): string | null {
+  if (!contentDisposition) return null;
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(contentDisposition)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      return null;
+    }
+  }
+  return /filename="?([^";]+)"?/i.exec(contentDisposition)?.[1] ?? null;
 }

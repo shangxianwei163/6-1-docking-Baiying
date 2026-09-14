@@ -322,7 +322,13 @@ export async function bootstrapStage2Local(db: Database, now = new Date()) {
           enabled: true,
           createdAt: now,
         })
-        .onConflictDoNothing();
+        .onConflictDoUpdate({
+          target: [
+            baiyingSceneCompanies.sceneDefId,
+            baiyingSceneCompanies.companyId,
+          ],
+          set: { enabled: true },
+        });
       const [snapshot] = await tx
         .select({ id: sceneVariableSnapshots.id })
         .from(sceneVariableSnapshots)

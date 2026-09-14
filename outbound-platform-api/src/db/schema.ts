@@ -1268,6 +1268,101 @@ export const supplierSettlementTaskItems = pgTable(
   ],
 );
 
+export const supplierSettlementCloseCycles = pgTable(
+  'supplier_settlement_close_cycle',
+  {
+    settlementMonth: date('settlement_month', { mode: 'string' }).primaryKey(),
+    status: varchar('status', { length: 32 })
+      .$type<
+        'PRE_CLOSING' | 'RECONCILING' | 'BLOCKED' | 'FINALIZED'
+      >()
+      .notNull(),
+    precloseSourceHash: char('preclose_source_hash', { length: 64 }),
+    preclosedAt: timestamp('preclosed_at', { withTimezone: true }),
+    lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
+    lastError: text('last_error'),
+    finalizedSettlementId: uuid('finalized_settlement_id').references(
+      () => supplierMonthlySettlements.id,
+      { onDelete: 'restrict' },
+    ),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('supplier_close_cycle_settlement_uq')
+      .on(table.finalizedSettlementId)
+      .where(sql`${table.finalizedSettlementId} IS NOT NULL`),
+    check(
+      'supplier_close_cycle_status_ck',
+      sql`${table.status} IN ('PRE_CLOSING', 'RECONCILING', 'BLOCKED', 'FINALIZED')`,
+    ),
+    check(
+      'supplier_close_cycle_month_ck',
+      sql`extract(day from ${table.settlementMonth}) = 1`,
+    ),
+  ],
+);
+
+export const supplierSettlementAdjustments = pgTable(
+  'supplier_settlement_adjustment',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    settlementId: uuid('settlement_id')
+      .notNull()
+      .references(() => supplierMonthlySettlements.id, {
+        onDelete: 'restrict',
+      }),
+    sourceHash: char('source_hash', { length: 64 }).notNull(),
+    status: varchar('status', { length: 32 })
+      .$type<'OPEN' | 'ACKNOWLEDGED'>()
+      .notNull()
+      .default('OPEN'),
+    taskCountDelta: integer('task_count_delta').notNull(),
+    billingMinutesDelta: bigint('billing_minutes_delta', {
+      mode: 'bigint',
+    }).notNull(),
+    customerChargeDelta: numeric('customer_charge_delta', {
+      precision: 18,
+      scale: 6,
+    }).notNull(),
+    platformCostDelta: numeric('platform_cost_delta', {
+      precision: 18,
+      scale: 6,
+    }).notNull(),
+    profitDelta: numeric('profit_delta', {
+      precision: 18,
+      scale: 6,
+    }).notNull(),
+    detail: jsonb('detail_json').$type<Record<string, unknown>>().notNull(),
+    detectedAt: timestamp('detected_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
+    acknowledgedBy: varchar('acknowledged_by', { length: 128 }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('supplier_settlement_adjustment_source_uq').on(
+      table.settlementId,
+      table.sourceHash,
+    ),
+    index('supplier_settlement_adjustment_status_idx').on(
+      table.status,
+      table.detectedAt,
+    ),
+    check(
+      'supplier_settlement_adjustment_status_ck',
+      sql`${table.status} IN ('OPEN', 'ACKNOWLEDGED')`,
+    ),
+  ],
+);
+
 export const taskCallItems = pgTable(
   'task_call_item',
   {

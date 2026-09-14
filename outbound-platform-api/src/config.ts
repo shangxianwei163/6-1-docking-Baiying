@@ -38,6 +38,22 @@ const configSchema = z
       .int()
       .min(60_000)
       .default(21_600_000),
+    SUPPLIER_SETTLEMENT_SCHEDULER_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(60_000)
+      .default(60_000),
+    SUPPLIER_SETTLEMENT_RETRY_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(60_000)
+      .default(300_000),
+    SUPPLIER_SETTLEMENT_AUTO_FINALIZE_DELAY_MINUTES: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(180)
+      .default(10),
     TASK_ORCHESTRATION_QUEUE_NAME: z
       .string()
       .default('task-orchestration-queue'),

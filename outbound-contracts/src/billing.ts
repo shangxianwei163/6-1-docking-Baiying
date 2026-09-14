@@ -22,7 +22,13 @@ export const supplierSettlementMonthSchema = z
   .string()
   .regex(/^20\d{2}-(?:0[1-9]|1[0-2])$/, '结算月份必须为 YYYY-MM');
 
-export const supplierSettlementStatusSchema = z.enum(['OPEN', 'FINALIZED']);
+export const supplierSettlementStatusSchema = z.enum([
+  'OPEN',
+  'PRE_CLOSING',
+  'RECONCILING',
+  'BLOCKED',
+  'FINALIZED',
+]);
 
 export const supplierSettlementIssueSchema = z.object({
   code: z.enum([
@@ -79,6 +85,75 @@ export const supplierSettlementSummarySchema = z.object({
   finalizedBy: z.string().min(1).max(128).nullable(),
   finalizedAt: z.iso.datetime({ offset: true }).nullable(),
   idempotentReplay: z.boolean(),
+  automation: z.object({
+    precloseScheduledAt: z.iso.datetime({ offset: true }),
+    autoFinalizeScheduledAt: z.iso.datetime({ offset: true }),
+    preclosedAt: z.iso.datetime({ offset: true }).nullable(),
+    lastAttemptAt: z.iso.datetime({ offset: true }).nullable(),
+    lastError: z.string().max(1000).nullable(),
+    openAdjustmentCount: z.number().int().nonnegative(),
+    latestAdjustmentDetectedAt: z.iso.datetime({ offset: true }).nullable(),
+  }),
+});
+
+export const platformCostDetailStatusSchema = z.enum([
+  'PROVISIONAL',
+  'FINAL',
+  'ADJUSTMENT_PENDING',
+  'UNAVAILABLE',
+]);
+
+export const platformCostDetailItemSchema = z.object({
+  taskId: z.uuid(),
+  taskNo: z.string().regex(/^PT-\d{8}-\d{5,}$/),
+  studioId: z.uuid(),
+  studioBusinessCode: z.string().min(1).max(64),
+  studioName: z.string().min(1).max(200),
+  sourceSystem: z.enum(['ERP', 'CRM']),
+  taskName: z.string().min(1).max(200),
+  baiyingCallJobId: z.string().min(1).max(64).nullable(),
+  occurredAt: z.iso.datetime({ offset: true }),
+  settlementMonth: supplierSettlementMonthSchema,
+  phoneCount: z.number().int().positive(),
+  billingMinutes: z.number().int().nonnegative(),
+  monthlyBillingMinutes: z.string().regex(/^\d+$/),
+  customerRate: nonNegativeAmountSchema,
+  customerCharge: nonNegativeAmountSchema,
+  platformRate: nonNegativeAmountSchema.nullable(),
+  platformCost: nonNegativeAmountSchema.nullable(),
+  profit: decimalAmountSchema.nullable(),
+  costStatus: platformCostDetailStatusSchema,
+  tierCode: z.string().min(1).max(64).nullable(),
+  tierName: z.string().min(1).max(200).nullable(),
+  relatedSettlementId: z.uuid().nullable(),
+  finalizedAt: z.iso.datetime({ offset: true }).nullable(),
+});
+
+export const platformCostDetailStatusCountsSchema = z.object({
+  all: z.number().int().nonnegative(),
+  provisional: z.number().int().nonnegative(),
+  final: z.number().int().nonnegative(),
+  adjustmentPending: z.number().int().nonnegative(),
+  unavailable: z.number().int().nonnegative(),
+});
+
+export const platformCostDetailSummarySchema = z.object({
+  taskCount: z.number().int().nonnegative(),
+  totalBillingMinutes: z.string().regex(/^\d+$/),
+  totalCustomerCharge: nonNegativeAmountSchema,
+  totalPlatformCost: nonNegativeAmountSchema,
+  totalProfit: decimalAmountSchema,
+  unpricedBillingMinutes: z.string().regex(/^\d+$/),
+  statusCounts: platformCostDetailStatusCountsSchema,
+});
+
+export const platformCostDetailPageSchema = z.object({
+  total: z.number().int().nonnegative(),
+  pages: z.number().int().nonnegative(),
+  pageNum: z.number().int().nonnegative(),
+  pageSize: z.number().int().positive().max(100),
+  summary: platformCostDetailSummarySchema,
+  items: z.array(platformCostDetailItemSchema),
 });
 
 export const finalizeSupplierSettlementInputSchema = z
@@ -183,6 +258,21 @@ export type SupplierSettlementIssue = z.infer<
 >;
 export type SupplierSettlementSummary = z.infer<
   typeof supplierSettlementSummarySchema
+>;
+export type PlatformCostDetailStatus = z.infer<
+  typeof platformCostDetailStatusSchema
+>;
+export type PlatformCostDetailItem = z.infer<
+  typeof platformCostDetailItemSchema
+>;
+export type PlatformCostDetailStatusCounts = z.infer<
+  typeof platformCostDetailStatusCountsSchema
+>;
+export type PlatformCostDetailSummary = z.infer<
+  typeof platformCostDetailSummarySchema
+>;
+export type PlatformCostDetailPage = z.infer<
+  typeof platformCostDetailPageSchema
 >;
 export type FinalizeSupplierSettlementInput = z.infer<
   typeof finalizeSupplierSettlementInputSchema

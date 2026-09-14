@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, lte, or, sql } from 'drizzle-orm';
+import { createHash, randomUUID } from 'node:crypto';
+import { and, desc, eq, inArray, lte, or, sql } from 'drizzle-orm';
 import {
   supplierSettlementSummarySchema,
   type FinalizeSupplierSettlementInput,
@@ -15,13 +15,21 @@ import {
   platformTasks,
   supplierMonthlySettlements,
   supplierPricingTiers,
+  supplierSettlementAdjustments,
+  supplierSettlementCloseCycles,
   supplierSettlementTaskItems,
 } from '../db/schema.js';
 import { OperationsConsoleFailure } from '../operations/service.js';
-import { addMoney, moneyToMicros, normalizeMoney } from './money.js';
+import {
+  addMoney,
+  moneyToMicros,
+  normalizeMoney,
+  subtractMoney,
+} from './money.js';
 import {
   buildSupplierSettlementProjection,
   settlementMonthWindow,
+  supplierSettlementSchedule,
   type SupplierSettlementProjection,
   type SupplierSettlementTaskSource,
   type SupplierSettlementTierSource,
@@ -29,6 +37,7 @@ import {
 
 type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 type SettlementRow = typeof supplierMonthlySettlements.$inferSelect;
+type CloseCycleRow = typeof supplierSettlementCloseCycles.$inferSelect;
 type MonthlyTaskRow = SupplierSettlementTaskSource & {
   billingStatus: 'RESERVED' | 'SETTLING' | 'SETTLED' | 'FAILED';
   executionStatus: string;
@@ -58,6 +67,11 @@ type CurrentSettlementState = {
   blockingTaskCount: number;
   lateTaskCount: number;
 };
+type SettlementAutomationState = {
+  cycle: CloseCycleRow | undefined;
+  openAdjustmentCount: number;
+  latestAdjustmentDetectedAt: Date | null;
+};
 
 const MAX_REPORTED_ISSUES = 100;
 
@@ -71,19 +85,185 @@ export interface SupplierMonthlySettlementService {
   ): Promise<SupplierSettlementSummary>;
 }
 
-export class PostgresSupplierMonthlySettlementService implements SupplierMonthlySettlementService {
+export interface AutomaticSupplierSettlementService {
+  preclose(month: string): Promise<SupplierSettlementSummary>;
+  finalizeAutomatically(month: string): Promise<SupplierSettlementSummary>;
+  capturePostCloseAdjustment(month: string): Promise<boolean>;
+}
+
+export class PostgresSupplierMonthlySettlementService
+  implements SupplierMonthlySettlementService, AutomaticSupplierSettlementService
+{
   constructor(
     private readonly db: Database,
     private readonly clock: () => Date = () => new Date(),
     private readonly createId: () => string = randomUUID,
+    private readonly autoFinalizeDelayMinutes = 10,
   ) {}
 
   async preview(month: string): Promise<SupplierSettlementSummary> {
+    const now = this.clock();
     return this.db.transaction(async (tx) => {
       const existing = await findSettlement(tx, month);
       const state = await loadCurrentState(tx, month, existing, false);
-      return toSummary(month, state, existing, false);
+      const automation = await loadAutomationState(tx, month, existing);
+      return toSummary(
+        month,
+        state,
+        existing,
+        false,
+        automation,
+        now,
+        this.autoFinalizeDelayMinutes,
+      );
     });
+  }
+
+  async preclose(month: string): Promise<SupplierSettlementSummary> {
+    const now = this.clock();
+    const schedule = supplierSettlementSchedule(
+      month,
+      this.autoFinalizeDelayMinutes,
+    );
+    if (now < schedule.precloseAt) {
+      throw new OperationsConsoleFailure(
+        'SETTLEMENT_PRECLOSE_TOO_EARLY',
+        '尚未到月末 23:30，不能进入供应商预结算',
+        409,
+        { precloseScheduledAt: schedule.precloseAt.toISOString() },
+      );
+    }
+
+    return this.db.transaction(async (tx) => {
+      await advisoryLock(tx, `supplier-settlement-preclose:${month}`);
+      const existing = await findSettlement(tx, month);
+      const state = await loadCurrentState(tx, month, existing, false);
+      const previousCycle = await findCloseCycle(tx, month);
+      const status = existing
+        ? 'FINALIZED'
+        : state.issueCount > 0
+          ? 'BLOCKED'
+          : 'PRE_CLOSING';
+      const [cycle] = await tx
+        .insert(supplierSettlementCloseCycles)
+        .values({
+          settlementMonth: `${month}-01`,
+          status,
+          precloseSourceHash: state.projection.sourceHash,
+          preclosedAt: previousCycle?.preclosedAt ?? now,
+          lastAttemptAt: now,
+          lastError:
+            state.issueCount > 0
+              ? `${state.issueCount} 项账务差异阻断预结算`
+              : null,
+          finalizedSettlementId: existing?.id ?? null,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: supplierSettlementCloseCycles.settlementMonth,
+          set: {
+            status,
+            precloseSourceHash: state.projection.sourceHash,
+            preclosedAt: previousCycle?.preclosedAt ?? now,
+            lastAttemptAt: now,
+            lastError:
+              state.issueCount > 0
+                ? `${state.issueCount} 项账务差异阻断预结算`
+                : null,
+            finalizedSettlementId: existing?.id ?? null,
+            updatedAt: now,
+          },
+        })
+        .returning();
+      if (!previousCycle?.preclosedAt) {
+        await tx.insert(auditLogs).values({
+          requestId: `supplier-preclose:${month}`,
+          actorId: 'system:supplier-settlement-scheduler',
+          action: 'SUPPLIER_MONTHLY_SETTLEMENT_PRECLOSED',
+          objectType: 'SUPPLIER_SETTLEMENT_MONTH',
+          objectId: month,
+          detail: {
+            taskCount: state.projection.taskCount,
+            totalBillingMinutes:
+              state.projection.totalBillingMinutes.toString(),
+            tierCode: state.projection.tier?.tierCode ?? null,
+            voiceRate: state.projection.tier?.voiceRate ?? null,
+            sourceHash: state.projection.sourceHash,
+            discrepancyCount: state.issueCount,
+          },
+          occurredAt: now,
+        });
+      }
+      const adjustmentState = await loadAdjustmentState(tx, existing);
+      return toSummary(
+        month,
+        state,
+        existing,
+        false,
+        { cycle, ...adjustmentState },
+        now,
+        this.autoFinalizeDelayMinutes,
+      );
+    });
+  }
+
+  async finalizeAutomatically(
+    month: string,
+  ): Promise<SupplierSettlementSummary> {
+    const now = this.clock();
+    const schedule = supplierSettlementSchedule(
+      month,
+      this.autoFinalizeDelayMinutes,
+    );
+    if (now < schedule.autoFinalizeAt) {
+      throw new OperationsConsoleFailure(
+        'SETTLEMENT_AUTO_FINALIZE_TOO_EARLY',
+        '尚未到自动封账时间',
+        409,
+        { autoFinalizeScheduledAt: schedule.autoFinalizeAt.toISOString() },
+      );
+    }
+
+    const preview = await this.preview(month);
+    if (preview.status === 'FINALIZED' || preview.taskCount === 0) {
+      return preview;
+    }
+    if (
+      preview.reconciliation.status === 'BLOCKED' ||
+      !preview.tier
+    ) {
+      await this.updateCloseCycle(month, 'BLOCKED', {
+        lastAttemptAt: now,
+        lastError: `${preview.reconciliation.discrepancyCount} 项账务差异阻断自动封账`,
+      });
+      return this.preview(month);
+    }
+
+    await this.updateCloseCycle(month, 'RECONCILING', {
+      lastAttemptAt: now,
+      lastError: null,
+    });
+    try {
+      return await this.finalize(
+        month,
+        {
+          expectedSourceHash: preview.sourceHash,
+          reason: '月末自动核对通过，执行海南人像供应成本封账',
+          idempotencyKey: deterministicSettlementIdempotencyKey(month),
+        },
+        'system:supplier-settlement-scheduler',
+        `supplier-auto-finalize:${month}`,
+      );
+    } catch (error) {
+      await this.updateCloseCycle(month, 'BLOCKED', {
+        lastAttemptAt: now,
+        lastError:
+          error instanceof Error
+            ? error.message.slice(0, 1000)
+            : '供应商月度自动封账失败',
+      });
+      throw error;
+    }
   }
 
   async finalize(
@@ -138,7 +318,16 @@ export class PostgresSupplierMonthlySettlementService implements SupplierMonthly
             },
           );
         }
-        return toSummary(month, state, existing, true);
+        const automation = await loadAutomationState(tx, month, existing);
+        return toSummary(
+          month,
+          state,
+          existing,
+          true,
+          automation,
+          now,
+          this.autoFinalizeDelayMinutes,
+        );
       }
       if (input.expectedSourceHash !== state.projection.sourceHash) {
         throw new OperationsConsoleFailure(
@@ -257,8 +446,163 @@ export class PostgresSupplierMonthlySettlementService implements SupplierMonthly
         },
         occurredAt: now,
       });
-      return toSummary(month, state, created, false);
+      const [cycle] = await tx
+        .insert(supplierSettlementCloseCycles)
+        .values({
+          settlementMonth: `${month}-01`,
+          status: 'FINALIZED',
+          precloseSourceHash: projection.sourceHash,
+          preclosedAt: now,
+          lastAttemptAt: now,
+          lastError: null,
+          finalizedSettlementId: settlementId,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: supplierSettlementCloseCycles.settlementMonth,
+          set: {
+            status: 'FINALIZED',
+            lastAttemptAt: now,
+            lastError: null,
+            finalizedSettlementId: settlementId,
+            updatedAt: now,
+          },
+        })
+        .returning();
+      const adjustmentState = await loadAdjustmentState(tx, created);
+      return toSummary(
+        month,
+        state,
+        created,
+        false,
+        { cycle, ...adjustmentState },
+        now,
+        this.autoFinalizeDelayMinutes,
+      );
     });
+  }
+
+  async capturePostCloseAdjustment(month: string): Promise<boolean> {
+    const now = this.clock();
+    return this.db.transaction(async (tx) => {
+      await advisoryLock(tx, `supplier-settlement-adjustment:${month}`);
+      const settlement = await findSettlement(tx, month);
+      if (!settlement) return false;
+      const state = await loadCurrentState(tx, month, settlement, false);
+      if (
+        state.projection.sourceHash === settlement.sourceHash &&
+        state.lateTaskCount === 0
+      ) {
+        return false;
+      }
+
+      const detectionHash = createHash('sha256')
+        .update(
+          JSON.stringify({
+            projectionSourceHash: state.projection.sourceHash,
+            issues: state.issues,
+            issueCount: state.issueCount,
+          }),
+        )
+        .digest('hex');
+      const recalculatedPlatformCost = state.projection.tier
+        ? state.projection.totalPlatformCost
+        : normalizeMoney(settlement.totalPlatformCost);
+      const recalculatedProfit = state.projection.tier
+        ? state.projection.totalProfit
+        : normalizeMoney(settlement.totalProfit);
+      const taskCountDelta = state.projection.taskCount - settlement.taskCount;
+      const billingMinutesDelta =
+        state.projection.totalBillingMinutes - settlement.totalBillingMinutes;
+      const customerChargeDelta = subtractMoney(
+        state.projection.totalCustomerCharge,
+        settlement.totalCustomerCharge,
+      );
+      const platformCostDelta = subtractMoney(
+        recalculatedPlatformCost,
+        settlement.totalPlatformCost,
+      );
+      const profitDelta = subtractMoney(
+        recalculatedProfit,
+        settlement.totalProfit,
+      );
+      const [created] = await tx
+        .insert(supplierSettlementAdjustments)
+        .values({
+          settlementId: settlement.id,
+          sourceHash: detectionHash,
+          taskCountDelta,
+          billingMinutesDelta,
+          customerChargeDelta,
+          platformCostDelta,
+          profitDelta,
+          detail: {
+            settlementMonth: month,
+            finalizedSourceHash: settlement.sourceHash,
+            currentSourceHash: state.projection.sourceHash,
+            lateTaskCount: state.lateTaskCount,
+            discrepancyCount: state.issueCount,
+            currentTierCode: state.projection.tier?.tierCode ?? null,
+            currentVoiceRate: state.projection.tier?.voiceRate ?? null,
+            issues: state.issues,
+          },
+          detectedAt: now,
+        })
+        .onConflictDoNothing({
+          target: [
+            supplierSettlementAdjustments.settlementId,
+            supplierSettlementAdjustments.sourceHash,
+          ],
+        })
+        .returning({ id: supplierSettlementAdjustments.id });
+      if (!created) return false;
+      await tx.insert(auditLogs).values({
+        requestId: `supplier-adjustment:${month}:${detectionHash.slice(0, 12)}`,
+        actorId: 'system:supplier-settlement-scheduler',
+        action: 'SUPPLIER_MONTHLY_SETTLEMENT_ADJUSTMENT_DETECTED',
+        objectType: 'SUPPLIER_SETTLEMENT_ADJUSTMENT',
+        objectId: created.id,
+        detail: {
+          settlementId: settlement.id,
+          settlementMonth: month,
+          sourceHash: detectionHash,
+          lateTaskCount: state.lateTaskCount,
+          discrepancyCount: state.issueCount,
+          taskCountDelta,
+          billingMinutesDelta: billingMinutesDelta.toString(),
+          customerChargeDelta,
+          platformCostDelta,
+          profitDelta,
+        },
+        occurredAt: now,
+      });
+      return true;
+    });
+  }
+
+  private async updateCloseCycle(
+    month: string,
+    status: CloseCycleRow['status'],
+    input: { lastAttemptAt: Date; lastError: string | null },
+  ): Promise<void> {
+    await this.db
+      .insert(supplierSettlementCloseCycles)
+      .values({
+        settlementMonth: `${month}-01`,
+        status,
+        lastAttemptAt: input.lastAttemptAt,
+        lastError: input.lastError,
+        updatedAt: input.lastAttemptAt,
+      })
+      .onConflictDoUpdate({
+        target: supplierSettlementCloseCycles.settlementMonth,
+        set: {
+          status,
+          lastAttemptAt: input.lastAttemptAt,
+          lastError: input.lastError,
+          updatedAt: input.lastAttemptAt,
+        },
+      });
   }
 }
 
@@ -280,8 +624,15 @@ async function loadCurrentState(
           ${platformTasks.executionStatus}::text AS "executionStatus",
           ${platformTasks.supplierSettlementId} AS "supplierSettlementId"
         FROM ${platformTasks}
-        WHERE COALESCE(${platformTasks.providerCompletedAt}, ${platformTasks.closedAt}) >= ${window.start.toISOString()}::timestamptz
+        WHERE (
+          COALESCE(${platformTasks.providerCompletedAt}, ${platformTasks.closedAt}) >= ${window.start.toISOString()}::timestamptz
           AND COALESCE(${platformTasks.providerCompletedAt}, ${platformTasks.closedAt}) < ${window.end.toISOString()}::timestamptz
+        ) OR (
+          ${platformTasks.providerCompletedAt} IS NULL
+          AND ${platformTasks.closedAt} IS NULL
+          AND ${platformTasks.acceptedAt} >= ${window.start.toISOString()}::timestamptz
+          AND ${platformTasks.acceptedAt} < ${window.end.toISOString()}::timestamptz
+        )
         ORDER BY ${platformTasks.taskNo}
         FOR UPDATE
       `)
@@ -295,8 +646,15 @@ async function loadCurrentState(
           ${platformTasks.executionStatus}::text AS "executionStatus",
           ${platformTasks.supplierSettlementId} AS "supplierSettlementId"
         FROM ${platformTasks}
-        WHERE COALESCE(${platformTasks.providerCompletedAt}, ${platformTasks.closedAt}) >= ${window.start.toISOString()}::timestamptz
+        WHERE (
+          COALESCE(${platformTasks.providerCompletedAt}, ${platformTasks.closedAt}) >= ${window.start.toISOString()}::timestamptz
           AND COALESCE(${platformTasks.providerCompletedAt}, ${platformTasks.closedAt}) < ${window.end.toISOString()}::timestamptz
+        ) OR (
+          ${platformTasks.providerCompletedAt} IS NULL
+          AND ${platformTasks.closedAt} IS NULL
+          AND ${platformTasks.acceptedAt} >= ${window.start.toISOString()}::timestamptz
+          AND ${platformTasks.acceptedAt} < ${window.end.toISOString()}::timestamptz
+        )
         ORDER BY ${platformTasks.taskNo}
       `);
   const tiers = await tx
@@ -518,13 +876,76 @@ async function findSettlementByIdempotencyKey(
   return row;
 }
 
+async function findCloseCycle(
+  tx: Transaction,
+  month: string,
+): Promise<CloseCycleRow | undefined> {
+  const [row] = await tx
+    .select()
+    .from(supplierSettlementCloseCycles)
+    .where(
+      eq(supplierSettlementCloseCycles.settlementMonth, `${month}-01`),
+    )
+    .limit(1);
+  return row;
+}
+
+async function loadAdjustmentState(
+  tx: Transaction,
+  settlement: SettlementRow | undefined,
+): Promise<Omit<SettlementAutomationState, 'cycle'>> {
+  if (!settlement) {
+    return { openAdjustmentCount: 0, latestAdjustmentDetectedAt: null };
+  }
+  const [countRow, latestRow] = await Promise.all([
+    tx
+      .select({ count: sql<number>`count(*)::int` })
+      .from(supplierSettlementAdjustments)
+      .where(
+        and(
+          eq(supplierSettlementAdjustments.settlementId, settlement.id),
+          eq(supplierSettlementAdjustments.status, 'OPEN'),
+        ),
+      ),
+    tx
+      .select({ detectedAt: supplierSettlementAdjustments.detectedAt })
+      .from(supplierSettlementAdjustments)
+      .where(eq(supplierSettlementAdjustments.settlementId, settlement.id))
+      .orderBy(desc(supplierSettlementAdjustments.detectedAt))
+      .limit(1),
+  ]);
+  return {
+    openAdjustmentCount: countRow[0]?.count ?? 0,
+    latestAdjustmentDetectedAt: latestRow[0]?.detectedAt ?? null,
+  };
+}
+
+async function loadAutomationState(
+  tx: Transaction,
+  month: string,
+  settlement: SettlementRow | undefined,
+): Promise<SettlementAutomationState> {
+  const [cycle, adjustment] = await Promise.all([
+    findCloseCycle(tx, month),
+    loadAdjustmentState(tx, settlement),
+  ]);
+  return { cycle, ...adjustment };
+}
+
 function toSummary(
   month: string,
   state: CurrentSettlementState,
   settlement: SettlementRow | undefined,
   idempotentReplay: boolean,
+  automation: SettlementAutomationState,
+  now: Date,
+  autoFinalizeDelayMinutes: number,
 ): SupplierSettlementSummary {
   const projection = state.projection;
+  const schedule = supplierSettlementSchedule(
+    month,
+    autoFinalizeDelayMinutes,
+  );
   const tier = settlement
     ? {
         id: settlement.supplierPricingTierId,
@@ -552,7 +973,13 @@ function toSummary(
     timezone: 'Asia/Shanghai',
     periodStart: projection.periodStart.toISOString(),
     periodEnd: projection.periodEnd.toISOString(),
-    status: settlement ? 'FINALIZED' : 'OPEN',
+    status: deriveSupplierSettlementStatus({
+      finalized: Boolean(settlement),
+      discrepancyCount: state.issueCount,
+      now,
+      periodEnd: projection.periodEnd,
+      precloseAt: schedule.precloseAt,
+    }),
     taskCount: settlement?.taskCount ?? projection.taskCount,
     totalBillingMinutes:
       settlement?.totalBillingMinutes.toString() ??
@@ -579,7 +1006,45 @@ function toSummary(
     finalizedBy: settlement?.finalizedBy ?? null,
     finalizedAt: settlement?.finalizedAt.toISOString() ?? null,
     idempotentReplay,
+    automation: {
+      precloseScheduledAt: schedule.precloseAt.toISOString(),
+      autoFinalizeScheduledAt: schedule.autoFinalizeAt.toISOString(),
+      preclosedAt: automation.cycle?.preclosedAt?.toISOString() ?? null,
+      lastAttemptAt: automation.cycle?.lastAttemptAt?.toISOString() ?? null,
+      lastError: automation.cycle?.lastError ?? null,
+      openAdjustmentCount: automation.openAdjustmentCount,
+      latestAdjustmentDetectedAt:
+        automation.latestAdjustmentDetectedAt?.toISOString() ?? null,
+    },
   });
+}
+
+export function deriveSupplierSettlementStatus(input: {
+  finalized: boolean;
+  discrepancyCount: number;
+  now: Date;
+  periodEnd: Date;
+  precloseAt: Date;
+}): SupplierSettlementSummary['status'] {
+  if (input.finalized) return 'FINALIZED';
+  if (input.now >= input.precloseAt && input.discrepancyCount > 0) {
+    return 'BLOCKED';
+  }
+  if (input.now >= input.periodEnd) return 'RECONCILING';
+  if (input.now >= input.precloseAt) return 'PRE_CLOSING';
+  return 'OPEN';
+}
+
+function deterministicSettlementIdempotencyKey(month: string): string {
+  const hash = createHash('sha256')
+    .update(`supplier-monthly-settlement:${month}`)
+    .digest('hex')
+    .slice(0, 32)
+    .split('');
+  hash[12] = '5';
+  hash[16] = ((Number.parseInt(hash[16]!, 16) & 0x3) | 0x8).toString(16);
+  const value = hash.join('');
+  return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
 }
 
 async function advisoryLock(tx: Transaction, key: string): Promise<void> {

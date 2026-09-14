@@ -1,8 +1,15 @@
 'use client';
 
-import { useState } from 'react';
-import { CalendarDays, Check, ChevronLeft, ChevronRight } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import {
+  ArrowRight,
+  CalendarDays,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react';
 import { zhCN } from 'date-fns/locale';
+import type { DateRange } from 'react-day-picker';
 
 import { cn } from '@/lib/utils';
 import { Calendar } from '@/components/ui/calendar';
@@ -26,6 +33,24 @@ type UnifiedDatePickerProps = {
   disabled?: boolean;
   ariaInvalid?: boolean;
   ariaDescribedBy?: string;
+};
+
+export type UnifiedDateRangeValue = {
+  start: string;
+  end: string;
+};
+
+type UnifiedDateRangePickerProps = {
+  value: UnifiedDateRangeValue;
+  onValueChange: (value: UnifiedDateRangeValue) => void;
+  ariaLabel: string;
+  min?: string;
+  max?: string;
+  placeholder?: string;
+  popupLabel?: string;
+  className?: string;
+  clearable?: boolean;
+  disabled?: boolean;
 };
 
 export function UnifiedDatePicker({
@@ -125,6 +150,152 @@ export function UnifiedDatePicker({
   );
 }
 
+export function UnifiedDateRangePicker({
+  value,
+  onValueChange,
+  ariaLabel,
+  min,
+  max,
+  placeholder = '选择日期范围',
+  popupLabel = '选择日期范围',
+  className,
+  clearable = false,
+  disabled = false,
+}: UnifiedDateRangePickerProps) {
+  const [open, setOpen] = useState(false);
+  const selectedRange = dateRangeFromValue(value);
+  const [draftRange, setDraftRange] = useState<DateRange | undefined>(
+    selectedRange,
+  );
+  const [visibleDate, setVisibleDate] = useState(
+    selectedRange?.from ?? new Date(),
+  );
+  const [numberOfMonths, setNumberOfMonths] = useState(2);
+  const minDate = parseDateKey(min ?? '', 'date');
+  const maxDate = parseDateKey(max ?? '', 'date');
+  const disabledMatchers = [
+    ...(minDate ? [{ before: minDate }] : []),
+    ...(maxDate ? [{ after: maxDate }] : []),
+  ];
+  const hasValue = Boolean(value.start || value.end);
+  const label = hasValue ? formatDateRangeValue(value) : placeholder;
+  const draftStart = draftRange?.from
+    ? formatDateKey(toDateKey(draftRange.from), 'date')
+    : '请选择';
+  const draftEnd = draftRange?.to
+    ? formatDateKey(toDateKey(draftRange.to), 'date')
+    : draftRange?.from
+      ? '继续选择'
+      : '请选择';
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 680px)');
+    const updateMonthCount = () => setNumberOfMonths(mediaQuery.matches ? 1 : 2);
+    updateMonthCount();
+    mediaQuery.addEventListener('change', updateMonthCount);
+    return () => mediaQuery.removeEventListener('change', updateMonthCount);
+  }, []);
+
+  const applyRange = () => {
+    if (!draftRange?.from) return;
+    const end = draftRange.to ?? draftRange.from;
+    onValueChange({
+      start: toDateKey(draftRange.from),
+      end: toDateKey(end),
+    });
+    setOpen(false);
+  };
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (nextOpen) {
+          const currentRange = dateRangeFromValue(value);
+          setDraftRange(currentRange);
+          setVisibleDate(currentRange?.from ?? new Date());
+        }
+        setOpen(nextOpen);
+      }}
+    >
+      <PopoverTrigger
+        aria-label={ariaLabel}
+        disabled={disabled}
+        className={cn(
+          'unified-date-trigger unified-date-range-trigger',
+          !hasValue && 'is-placeholder',
+          className,
+        )}
+      >
+        <span>{label}</span>
+        <CalendarDays aria-hidden="true" size={14} />
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        sideOffset={6}
+        className="unified-date-content unified-date-range-content"
+      >
+        <span className="unified-date-popup-label">
+          {popupLabel}
+          <small>支持跨月选择</small>
+        </span>
+        <div className="unified-date-range-selection" aria-live="polite">
+          <span>
+            <small>开始</small>
+            <b>{draftStart}</b>
+          </span>
+          <ArrowRight aria-hidden="true" size={13} />
+          <span>
+            <small>结束</small>
+            <b>{draftEnd}</b>
+          </span>
+        </div>
+        <Calendar
+          mode="range"
+          locale={zhCN}
+          month={visibleDate}
+          selected={draftRange}
+          onMonthChange={setVisibleDate}
+          onSelect={setDraftRange}
+          disabled={disabledMatchers}
+          numberOfMonths={numberOfMonths}
+        />
+        <div className="unified-date-range-actions">
+          {clearable ? (
+            <button
+              type="button"
+              className="is-clear"
+              disabled={!hasValue && !draftRange?.from}
+              onClick={() => {
+                setDraftRange(undefined);
+                onValueChange({ start: '', end: '' });
+                setOpen(false);
+              }}
+            >
+              清除
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="is-cancel"
+            onClick={() => setOpen(false)}
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            className="is-primary"
+            disabled={!draftRange?.from}
+            onClick={applyRange}
+          >
+            确认范围
+          </button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function MonthGrid({
   value,
   visibleDate,
@@ -213,6 +384,24 @@ function formatDateKey(value: string, mode: 'date' | 'month') {
   return mode === 'month'
     ? `${date.getFullYear()} 年 ${String(date.getMonth() + 1).padStart(2, '0')} 月`
     : `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function dateRangeFromValue(value: UnifiedDateRangeValue) {
+  const from = parseDateKey(value.start, 'date');
+  const to = parseDateKey(value.end, 'date');
+  if (!from && !to) return undefined;
+  return {
+    from: from ?? to,
+    to: to ?? from,
+  } satisfies DateRange;
+}
+
+function formatDateRangeValue(value: UnifiedDateRangeValue) {
+  const start = value.start
+    ? formatDateKey(value.start, 'date')
+    : '开始日期';
+  const end = value.end ? formatDateKey(value.end, 'date') : '结束日期';
+  return `${start} — ${end}`;
 }
 
 function toDateKey(date: Date) {

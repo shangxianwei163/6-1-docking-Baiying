@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildSupplierSettlementProjection,
+  currentShanghaiMonth,
+  previousShanghaiMonth,
   settlementMonthWindow,
   shanghaiSettlementMonth,
+  supplierSettlementSchedule,
   type SupplierSettlementTierSource,
 } from './supplier-settlement.js';
 
@@ -43,6 +46,16 @@ describe('supplier monthly settlement projection', () => {
     expect(shanghaiSettlementMonth(new Date('2026-09-30T16:00:00.000Z'))).toBe(
       '2026-10',
     );
+    expect(currentShanghaiMonth(new Date('2026-09-30T16:00:00.000Z'))).toBe(
+      '2026-10',
+    );
+    expect(previousShanghaiMonth(new Date('2026-09-30T16:00:00.000Z'))).toBe(
+      '2026-09',
+    );
+    expect(supplierSettlementSchedule('2026-09')).toEqual({
+      precloseAt: new Date('2026-09-30T15:30:00.000Z'),
+      autoFinalizeAt: new Date('2026-09-30T16:10:00.000Z'),
+    });
   });
 
   it('selects the upper tier at an inclusive lower boundary', () => {

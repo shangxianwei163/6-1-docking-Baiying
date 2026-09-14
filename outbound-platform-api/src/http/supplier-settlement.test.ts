@@ -41,6 +41,15 @@ const summary = {
   finalizedBy: null,
   finalizedAt: null,
   idempotentReplay: false,
+  automation: {
+    precloseScheduledAt: '2026-08-31T15:30:00.000Z',
+    autoFinalizeScheduledAt: '2026-08-31T16:10:00.000Z',
+    preclosedAt: null,
+    lastAttemptAt: null,
+    lastError: null,
+    openAdjustmentCount: 0,
+    latestAdjustmentDetectedAt: null,
+  },
 };
 
 function setup() {

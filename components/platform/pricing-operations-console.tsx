@@ -1062,7 +1062,7 @@ function SupplierSettlementConsole() {
   const canFinalize = Boolean(
     summary &&
     summary.taskCount > 0 &&
-    summary.status === 'OPEN' &&
+    ['OPEN', 'RECONCILING'].includes(summary.status) &&
     summary.reconciliation.status === 'BALANCED' &&
     summary.tier &&
     monthClosed,
@@ -1111,7 +1111,8 @@ function SupplierSettlementConsole() {
             <span>MONTH-END CONTROL</span>
             <b>把客户账、通话明细与供应成本锁在同一月度凭证中</b>
             <p>
-              封账前实时重算；有结算任务的月份若账务不平、供应阶梯缺失或月份尚未结束，系统都会阻断。
+              月末 23:30 自动预结算，次月 00:10
+              起在账务平衡后自动封账；封账前始终按月累计分钟动态重算。
             </p>
           </div>
           <div className="ops-settlement-controls">
@@ -1189,21 +1190,13 @@ function SupplierSettlementConsole() {
             <div className="ops-settlement-status-row">
               <div>
                 <Status
-                  tone={
-                    summary.status === 'FINALIZED'
-                      ? 'green'
-                      : emptyMonth
-                        ? 'gray'
-                        : 'blue'
-                  }
+                  tone={supplierSettlementStatusTone(summary.status)}
                 >
-                  {summary.status === 'FINALIZED'
-                    ? '已封账'
-                    : emptyMonth
-                      ? monthClosed
-                        ? '无需封账'
-                        : '动态预估'
-                      : '待封账'}
+                  {emptyMonth
+                    ? monthClosed
+                      ? '无需封账'
+                      : '动态预估'
+                    : supplierSettlementStatusLabel(summary.status)}
                 </Status>
                 {emptyMonth ? (
                   <Status tone="gray">0 个任务</Status>
@@ -1231,6 +1224,19 @@ function SupplierSettlementConsole() {
                 </code>
               </span>
             </div>
+
+            {summary.automation.openAdjustmentCount > 0 ? (
+              <div className="ops-inline-error ops-settlement-error" role="alert">
+                <AlertTriangle aria-hidden="true" size={14} />
+                <span>
+                  封账后检测到 {summary.automation.openAdjustmentCount}{' '}
+                  笔待处理调整，原月结单未被改写
+                  {summary.automation.latestAdjustmentDetectedAt
+                    ? `；最近发现于 ${formatDateTime(summary.automation.latestAdjustmentDetectedAt)}`
+                    : ''}
+                </span>
+              </div>
+            ) : null}
 
             <div className="ops-settlement-ledger">
               <SettlementFact
@@ -1314,7 +1320,7 @@ function SupplierSettlementConsole() {
                       ? '该月份没有已结算任务，无需配置供应阶梯，也无需生成供应商月结单。'
                       : '该月份仍在进行中，目前没有已结算任务；后续有任务时将自动参与动态核对。'
                     : summary.reconciliation.status === 'BALANCED'
-                      ? '任务汇总、通话明细、账户流水和冻结资金守恒，可进入人工确认。'
+                      ? '任务汇总、通话明细、账户流水和冻结资金守恒，系统将按计划自动封账，也可人工复核。'
                       : `${summary.reconciliation.blockingTaskCount} 个任务受影响；修复差异并重新预览后才能封账。`}
                 </p>
                 {summary.reconciliation.issues.length ? (
@@ -1535,11 +1541,44 @@ function settlementReadinessCopy(
       ? '本月无结算任务，无需封账'
       : '当前月份暂无结算任务，后续将随任务完成动态更新';
   }
+  if (summary.status === 'PRE_CLOSING') {
+    return `已于 ${summary.automation.preclosedAt ? formatDateTime(summary.automation.preclosedAt) : '月末 23:30'} 进入预结算，等待当月结束后自动封账`;
+  }
+  if (summary.status === 'BLOCKED') {
+    return summary.automation.lastError ?? '账务差异尚未清零，自动封账已被阻断';
+  }
+  if (summary.status === 'RECONCILING') {
+    return `正在等待自动封账；计划时间 ${formatDateTime(summary.automation.autoFinalizeScheduledAt)}`;
+  }
   if (!monthClosed) return '当前月份尚未结束，只能查看动态预估，不能封账';
   if (!summary.tier) return '该月份没有可覆盖完整自然月的供应商阶梯';
   if (summary.reconciliation.status === 'BLOCKED')
     return '账务差异尚未清零，封账操作已被阻断';
   return '预览结果已平衡；最终提交时服务端会再次加锁核对';
+}
+
+function supplierSettlementStatusLabel(
+  status: SupplierSettlementSummary['status'],
+) {
+  return {
+    OPEN: '动态暂估',
+    PRE_CLOSING: '预结算中',
+    RECONCILING: '自动核对中',
+    BLOCKED: '封账受阻',
+    FINALIZED: '已封账',
+  }[status];
+}
+
+function supplierSettlementStatusTone(
+  status: SupplierSettlementSummary['status'],
+): 'green' | 'blue' | 'amber' | 'red' {
+  return {
+    OPEN: 'blue',
+    PRE_CLOSING: 'amber',
+    RECONCILING: 'blue',
+    BLOCKED: 'red',
+    FINALIZED: 'green',
+  }[status] as 'green' | 'blue' | 'amber' | 'red';
 }
 
 function PricingPreviewDialog({
