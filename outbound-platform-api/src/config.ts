@@ -33,6 +33,11 @@ const configSchema = z
       .min(60_000)
       .default(21_600_000),
     VARIABLE_SYNC_QUEUE_NAME: z.string().default('variable-sync-queue'),
+    VARIABLE_SYNC_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(60_000)
+      .default(21_600_000),
     TASK_ORCHESTRATION_QUEUE_NAME: z
       .string()
       .default('task-orchestration-queue'),

@@ -28,15 +28,38 @@ export type PublishResult = {
 
 export interface MappingRepository {
   variableExistsInLatestSnapshot(variableName: string): Promise<boolean>;
-  saveDraft(input: MappingDraftInput, actorId: string, requestId: string): Promise<StoredDraft>;
-  stageRemoval(input: RemoveMappingDraftInput, actorId: string, requestId: string): Promise<StoredDraft>;
+  saveDraft(
+    input: MappingDraftInput,
+    actorId: string,
+    requestId: string,
+  ): Promise<StoredDraft>;
+  stageRemoval(
+    input: RemoveMappingDraftInput,
+    actorId: string,
+    requestId: string,
+  ): Promise<StoredDraft>;
   listDrafts(): Promise<StoredDraft[]>;
   listPublishedRules(): Promise<MappingRule[]>;
   listVersions(): Promise<MappingVersion[]>;
-  publishDrafts(input: PublishMappingInput, requestId: string): Promise<PublishResult>;
-  recordSuccessfulObservation(input: SyncSceneObservation): Promise<SceneReadiness>;
+  publishDrafts(
+    input: PublishMappingInput,
+    requestId: string,
+  ): Promise<PublishResult>;
+  recordSuccessfulObservation(
+    input: SyncSceneObservation,
+  ): Promise<SceneReadiness>;
   listSceneReadiness(): Promise<SceneReadiness[]>;
-  enqueueVariableSync(input: { jobId: string; requestedAt: string; requestedBy: string }): Promise<void>;
+  enqueueVariableSync(input: {
+    jobId: string;
+    requestedAt: string;
+    requestedBy: string;
+  }): Promise<void>;
+  enqueueVariableSyncIfDue(input: {
+    jobId: string;
+    requestedAt: string;
+    requestedBy: string;
+    minimumIntervalMs: number;
+  }): Promise<boolean>;
 }
 
 export class MappingNotFoundError extends Error {}

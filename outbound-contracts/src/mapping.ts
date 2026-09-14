@@ -150,6 +150,56 @@ export const mappingVersionSchema = z.object({
 });
 export type MappingVersion = z.infer<typeof mappingVersionSchema>;
 
+export type MappingVariableChanges = {
+  addedVariables: string[];
+  removedVariables: string[];
+};
+
+/**
+ * Compare Baiying's latest successful scene snapshots with the current
+ * published mapping version. Baiying is authoritative for the target variable
+ * set; ERP and CRM field names remain operator-managed source keys.
+ */
+export function compareMappingVariables(
+  scenes: ReadonlyArray<
+    Pick<SceneReadiness, 'variables' | 'lastSuccessfulSyncAt' | 'status'>
+  >,
+  rules: ReadonlyArray<Pick<MappingRule, 'baiyingVariableName' | 'status'>>,
+): MappingVariableChanges {
+  const authoritativeScenes = scenes.filter(
+    (scene) =>
+      scene.lastSuccessfulSyncAt !== null && scene.status !== 'DISABLED',
+  );
+  const currentVariables = new Set(
+    authoritativeScenes
+      .flatMap((scene) => scene.variables.map((value) => value.trim()))
+      .filter(Boolean),
+  );
+  const publishedVariables = new Set(
+    rules
+      .filter((rule) => rule.status === 'PUBLISHED')
+      .map((rule) => rule.baiyingVariableName.trim())
+      .filter(Boolean),
+  );
+  const sortVariables = (values: string[]) =>
+    values.sort((left, right) => left.localeCompare(right, 'zh-CN'));
+
+  return {
+    addedVariables: sortVariables(
+      [...currentVariables].filter(
+        (variable) => !publishedVariables.has(variable),
+      ),
+    ),
+    removedVariables: authoritativeScenes.length
+      ? sortVariables(
+          [...publishedVariables].filter(
+            (variable) => !currentVariables.has(variable),
+          ),
+        )
+      : [],
+  };
+}
+
 export const variableSyncRequestedSchema = z.object({
   jobId: z.uuid(),
   status: z.literal('QUEUED'),

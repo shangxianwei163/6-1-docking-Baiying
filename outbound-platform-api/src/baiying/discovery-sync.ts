@@ -23,6 +23,9 @@ export async function syncBaiyingCompany(input: {
   if (!companies.some((company) => company.companyId === input.companyId)) {
     throw new Error('绑定公司列表中没有配置的 companyId，已停止同步');
   }
+  await input.repository.retireUnavailableCompanies(
+    companies.map((company) => company.companyId),
+  );
 
   // 只同步发布过的话术；robotStatus=0 会包含已不存在、无法查询变量的历史记录。
   const robots = await input.client.listRobots(input.companyId, 2);
@@ -66,6 +69,11 @@ export async function syncBaiyingCompany(input: {
       await input.repository.recordFailedObservation({ ...target, syncedAt, errorMessage: message });
     }
   }
+
+  await input.repository.retireMissingCompanyScenes(
+    input.companyId,
+    targets.map((target) => target.robotDefId),
+  );
 
   return {
     companyCount: companies.length,

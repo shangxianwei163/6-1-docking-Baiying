@@ -33,6 +33,7 @@ function createRepository() {
     recordSuccessfulObservation: vi.fn(),
     listSceneReadiness: vi.fn(async () => []),
     enqueueVariableSync,
+    enqueueVariableSyncIfDue: vi.fn(async () => true),
   };
   return { repository, saveDraft, enqueueVariableSync };
 }

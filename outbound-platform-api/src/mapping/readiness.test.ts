@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { compareMappingVariables } from '@outbound/contracts';
 import { evaluateSceneReadiness, hashVariables } from './readiness.js';
 
-const scene = { sceneDefId: 'scene-1', robotDefId: 'robot-1', sceneName: '婚博会回访', disabled: false };
+const scene = {
+  sceneDefId: 'scene-1',
+  robotDefId: 'robot-1',
+  sceneName: '婚博会回访',
+  disabled: false,
+};
 const now = new Date('2026-09-03T02:00:00.000Z');
 
 describe('evaluateSceneReadiness', () => {
@@ -10,8 +16,18 @@ describe('evaluateSceneReadiness', () => {
     const result = evaluateSceneReadiness({
       scene,
       snapshots: [
-        { companyId: 'company-a', variables, variablesHash: hashVariables(variables), syncedAt: now },
-        { companyId: 'company-b', variables: [...variables].reverse(), variablesHash: hashVariables([...variables].reverse()), syncedAt: now },
+        {
+          companyId: 'company-a',
+          variables,
+          variablesHash: hashVariables(variables),
+          syncedAt: now,
+        },
+        {
+          companyId: 'company-b',
+          variables: [...variables].reverse(),
+          variablesHash: hashVariables([...variables].reverse()),
+          syncedAt: now,
+        },
       ],
       publishedVariableNames: new Set(variables),
       publishedMappingVersion: 12,
@@ -25,7 +41,14 @@ describe('evaluateSceneReadiness', () => {
     const variables = ['婚期', '预算范围'];
     const result = evaluateSceneReadiness({
       scene,
-      snapshots: [{ companyId: 'company-a', variables, variablesHash: hashVariables(variables), syncedAt: now }],
+      snapshots: [
+        {
+          companyId: 'company-a',
+          variables,
+          variablesHash: hashVariables(variables),
+          syncedAt: now,
+        },
+      ],
       publishedVariableNames: new Set(['婚期']),
       publishedMappingVersion: 12,
       now,
@@ -40,8 +63,18 @@ describe('evaluateSceneReadiness', () => {
     const result = evaluateSceneReadiness({
       scene,
       snapshots: [
-        { companyId: 'company-a', variables: left, variablesHash: hashVariables(left), syncedAt: now },
-        { companyId: 'company-b', variables: right, variablesHash: hashVariables(right), syncedAt: now },
+        {
+          companyId: 'company-a',
+          variables: left,
+          variablesHash: hashVariables(left),
+          syncedAt: now,
+        },
+        {
+          companyId: 'company-b',
+          variables: right,
+          variablesHash: hashVariables(right),
+          syncedAt: now,
+        },
       ],
       publishedVariableNames: new Set(['婚期']),
       publishedMappingVersion: 12,
@@ -55,7 +88,14 @@ describe('evaluateSceneReadiness', () => {
     const variables = ['婚期'];
     const result = evaluateSceneReadiness({
       scene,
-      snapshots: [{ companyId: 'company-a', variables, variablesHash: hashVariables(variables), syncedAt }],
+      snapshots: [
+        {
+          companyId: 'company-a',
+          variables,
+          variablesHash: hashVariables(variables),
+          syncedAt,
+        },
+      ],
       publishedVariableNames: new Set(variables),
       publishedMappingVersion: 12,
       now,
@@ -67,7 +107,14 @@ describe('evaluateSceneReadiness', () => {
     const variables = ['婚期'];
     const result = evaluateSceneReadiness({
       scene,
-      snapshots: [{ companyId: 'company-a', variables, variablesHash: hashVariables(variables), syncedAt: now }],
+      snapshots: [
+        {
+          companyId: 'company-a',
+          variables,
+          variablesHash: hashVariables(variables),
+          syncedAt: now,
+        },
+      ],
       expectedCompanyCount: 2,
       publishedVariableNames: new Set(variables),
       publishedMappingVersion: 12,
@@ -75,5 +122,75 @@ describe('evaluateSceneReadiness', () => {
     });
     expect(result.status).toBe('STALE_SYNC');
     expect(result.issueSummary).toContain('部分公司');
+  });
+
+  it('treats Baiying as authoritative when a published variable disappears', () => {
+    const variables = ['婚期'];
+    const readiness = evaluateSceneReadiness({
+      scene,
+      snapshots: [
+        {
+          companyId: 'company-a',
+          variables,
+          variablesHash: hashVariables(variables),
+          syncedAt: now,
+        },
+      ],
+      publishedVariableNames: new Set(['婚期', '预算范围']),
+      publishedMappingVersion: 12,
+      now,
+    });
+    const changes = compareMappingVariables(
+      [readiness],
+      [
+        { baiyingVariableName: '婚期', status: 'PUBLISHED' },
+        { baiyingVariableName: '预算范围', status: 'PUBLISHED' },
+      ],
+    );
+
+    expect(readiness.status).toBe('ACTIVE');
+    expect(readiness.variables).toEqual(['婚期']);
+    expect(changes).toEqual({
+      addedVariables: [],
+      removedVariables: ['预算范围'],
+    });
+  });
+
+  it('does not retire mappings before Baiying has produced a successful snapshot', () => {
+    expect(
+      compareMappingVariables(
+        [
+          {
+            variables: [],
+            lastSuccessfulSyncAt: null,
+            status: 'STALE_SYNC',
+          },
+        ],
+        [{ baiyingVariableName: '婚期', status: 'PUBLISHED' }],
+      ),
+    ).toEqual({ addedVariables: [], removedVariables: [] });
+  });
+
+  it('ignores variables from scenes retired by the latest Baiying discovery', () => {
+    expect(
+      compareMappingVariables(
+        [
+          {
+            variables: ['当前变量'],
+            lastSuccessfulSyncAt: now.toISOString(),
+            status: 'ACTIVE',
+          },
+          {
+            variables: ['历史变量'],
+            lastSuccessfulSyncAt: now.toISOString(),
+            status: 'DISABLED',
+          },
+        ],
+        [
+          { baiyingVariableName: '当前变量', status: 'PUBLISHED' },
+          { baiyingVariableName: '历史变量', status: 'PUBLISHED' },
+        ],
+      ),
+    ).toEqual({ addedVariables: [], removedVariables: ['历史变量'] });
   });
 });

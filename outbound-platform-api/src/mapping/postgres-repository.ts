@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 import type {
   MappingDraftInput,
   MappingRule,
@@ -20,8 +20,16 @@ import {
   sceneMappingReadiness,
   sceneVariableSnapshots,
 } from '../db/schema.js';
-import type { FailedSceneObservation, SceneSyncTarget } from '../baiying/variable-sync-service.js';
-import { evaluateSceneReadiness, hashVariables, normalizeVariables, type LatestCompanySnapshot } from './readiness.js';
+import type {
+  FailedSceneObservation,
+  SceneSyncTarget,
+} from '../baiying/variable-sync-service.js';
+import {
+  evaluateSceneReadiness,
+  hashVariables,
+  normalizeVariables,
+  type LatestCompanySnapshot,
+} from './readiness.js';
 import {
   MappingConflictError,
   MappingNotFoundError,
@@ -47,6 +55,13 @@ export class PostgresMappingRepository implements MappingRepository {
         SELECT DISTINCT ON (${sceneVariableSnapshots.sceneDefId}, ${sceneVariableSnapshots.companyId})
           ${sceneVariableSnapshots.variables} AS "variables"
         FROM ${sceneVariableSnapshots}
+        INNER JOIN ${baiyingSceneCompanies}
+          ON ${baiyingSceneCompanies.sceneDefId} = ${sceneVariableSnapshots.sceneDefId}
+          AND ${baiyingSceneCompanies.companyId} = ${sceneVariableSnapshots.companyId}
+          AND ${baiyingSceneCompanies.enabled} = true
+        INNER JOIN ${baiyingScenes}
+          ON ${baiyingScenes.sceneDefId} = ${sceneVariableSnapshots.sceneDefId}
+          AND ${baiyingScenes.disabled} = false
         WHERE ${sceneVariableSnapshots.syncStatus} = 'SUCCESS'
         ORDER BY ${sceneVariableSnapshots.sceneDefId}, ${sceneVariableSnapshots.companyId}, ${sceneVariableSnapshots.syncedAt} DESC
       )
@@ -59,27 +74,25 @@ export class PostgresMappingRepository implements MappingRepository {
     return result[0]?.exists ?? false;
   }
 
-  async saveDraft(input: MappingDraftInput, actorId: string, requestId: string): Promise<StoredDraft> {
-    if (!(await this.variableExistsInLatestSnapshot(input.baiyingVariableName))) {
-      throw new MappingNotFoundError('该变量不在百应 4.10 的成功同步快照中，不能手工新增');
+  async saveDraft(
+    input: MappingDraftInput,
+    actorId: string,
+    requestId: string,
+  ): Promise<StoredDraft> {
+    if (
+      !(await this.variableExistsInLatestSnapshot(input.baiyingVariableName))
+    ) {
+      throw new MappingNotFoundError(
+        '该变量不在百应 4.10 的成功同步快照中，不能手工新增',
+      );
     }
 
     const [draft] = await this.db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(72810410)`);
-      const rows = await tx.insert(mappingDrafts).values({
-        baiyingVariableName: input.baiyingVariableName,
-        erpField: input.erpField || null,
-        crmField: input.crmField || null,
-        transformConfig: input.transformConfig,
-        emptyPolicy: input.emptyPolicy,
-        defaultValue: input.defaultValue || null,
-        changeType: 'UPSERT',
-        removalReason: null,
-        updatedBy: actorId,
-        updatedAt: this.clock(),
-      }).onConflictDoUpdate({
-        target: mappingDrafts.baiyingVariableName,
-        set: {
+      const rows = await tx
+        .insert(mappingDrafts)
+        .values({
+          baiyingVariableName: input.baiyingVariableName,
           erpField: input.erpField || null,
           crmField: input.crmField || null,
           transformConfig: input.transformConfig,
@@ -89,8 +102,22 @@ export class PostgresMappingRepository implements MappingRepository {
           removalReason: null,
           updatedBy: actorId,
           updatedAt: this.clock(),
-        },
-      }).returning();
+        })
+        .onConflictDoUpdate({
+          target: mappingDrafts.baiyingVariableName,
+          set: {
+            erpField: input.erpField || null,
+            crmField: input.crmField || null,
+            transformConfig: input.transformConfig,
+            emptyPolicy: input.emptyPolicy,
+            defaultValue: input.defaultValue || null,
+            changeType: 'UPSERT',
+            removalReason: null,
+            updatedBy: actorId,
+            updatedAt: this.clock(),
+          },
+        })
+        .returning();
       await tx.insert(auditLogs).values({
         requestId,
         actorId,
@@ -104,34 +131,48 @@ export class PostgresMappingRepository implements MappingRepository {
     return toStoredDraft(draft);
   }
 
-  async stageRemoval(input: RemoveMappingDraftInput, actorId: string, requestId: string): Promise<StoredDraft> {
+  async stageRemoval(
+    input: RemoveMappingDraftInput,
+    actorId: string,
+    requestId: string,
+  ): Promise<StoredDraft> {
     const current = await this.listPublishedRules();
-    if (!current.some((rule) => rule.baiyingVariableName === input.baiyingVariableName && rule.status === 'PUBLISHED')) {
+    if (
+      !current.some(
+        (rule) =>
+          rule.baiyingVariableName === input.baiyingVariableName &&
+          rule.status === 'PUBLISHED',
+      )
+    ) {
       throw new MappingNotFoundError('没有可移除的已发布映射');
     }
 
     const [draft] = await this.db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(72810410)`);
-      const rows = await tx.insert(mappingDrafts).values({
-        baiyingVariableName: input.baiyingVariableName,
-        changeType: 'REMOVE',
-        removalReason: input.removalReason,
-        updatedBy: actorId,
-        updatedAt: this.clock(),
-      }).onConflictDoUpdate({
-        target: mappingDrafts.baiyingVariableName,
-        set: {
-          erpField: null,
-          crmField: null,
-          transformConfig: null,
-          emptyPolicy: null,
-          defaultValue: null,
+      const rows = await tx
+        .insert(mappingDrafts)
+        .values({
+          baiyingVariableName: input.baiyingVariableName,
           changeType: 'REMOVE',
           removalReason: input.removalReason,
           updatedBy: actorId,
           updatedAt: this.clock(),
-        },
-      }).returning();
+        })
+        .onConflictDoUpdate({
+          target: mappingDrafts.baiyingVariableName,
+          set: {
+            erpField: null,
+            crmField: null,
+            transformConfig: null,
+            emptyPolicy: null,
+            defaultValue: null,
+            changeType: 'REMOVE',
+            removalReason: input.removalReason,
+            updatedBy: actorId,
+            updatedAt: this.clock(),
+          },
+        })
+        .returning();
       await tx.insert(auditLogs).values({
         requestId,
         actorId,
@@ -146,50 +187,92 @@ export class PostgresMappingRepository implements MappingRepository {
   }
 
   async listDrafts(): Promise<StoredDraft[]> {
-    const rows = await this.db.select().from(mappingDrafts).orderBy(mappingDrafts.baiyingVariableName);
+    const rows = await this.db
+      .select()
+      .from(mappingDrafts)
+      .orderBy(mappingDrafts.baiyingVariableName);
     return rows.map(toStoredDraft);
   }
 
   async listPublishedRules(): Promise<MappingRule[]> {
     const latest = await this.latestVersion();
     if (!latest) return [];
-    const rows = await this.db.select().from(mappingRules)
+    const rows = await this.db
+      .select()
+      .from(mappingRules)
       .where(eq(mappingRules.mappingVersionId, latest.id))
       .orderBy(mappingRules.baiyingVariableName);
     return rows.map((row) => toRule(row, latest.version));
   }
 
   async listVersions(): Promise<MappingVersion[]> {
-    const rows = await this.db.select().from(mappingVersions).orderBy(desc(mappingVersions.version));
+    const rows = await this.db
+      .select()
+      .from(mappingVersions)
+      .orderBy(desc(mappingVersions.version));
     if (rows.length === 0) return [];
-    const counts = await this.db.select({ versionId: mappingRules.mappingVersionId, count: sql<number>`count(*)::int` })
+    const counts = await this.db
+      .select({
+        versionId: mappingRules.mappingVersionId,
+        count: sql<number>`count(*)::int`,
+      })
       .from(mappingRules)
       .groupBy(mappingRules.mappingVersionId);
-    const countByVersion = new Map(counts.map((item) => [item.versionId, item.count]));
+    const countByVersion = new Map(
+      counts.map((item) => [item.versionId, item.count]),
+    );
     return rows.map((row) => toVersion(row, countByVersion.get(row.id) ?? 0));
   }
 
-  async publishDrafts(input: PublishMappingInput, requestId: string): Promise<PublishResult> {
+  async publishDrafts(
+    input: PublishMappingInput,
+    requestId: string,
+  ): Promise<PublishResult> {
     const result = await this.db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(72810410)`);
-      const [latest] = await tx.select().from(mappingVersions).orderBy(desc(mappingVersions.version)).limit(1);
-      const draftRows = await tx.select().from(mappingDrafts).orderBy(mappingDrafts.baiyingVariableName);
-      if (draftRows.length === 0) throw new MappingConflictError('没有待发布草稿');
+      const [latest] = await tx
+        .select()
+        .from(mappingVersions)
+        .orderBy(desc(mappingVersions.version))
+        .limit(1);
+      const draftRows = await tx
+        .select()
+        .from(mappingDrafts)
+        .orderBy(mappingDrafts.baiyingVariableName);
+      if (draftRows.length === 0)
+        throw new MappingConflictError('没有待发布草稿');
 
       const previousRows = latest
-        ? await tx.select().from(mappingRules).where(eq(mappingRules.mappingVersionId, latest.id))
+        ? await tx
+            .select()
+            .from(mappingRules)
+            .where(eq(mappingRules.mappingVersionId, latest.id))
         : [];
-      const nextByVariable = new Map(previousRows.map((row) => [row.baiyingVariableName, row]));
+      const nextByVariable = new Map(
+        previousRows.map((row) => [row.baiyingVariableName, row]),
+      );
 
       for (const draft of draftRows) {
         if (draft.changeType === 'REMOVE') {
           const existing = nextByVariable.get(draft.baiyingVariableName);
-          if (!existing) throw new MappingConflictError(`映射“${draft.baiyingVariableName}”不存在，无法移除`);
-          nextByVariable.set(draft.baiyingVariableName, { ...existing, status: 'REMOVED' });
+          if (!existing)
+            throw new MappingConflictError(
+              `映射“${draft.baiyingVariableName}”不存在，无法移除`,
+            );
+          nextByVariable.set(draft.baiyingVariableName, {
+            ...existing,
+            status: 'REMOVED',
+          });
           continue;
         }
-        if (!draft.transformConfig || !draft.emptyPolicy || (!draft.erpField && !draft.crmField)) {
-          throw new MappingConflictError(`映射“${draft.baiyingVariableName}”草稿不完整`);
+        if (
+          !draft.transformConfig ||
+          !draft.emptyPolicy ||
+          (!draft.erpField && !draft.crmField)
+        ) {
+          throw new MappingConflictError(
+            `映射“${draft.baiyingVariableName}”草稿不完整`,
+          );
         }
         nextByVariable.set(draft.baiyingVariableName, {
           id: crypto.randomUUID(),
@@ -205,12 +288,15 @@ export class PostgresMappingRepository implements MappingRepository {
         });
       }
 
-      const [versionRow] = await tx.insert(mappingVersions).values({
-        version: (latest?.version ?? 0) + 1,
-        publisherId: input.publisherId,
-        changeSummary: input.changeSummary,
-        publishedAt: this.clock(),
-      }).returning();
+      const [versionRow] = await tx
+        .insert(mappingVersions)
+        .values({
+          version: (latest?.version ?? 0) + 1,
+          publisherId: input.publisherId,
+          changeSummary: input.changeSummary,
+          publishedAt: this.clock(),
+        })
+        .returning();
 
       const ruleValues = [...nextByVariable.values()].map((rule) => ({
         mappingVersionId: versionRow.id,
@@ -222,7 +308,9 @@ export class PostgresMappingRepository implements MappingRepository {
         defaultValue: rule.defaultValue,
         status: rule.status,
       }));
-      const inserted = ruleValues.length ? await tx.insert(mappingRules).values(ruleValues).returning() : [];
+      const inserted = ruleValues.length
+        ? await tx.insert(mappingRules).values(ruleValues).returning()
+        : [];
       await tx.delete(mappingDrafts);
       await tx.insert(auditLogs).values({
         requestId,
@@ -230,7 +318,10 @@ export class PostgresMappingRepository implements MappingRepository {
         action: 'MAPPING_VERSION_PUBLISHED',
         objectType: 'MAPPING_VERSION',
         objectId: String(versionRow.version),
-        detail: { changedVariables: draftRows.map((draft) => draft.baiyingVariableName), ruleCount: inserted.length },
+        detail: {
+          changedVariables: draftRows.map((draft) => draft.baiyingVariableName),
+          ruleCount: inserted.length,
+        },
       });
       return {
         version: toVersion(versionRow, inserted.length),
@@ -242,21 +333,35 @@ export class PostgresMappingRepository implements MappingRepository {
     return result;
   }
 
-  async recordSuccessfulObservation(input: SyncSceneObservation): Promise<SceneReadiness> {
+  async recordSuccessfulObservation(
+    input: SyncSceneObservation,
+  ): Promise<SceneReadiness> {
     const variables = normalizeVariables(input.variables);
     await this.db.transaction(async (tx) => {
-      await tx.insert(baiyingScenes).values({
-        sceneDefId: input.sceneDefId,
-        robotDefId: input.robotDefId,
-        sceneName: input.sceneName,
-        updatedAt: this.clock(),
-      }).onConflictDoUpdate({
-        target: baiyingScenes.sceneDefId,
-        set: { robotDefId: input.robotDefId, sceneName: input.sceneName, updatedAt: this.clock() },
-      });
-      await tx.insert(baiyingSceneCompanies).values({ sceneDefId: input.sceneDefId, companyId: input.companyId })
+      await tx
+        .insert(baiyingScenes)
+        .values({
+          sceneDefId: input.sceneDefId,
+          robotDefId: input.robotDefId,
+          sceneName: input.sceneName,
+          updatedAt: this.clock(),
+        })
         .onConflictDoUpdate({
-          target: [baiyingSceneCompanies.sceneDefId, baiyingSceneCompanies.companyId],
+          target: baiyingScenes.sceneDefId,
+          set: {
+            robotDefId: input.robotDefId,
+            sceneName: input.sceneName,
+            updatedAt: this.clock(),
+          },
+        });
+      await tx
+        .insert(baiyingSceneCompanies)
+        .values({ sceneDefId: input.sceneDefId, companyId: input.companyId })
+        .onConflictDoUpdate({
+          target: [
+            baiyingSceneCompanies.sceneDefId,
+            baiyingSceneCompanies.companyId,
+          ],
           set: { enabled: true },
         });
       await tx.insert(sceneVariableSnapshots).values({
@@ -273,18 +378,130 @@ export class PostgresMappingRepository implements MappingRepository {
   }
 
   async listEnabledSceneTargets(): Promise<SceneSyncTarget[]> {
-    return this.db.select({
-      companyId: baiyingSceneCompanies.companyId,
-      robotDefId: baiyingScenes.robotDefId,
-      sceneDefId: baiyingScenes.sceneDefId,
-      sceneName: baiyingScenes.sceneName,
-    }).from(baiyingSceneCompanies)
-      .innerJoin(baiyingScenes, eq(baiyingSceneCompanies.sceneDefId, baiyingScenes.sceneDefId))
-      .where(and(
-        eq(baiyingSceneCompanies.enabled, true),
-        eq(baiyingScenes.disabled, false),
-      ))
+    return this.db
+      .select({
+        companyId: baiyingSceneCompanies.companyId,
+        robotDefId: baiyingScenes.robotDefId,
+        sceneDefId: baiyingScenes.sceneDefId,
+        sceneName: baiyingScenes.sceneName,
+      })
+      .from(baiyingSceneCompanies)
+      .innerJoin(
+        baiyingScenes,
+        eq(baiyingSceneCompanies.sceneDefId, baiyingScenes.sceneDefId),
+      )
+      .where(
+        and(
+          eq(baiyingSceneCompanies.enabled, true),
+          eq(baiyingScenes.disabled, false),
+        ),
+      )
       .orderBy(baiyingScenes.sceneDefId, baiyingSceneCompanies.companyId);
+  }
+
+  /**
+   * Baiying's published robot list is the source of truth for the current
+   * scene set. Associations missing from a successful discovery response are
+   * retired, while their snapshots remain available for audit/history.
+   */
+  async retireMissingCompanyScenes(
+    companyId: string,
+    currentSceneDefIds: readonly string[],
+  ): Promise<number> {
+    const linkedScenes = await this.db
+      .select({ sceneDefId: baiyingSceneCompanies.sceneDefId })
+      .from(baiyingSceneCompanies)
+      .where(
+        and(
+          eq(baiyingSceneCompanies.companyId, companyId),
+          eq(baiyingSceneCompanies.enabled, true),
+        ),
+      );
+    const currentIds = new Set(currentSceneDefIds);
+    const retiredIds = linkedScenes
+      .map(({ sceneDefId }) => sceneDefId)
+      .filter((sceneDefId) => !currentIds.has(sceneDefId));
+    if (!retiredIds.length) return 0;
+
+    await this.db.transaction(async (tx) => {
+      await tx
+        .update(baiyingSceneCompanies)
+        .set({ enabled: false })
+        .where(
+          and(
+            eq(baiyingSceneCompanies.companyId, companyId),
+            inArray(baiyingSceneCompanies.sceneDefId, retiredIds),
+          ),
+        );
+      await tx
+        .update(baiyingScenes)
+        .set({ disabled: true, updatedAt: this.clock() })
+        .where(
+          and(
+            inArray(baiyingScenes.sceneDefId, retiredIds),
+            sql`NOT EXISTS (
+              SELECT 1
+              FROM ${baiyingSceneCompanies}
+              WHERE ${baiyingSceneCompanies.sceneDefId} = ${baiyingScenes.sceneDefId}
+                AND ${baiyingSceneCompanies.enabled} = true
+            )`,
+          ),
+        );
+    });
+    await Promise.all(
+      retiredIds.map((sceneDefId) => this.refreshSceneReadiness(sceneDefId)),
+    );
+    return retiredIds.length;
+  }
+
+  async retireUnavailableCompanies(
+    availableCompanyIds: readonly string[],
+  ): Promise<number> {
+    const enabledLinks = await this.db
+      .select({
+        sceneDefId: baiyingSceneCompanies.sceneDefId,
+        companyId: baiyingSceneCompanies.companyId,
+      })
+      .from(baiyingSceneCompanies)
+      .where(eq(baiyingSceneCompanies.enabled, true));
+    const availableIds = new Set(availableCompanyIds);
+    const unavailableLinks = enabledLinks.filter(
+      ({ companyId }) => !availableIds.has(companyId),
+    );
+    if (!unavailableLinks.length) return 0;
+
+    const unavailableCompanyIds = [
+      ...new Set(unavailableLinks.map(({ companyId }) => companyId)),
+    ];
+    const affectedSceneIds = [
+      ...new Set(unavailableLinks.map(({ sceneDefId }) => sceneDefId)),
+    ];
+    await this.db.transaction(async (tx) => {
+      await tx
+        .update(baiyingSceneCompanies)
+        .set({ enabled: false })
+        .where(inArray(baiyingSceneCompanies.companyId, unavailableCompanyIds));
+      await tx
+        .update(baiyingScenes)
+        .set({ disabled: true, updatedAt: this.clock() })
+        .where(
+          and(
+            inArray(baiyingScenes.sceneDefId, affectedSceneIds),
+            sql`NOT EXISTS (
+              SELECT 1
+              FROM ${baiyingSceneCompanies}
+              WHERE ${baiyingSceneCompanies.sceneDefId} = ${baiyingScenes.sceneDefId}
+                AND ${baiyingSceneCompanies.enabled} = true
+            )`,
+          ),
+        );
+    });
+    await Promise.all(
+      affectedSceneIds.map((sceneDefId) =>
+        this.refreshSceneReadiness(sceneDefId),
+      ),
+    );
+    return unavailableLinks.length;
   }
 
   async recordFailedObservation(input: FailedSceneObservation): Promise<void> {
@@ -302,25 +519,44 @@ export class PostgresMappingRepository implements MappingRepository {
   }
 
   async listSceneReadiness(): Promise<SceneReadiness[]> {
-    const rows = await this.db.select({
-      sceneDefId: sceneMappingReadiness.sceneDefId,
-      robotDefId: baiyingScenes.robotDefId,
-      sceneName: baiyingScenes.sceneName,
-      status: sceneMappingReadiness.status,
-      variables: sceneMappingReadiness.variables,
-      missingVariables: sceneMappingReadiness.missingVariables,
-      lastSuccessfulSyncAt: sceneMappingReadiness.lastSuccessfulSyncAt,
-      issueSummary: sceneMappingReadiness.issueSummary,
-      version: mappingVersions.version,
-      companyCount: sql<number>`(
+    const rows = await this.db
+      .select({
+        sceneDefId: sceneMappingReadiness.sceneDefId,
+        robotDefId: baiyingScenes.robotDefId,
+        sceneName: baiyingScenes.sceneName,
+        status: sceneMappingReadiness.status,
+        variables: sceneMappingReadiness.variables,
+        missingVariables: sceneMappingReadiness.missingVariables,
+        lastSuccessfulSyncAt: sceneMappingReadiness.lastSuccessfulSyncAt,
+        issueSummary: sceneMappingReadiness.issueSummary,
+        version: mappingVersions.version,
+        companyCount: sql<number>`(
         SELECT count(*)::int
         FROM ${baiyingSceneCompanies}
         WHERE ${baiyingSceneCompanies.sceneDefId} = ${sceneMappingReadiness.sceneDefId}
           AND ${baiyingSceneCompanies.enabled} = true
       )`,
-    }).from(sceneMappingReadiness)
-      .innerJoin(baiyingScenes, eq(sceneMappingReadiness.sceneDefId, baiyingScenes.sceneDefId))
-      .leftJoin(mappingVersions, eq(sceneMappingReadiness.publishedMappingVersionId, mappingVersions.id))
+      })
+      .from(sceneMappingReadiness)
+      .innerJoin(
+        baiyingScenes,
+        eq(sceneMappingReadiness.sceneDefId, baiyingScenes.sceneDefId),
+      )
+      .leftJoin(
+        mappingVersions,
+        eq(sceneMappingReadiness.publishedMappingVersionId, mappingVersions.id),
+      )
+      .where(
+        and(
+          eq(baiyingScenes.disabled, false),
+          sql`EXISTS (
+            SELECT 1
+            FROM ${baiyingSceneCompanies}
+            WHERE ${baiyingSceneCompanies.sceneDefId} = ${baiyingScenes.sceneDefId}
+              AND ${baiyingSceneCompanies.enabled} = true
+          )`,
+        ),
+      )
       .orderBy(baiyingScenes.sceneName);
     return rows.map((row) => ({
       sceneDefId: row.sceneDefId,
@@ -338,7 +574,11 @@ export class PostgresMappingRepository implements MappingRepository {
     }));
   }
 
-  async enqueueVariableSync(input: { jobId: string; requestedAt: string; requestedBy: string }): Promise<void> {
+  async enqueueVariableSync(input: {
+    jobId: string;
+    requestedAt: string;
+    requestedBy: string;
+  }): Promise<void> {
     await this.db.insert(queueOutbox).values({
       id: input.jobId,
       eventType: 'BAIYING_VARIABLE_SYNC_REQUESTED',
@@ -347,18 +587,70 @@ export class PostgresMappingRepository implements MappingRepository {
     });
   }
 
+  async enqueueVariableSyncIfDue(input: {
+    jobId: string;
+    requestedAt: string;
+    requestedBy: string;
+    minimumIntervalMs: number;
+  }): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(72810411)`);
+      const cutoff = new Date(
+        new Date(input.requestedAt).getTime() - input.minimumIntervalMs,
+      );
+      const [recent] = await tx
+        .select({ id: queueOutbox.id })
+        .from(queueOutbox)
+        .where(
+          and(
+            eq(queueOutbox.eventType, 'BAIYING_VARIABLE_SYNC_REQUESTED'),
+            eq(queueOutbox.queueName, this.variableSyncQueueName),
+            gte(queueOutbox.createdAt, cutoff),
+          ),
+        )
+        .limit(1);
+      if (recent) return false;
+
+      await tx.insert(queueOutbox).values({
+        id: input.jobId,
+        eventType: 'BAIYING_VARIABLE_SYNC_REQUESTED',
+        queueName: this.variableSyncQueueName,
+        payload: {
+          jobId: input.jobId,
+          requestedAt: input.requestedAt,
+          requestedBy: input.requestedBy,
+        },
+      });
+      return true;
+    });
+  }
+
   private async latestVersion(): Promise<VersionRow | undefined> {
-    const [row] = await this.db.select().from(mappingVersions).orderBy(desc(mappingVersions.version)).limit(1);
+    const [row] = await this.db
+      .select()
+      .from(mappingVersions)
+      .orderBy(desc(mappingVersions.version))
+      .limit(1);
     return row;
   }
 
   private async refreshAllReadiness(): Promise<void> {
-    const scenes = await this.db.select({ sceneDefId: baiyingScenes.sceneDefId }).from(baiyingScenes);
-    await Promise.all(scenes.map(({ sceneDefId }) => this.refreshSceneReadiness(sceneDefId)));
+    const scenes = await this.db
+      .select({ sceneDefId: baiyingScenes.sceneDefId })
+      .from(baiyingScenes);
+    await Promise.all(
+      scenes.map(({ sceneDefId }) => this.refreshSceneReadiness(sceneDefId)),
+    );
   }
 
-  private async refreshSceneReadiness(sceneDefId: string): Promise<SceneReadiness> {
-    const [scene] = await this.db.select().from(baiyingScenes).where(eq(baiyingScenes.sceneDefId, sceneDefId)).limit(1);
+  private async refreshSceneReadiness(
+    sceneDefId: string,
+  ): Promise<SceneReadiness> {
+    const [scene] = await this.db
+      .select()
+      .from(baiyingScenes)
+      .where(eq(baiyingScenes.sceneDefId, sceneDefId))
+      .limit(1);
     if (!scene) throw new MappingNotFoundError('话术场景不存在');
 
     const snapshotRows = await this.db.execute<{
@@ -373,6 +665,10 @@ export class PostgresMappingRepository implements MappingRepository {
         ${sceneVariableSnapshots.variablesHash} AS "variablesHash",
         ${sceneVariableSnapshots.syncedAt} AS "syncedAt"
       FROM ${sceneVariableSnapshots}
+      INNER JOIN ${baiyingSceneCompanies}
+        ON ${baiyingSceneCompanies.sceneDefId} = ${sceneVariableSnapshots.sceneDefId}
+        AND ${baiyingSceneCompanies.companyId} = ${sceneVariableSnapshots.companyId}
+        AND ${baiyingSceneCompanies.enabled} = true
       WHERE ${sceneVariableSnapshots.sceneDefId} = ${sceneDefId}
         AND ${sceneVariableSnapshots.syncStatus} = 'SUCCESS'
       ORDER BY ${sceneVariableSnapshots.companyId}, ${sceneVariableSnapshots.syncedAt} DESC
@@ -383,18 +679,30 @@ export class PostgresMappingRepository implements MappingRepository {
     }));
     const latest = await this.latestVersion();
     const rules = latest
-      ? await this.db.select().from(mappingRules).where(and(
-          eq(mappingRules.mappingVersionId, latest.id),
-          eq(mappingRules.status, 'PUBLISHED'),
-        ))
+      ? await this.db
+          .select()
+          .from(mappingRules)
+          .where(
+            and(
+              eq(mappingRules.mappingVersionId, latest.id),
+              eq(mappingRules.status, 'PUBLISHED'),
+            ),
+          )
       : [];
-    const publishedVariableNames = new Set(rules.filter((rule) => rule.erpField || rule.crmField).map((rule) => rule.baiyingVariableName));
-    const [companyCount] = await this.db.select({ count: sql<number>`count(*)::int` })
+    const publishedVariableNames = new Set(
+      rules
+        .filter((rule) => rule.erpField || rule.crmField)
+        .map((rule) => rule.baiyingVariableName),
+    );
+    const [companyCount] = await this.db
+      .select({ count: sql<number>`count(*)::int` })
       .from(baiyingSceneCompanies)
-      .where(and(
-        eq(baiyingSceneCompanies.sceneDefId, sceneDefId),
-        eq(baiyingSceneCompanies.enabled, true),
-      ));
+      .where(
+        and(
+          eq(baiyingSceneCompanies.sceneDefId, sceneDefId),
+          eq(baiyingSceneCompanies.enabled, true),
+        ),
+      );
     const readiness = evaluateSceneReadiness({
       scene,
       snapshots,
@@ -404,29 +712,36 @@ export class PostgresMappingRepository implements MappingRepository {
       expectedCompanyCount: companyCount?.count ?? 0,
     });
 
-    await this.db.insert(sceneMappingReadiness).values({
-      sceneDefId,
-      status: readiness.status,
-      expectedVariablesHash: hashVariables(readiness.variables),
-      publishedMappingVersionId: latest?.id ?? null,
-      variables: readiness.variables,
-      missingVariables: readiness.missingVariables,
-      lastSuccessfulSyncAt: readiness.lastSuccessfulSyncAt ? new Date(readiness.lastSuccessfulSyncAt) : null,
-      issueSummary: readiness.issueSummary,
-      updatedAt: this.clock(),
-    }).onConflictDoUpdate({
-      target: sceneMappingReadiness.sceneDefId,
-      set: {
+    await this.db
+      .insert(sceneMappingReadiness)
+      .values({
+        sceneDefId,
         status: readiness.status,
         expectedVariablesHash: hashVariables(readiness.variables),
         publishedMappingVersionId: latest?.id ?? null,
         variables: readiness.variables,
         missingVariables: readiness.missingVariables,
-        lastSuccessfulSyncAt: readiness.lastSuccessfulSyncAt ? new Date(readiness.lastSuccessfulSyncAt) : null,
+        lastSuccessfulSyncAt: readiness.lastSuccessfulSyncAt
+          ? new Date(readiness.lastSuccessfulSyncAt)
+          : null,
         issueSummary: readiness.issueSummary,
         updatedAt: this.clock(),
-      },
-    });
+      })
+      .onConflictDoUpdate({
+        target: sceneMappingReadiness.sceneDefId,
+        set: {
+          status: readiness.status,
+          expectedVariablesHash: hashVariables(readiness.variables),
+          publishedMappingVersionId: latest?.id ?? null,
+          variables: readiness.variables,
+          missingVariables: readiness.missingVariables,
+          lastSuccessfulSyncAt: readiness.lastSuccessfulSyncAt
+            ? new Date(readiness.lastSuccessfulSyncAt)
+            : null,
+          issueSummary: readiness.issueSummary,
+          updatedAt: this.clock(),
+        },
+      });
     return readiness;
   }
 }

@@ -38,6 +38,7 @@ import { createRuntimeRecordingUrlSigner } from './recording/url-signer.js';
 import { createRuntimeRecordingStorage } from './recording/runtime-object-store.js';
 import { OperatorSessionService } from './security/operator-session.js';
 import { PostgresReconciliationRepository } from './reconciliation/postgres-repository.js';
+import { createVariableSyncScheduler } from './baiying/variable-sync-scheduler.js';
 
 for (const name of [
   'HTTP_PROXY',
@@ -221,12 +222,37 @@ const app = createApp({
   operatorSessionService,
   operatorSessionCookieSecure: config.NODE_ENV === 'production',
 });
+const variableSyncScheduler = workflowClient
+  ? createVariableSyncScheduler({
+      intervalMs: config.VARIABLE_SYNC_INTERVAL_MS,
+      enqueueIfDue: (input) => repository.enqueueVariableSyncIfDue(input),
+      onQueued: ({ trigger, jobId }) =>
+        console.info(
+          JSON.stringify({
+            level: 'info',
+            message: 'Baiying variable sync queued',
+            trigger,
+            jobId,
+          }),
+        ),
+      onError: ({ trigger, error }) =>
+        console.error(
+          JSON.stringify({
+            level: 'error',
+            message: 'Baiying variable sync scheduling failed',
+            trigger,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        ),
+    })
+  : undefined;
 
 const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
   console.info(
     JSON.stringify({ level: 'info', message: 'API started', port: info.port }),
   );
 });
+variableSyncScheduler?.start();
 
 let categorySyncTimer: NodeJS.Timeout | undefined;
 async function synchronizeErpCategories(trigger: 'startup' | 'schedule') {
@@ -268,6 +294,7 @@ async function shutdown(signal: string) {
   );
   server.close();
   if (categorySyncTimer) clearInterval(categorySyncTimer);
+  variableSyncScheduler?.stop();
   await database.close();
 }
 

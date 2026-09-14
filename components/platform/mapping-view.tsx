@@ -18,6 +18,7 @@ import type {
   SceneReadiness,
   TransformConfig,
 } from '@outbound/contracts';
+import { compareMappingVariables } from '@outbound/contracts';
 import {
   Dialog,
   DialogContent,
@@ -319,9 +320,10 @@ function apiVersionToView(version: MappingVersion): VersionRecord {
   };
 }
 
-function deriveIssues(scenes: Scene[]): MappingIssue[] {
+function deriveIssues(scenes: Scene[], rules: MappingRule[]): MappingIssue[] {
   const issueByVariable = new Map<string, MappingIssue>();
   for (const scene of scenes) {
+    if (scene.status === 'DISABLED') continue;
     for (const variable of scene.missingVariables) {
       const existing = issueByVariable.get(variable);
       if (existing) {
@@ -342,6 +344,29 @@ function deriveIssues(scenes: Scene[]): MappingIssue[] {
       });
     }
   }
+
+  const { removedVariables } = compareMappingVariables(
+    scenes.map((scene) => ({
+      variables: scene.variables,
+      lastSuccessfulSyncAt: scene.lastSyncAt,
+      status: scene.status,
+    })),
+    rules.map((rule) => ({
+      baiyingVariableName: rule.variable,
+      status: rule.status,
+    })),
+  );
+  for (const variable of removedVariables) {
+    issueByVariable.set(variable, {
+      id: `removed-${variable}`,
+      variable,
+      sceneNames: [],
+      change: 'REMOVED',
+      discoveredAt: '最新同步',
+      note: '百应最新成功同步的全部话术均已不再返回该变量，等待确认移除全局映射。',
+    });
+  }
+
   return [...issueByVariable.values()];
 }
 
@@ -420,9 +445,11 @@ export function MappingView() {
 
   useEffect(() => {
     queueMicrotask(() => void refreshData());
+    const refreshTimer = window.setInterval(() => void refreshData(), 15_000);
+    return () => window.clearInterval(refreshTimer);
   }, [refreshData]);
 
-  const issues = useMemo(() => deriveIssues(scenes), [scenes]);
+  const issues = useMemo(() => deriveIssues(scenes, rules), [scenes, rules]);
   const currentVersion = versions[0]?.version ?? 0;
   const latestSyncAt =
     scenes
@@ -456,7 +483,13 @@ export function MappingView() {
   );
   const syncedVariables = useMemo(
     () =>
-      [...new Set(scenes.flatMap((scene) => scene.variables))].sort(
+      [
+        ...new Set(
+          scenes
+            .filter((scene) => scene.status !== 'DISABLED')
+            .flatMap((scene) => scene.variables),
+        ),
+      ].sort(
         (left, right) => left.localeCompare(right, 'zh-CN'),
       ),
     [scenes],
@@ -484,6 +517,7 @@ export function MappingView() {
   const variableScenes = useMemo(() => {
     const result = new Map<string, Scene[]>();
     for (const scene of scenes) {
+      if (scene.status === 'DISABLED') continue;
       for (const variable of new Set(scene.variables))
         result.set(variable, [...(result.get(variable) ?? []), scene]);
     }
@@ -886,7 +920,11 @@ export function MappingView() {
                       </div>
                       <div>
                         <span className="pending-label">影响话术场景</span>
-                        <p>{issue.sceneNames.join('、')}</p>
+                        <p>
+                          {issue.sceneNames.length
+                            ? issue.sceneNames.join('、')
+                            : '全部话术已不再使用'}
+                        </p>
                       </div>
                       <div>
                         <span className="pending-label">处理状态</span>

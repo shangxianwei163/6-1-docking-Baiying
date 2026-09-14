@@ -22,6 +22,7 @@ function mappingRepository(): MappingRepository {
     recordSuccessfulObservation: vi.fn(),
     listSceneReadiness: vi.fn(async () => []),
     enqueueVariableSync: vi.fn(),
+    enqueueVariableSyncIfDue: vi.fn(async () => true),
   };
 }
 
