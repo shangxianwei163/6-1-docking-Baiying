@@ -8,6 +8,7 @@ import {
   Braces,
   Cable,
   CalendarClock,
+  ChevronDown,
   CircleDollarSign,
   FileCog,
   Gauge,
@@ -17,7 +18,10 @@ import {
   Settings2,
   ShieldAlert,
   ShieldCheck,
+  SlidersHorizontal,
+  ScrollText,
   Tags,
+  WalletCards,
 } from 'lucide-react';
 import {
   ApiInterfaceView,
@@ -65,26 +69,64 @@ export type PlatformSection =
   | '异常中心'
   | 'API接口';
 
-const navigation: Array<{
+type NavigationLink = {
   label: PlatformSection;
   icon: typeof Gauge;
   hint?: string;
-}> = [
-  { label: '总览', icon: Gauge },
-  { label: '影楼管理', icon: Settings2 },
-  { label: '线路管理', icon: Cable },
-  { label: '字段映射', icon: FileCog },
-  { label: '数据分类', icon: Tags },
-  { label: '话术列表', icon: CalendarClock },
-  { label: '呼叫任务', icon: PhoneCall },
-  { label: '平台明细', icon: ReceiptText },
-  { label: '话费设置', icon: BadgeDollarSign },
-  { label: '充值记录', icon: CircleDollarSign },
-  { label: '接口日志', icon: Activity },
-  { label: '回调测试', icon: ShieldCheck },
-  { label: '异常中心', icon: ShieldAlert },
-  { label: '操作日志', icon: BellRing },
-  { label: 'API接口', icon: Braces },
+};
+
+type NavigationGroupId = 'setup' | 'finance' | 'system';
+
+type NavigationGroup = {
+  kind: 'group';
+  id: NavigationGroupId;
+  label: '初始管理' | '财务管理' | '系统日志';
+  icon: typeof Gauge;
+  items: NavigationLink[];
+};
+
+type NavigationNode = (NavigationLink & { kind: 'link' }) | NavigationGroup;
+
+const navigation: NavigationNode[] = [
+  { kind: 'link', label: '总览', icon: Gauge },
+  { kind: 'link', label: '影楼管理', icon: Settings2 },
+  {
+    kind: 'group',
+    id: 'setup',
+    label: '初始管理',
+    icon: SlidersHorizontal,
+    items: [
+      { label: '线路管理', icon: Cable },
+      { label: '字段映射', icon: FileCog },
+      { label: '数据分类', icon: Tags },
+      { label: '话术列表', icon: CalendarClock },
+      { label: '话费设置', icon: BadgeDollarSign },
+    ],
+  },
+  { kind: 'link', label: '呼叫任务', icon: PhoneCall },
+  {
+    kind: 'group',
+    id: 'finance',
+    label: '财务管理',
+    icon: WalletCards,
+    items: [
+      { label: '平台明细', icon: ReceiptText },
+      { label: '充值记录', icon: CircleDollarSign },
+    ],
+  },
+  {
+    kind: 'group',
+    id: 'system',
+    label: '系统日志',
+    icon: ScrollText,
+    items: [
+      { label: '接口日志', icon: Activity },
+      { label: '回调测试', icon: ShieldCheck },
+      { label: '异常中心', icon: ShieldAlert },
+      { label: '操作日志', icon: BellRing },
+    ],
+  },
+  { kind: 'link', label: 'API接口', icon: Braces },
 ];
 
 export default function Home() {
@@ -92,7 +134,13 @@ export default function Home() {
   const [activeSection, setActiveSection] = useState<PlatformSection>('总览');
   const [taskCount, setTaskCount] = useState<number | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [openGroup, setOpenGroup] = useState<NavigationGroupId | null>('setup');
+  const [compactNavigation, setCompactNavigation] = useState(false);
+  const [mobileGroup, setMobileGroup] = useState<NavigationGroupId | null>(
+    null,
+  );
   const environmentLabel = import.meta.env.DEV ? '本地联调环境' : '生产环境';
+  const activeNavigationGroup = navigationGroupForSection(activeSection);
 
   useEffect(() => {
     let cancelled = false;
@@ -134,6 +182,15 @@ export default function Home() {
     };
   }, [session]);
 
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 720px)');
+    const updateNavigationMode = () =>
+      setCompactNavigation(mediaQuery.matches);
+    queueMicrotask(updateNavigationMode);
+    mediaQuery.addEventListener('change', updateNavigationMode);
+    return () => mediaQuery.removeEventListener('change', updateNavigationMode);
+  }, []);
+
   const handleLogout = async () => {
     setLoggingOut(true);
     try {
@@ -143,6 +200,25 @@ export default function Home() {
       setSession(null);
       setLoggingOut(false);
     }
+  };
+
+  const selectSection = (section: PlatformSection) => {
+    const targetGroup = navigationGroupForSection(section);
+    setActiveSection(section);
+    if (targetGroup) {
+      setOpenGroup(targetGroup.id);
+      if (compactNavigation) setMobileGroup(targetGroup.id);
+    } else if (compactNavigation) {
+      setMobileGroup(null);
+    }
+  };
+
+  const toggleGroup = (groupId: NavigationGroupId) => {
+    if (compactNavigation) {
+      setMobileGroup((current) => (current === groupId ? null : groupId));
+      return;
+    }
+    setOpenGroup((current) => (current === groupId ? null : groupId));
   };
 
   if (session === undefined) return <OperatorLoginLoading />;
@@ -171,28 +247,127 @@ export default function Home() {
             <p>ERP / CRM / 百应 · 统一运营后台</p>
           </div>
           <nav className="nav-list" aria-label="平台功能菜单">
-            {navigation.map(({ label, icon: Icon, hint }) => {
-              const visibleHint =
-                label === '呼叫任务' && taskCount !== null
-                  ? String(taskCount)
-                  : hint;
-              return (
-                <button
-                  aria-current={activeSection === label ? 'page' : undefined}
-                  className={
-                    activeSection === label
-                      ? 'nav-item nav-item-active'
-                      : 'nav-item'
-                  }
-                  key={label}
-                  onClick={() => setActiveSection(label)}
-                >
-                  <Icon aria-hidden="true" />
-                  <span>{label}</span>
-                  {visibleHint ? <small>{visibleHint}</small> : null}
-                </button>
-              );
-            })}
+            <div className="nav-primary-list">
+              {navigation.map((node) => {
+                if (node.kind === 'link') {
+                  const Icon = node.icon;
+                  const visibleHint =
+                    node.label === '呼叫任务' && taskCount !== null
+                      ? String(taskCount)
+                      : node.hint;
+                  return (
+                    <button
+                      type="button"
+                      aria-current={
+                        activeSection === node.label ? 'page' : undefined
+                      }
+                      className={
+                        activeSection === node.label
+                          ? 'nav-item nav-item-active'
+                          : 'nav-item'
+                      }
+                      key={node.label}
+                      onClick={() => selectSection(node.label)}
+                    >
+                      <Icon aria-hidden="true" />
+                      <span>{node.label}</span>
+                      {visibleHint ? <small>{visibleHint}</small> : null}
+                    </button>
+                  );
+                }
+
+                const Icon = node.icon;
+                const groupIsActive = activeNavigationGroup?.id === node.id;
+                const groupIsOpen = compactNavigation
+                  ? mobileGroup === node.id
+                  : openGroup === node.id;
+                return (
+                  <section
+                    className={
+                      groupIsActive ? 'nav-group is-active' : 'nav-group'
+                    }
+                    key={node.id}
+                  >
+                    <button
+                      type="button"
+                      className={
+                        groupIsOpen
+                          ? 'nav-item nav-group-trigger is-open'
+                          : 'nav-item nav-group-trigger'
+                      }
+                      aria-expanded={groupIsOpen}
+                      aria-controls={
+                        compactNavigation
+                          ? `mobile-nav-group-${node.id}`
+                          : `nav-group-${node.id}`
+                      }
+                      onClick={() => toggleGroup(node.id)}
+                    >
+                      <Icon aria-hidden="true" />
+                      <span>{node.label}</span>
+                      <ChevronDown
+                        aria-hidden="true"
+                        className="nav-group-chevron"
+                      />
+                    </button>
+                    <div
+                      id={`nav-group-${node.id}`}
+                      className="nav-submenu"
+                      hidden={openGroup !== node.id}
+                    >
+                      {node.items.map(({ label, icon: ItemIcon }) => (
+                        <button
+                          type="button"
+                          aria-current={
+                            activeSection === label ? 'page' : undefined
+                          }
+                          className={
+                            activeSection === label
+                              ? 'nav-item nav-subitem nav-item-active'
+                              : 'nav-item nav-subitem'
+                          }
+                          key={label}
+                          onClick={() => selectSection(label)}
+                        >
+                          <ItemIcon aria-hidden="true" />
+                          <span>{label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+            {compactNavigation && mobileGroup ? (
+              <div
+                id={`mobile-nav-group-${mobileGroup}`}
+                className="nav-mobile-submenu"
+                aria-label={
+                  navigationGroupById(mobileGroup)?.label ?? '二级菜单'
+                }
+              >
+                {navigationGroupById(mobileGroup)?.items.map(
+                  ({ label, icon: ItemIcon }) => (
+                    <button
+                      type="button"
+                      aria-current={
+                        activeSection === label ? 'page' : undefined
+                      }
+                      className={
+                        activeSection === label
+                          ? 'nav-item nav-subitem nav-item-active'
+                          : 'nav-item nav-subitem'
+                      }
+                      key={label}
+                      onClick={() => selectSection(label)}
+                    >
+                      <ItemIcon aria-hidden="true" />
+                      <span>{label}</span>
+                    </button>
+                  ),
+                )}
+              </div>
+            ) : null}
           </nav>
           <div className="operator-card">
             <div className="operator-identity">
@@ -220,16 +395,38 @@ export default function Home() {
           <header className="topbar">
             <p>
               <span className="environment-dot" />
-              {environmentLabel} <i>›</i> 运营后台 <i>›</i> {activeSection}
+              {environmentLabel} <i>›</i> 运营后台
+              {activeNavigationGroup ? (
+                <>
+                  {' '}
+                  <i>›</i> {activeNavigationGroup.label}
+                </>
+              ) : null}{' '}
+              <i>›</i> {activeSection}
             </p>
             <p className="topbar-right">PostgreSQL 实时读取 · CST</p>
           </header>
           <div className="section-viewport">
-            {renderSection(activeSection, setActiveSection)}
+            {renderSection(activeSection, selectSection)}
           </div>
         </main>
       </div>
     </div>
+  );
+}
+
+function navigationGroupForSection(section: PlatformSection) {
+  return navigation.find(
+    (node): node is NavigationGroup =>
+      node.kind === 'group' &&
+      node.items.some((item) => item.label === section),
+  );
+}
+
+function navigationGroupById(groupId: NavigationGroupId) {
+  return navigation.find(
+    (node): node is NavigationGroup =>
+      node.kind === 'group' && node.id === groupId,
   );
 }
 

@@ -131,7 +131,12 @@ def install_fixture(page, observed_queries: list[dict]) -> None:
 
 def open_platform_details(page) -> None:
     open_authenticated(page)
-    page.get_by_role('button', name=re.compile(r'^平台明细')).click()
+    nav = page.get_by_role('navigation', name='平台功能菜单')
+    detail = nav.get_by_role('button', name='平台明细', exact=True)
+    if not detail.count() or not detail.first.is_visible():
+        nav.get_by_role('button', name='财务管理', exact=True).click()
+        detail = nav.get_by_role('button', name='平台明细', exact=True)
+    detail.click()
     expect(page.get_by_role('heading', name='平台明细', exact=True)).to_be_visible()
     expect(page.get_by_text('平台与百应费用明细', exact=True)).to_be_visible()
 

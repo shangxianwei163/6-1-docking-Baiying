@@ -64,6 +64,7 @@
     "stage6b3c:verify": "npm run stage6b3c:verify:source && npm run stage6b3c:verify:api && npm run stage6b3c:verify:ui",
     "stage7b:verify:ui": "python3 scripts/verify-stage7b-ui.py",
     "platform-detail:verify:ui": "python3 scripts/verify-platform-cost-detail-ui.py",
+    "navigation:verify:ui": "python3 scripts/verify-navigation-ui.py",
     "operator:verify:api": "npm run test --workspace @outbound/platform-api -- --run src/security/operator-session.test.ts src/http/operator-session.test.ts",
     "operator:verify:ui": "python3 scripts/verify-operator-login-ui.py",
     "ui:verify:local": "node scripts/verify-ui-local.mjs",
