@@ -20,6 +20,7 @@ type ApiDoc = {
   auth: string;
   params: Row[];
   request?: string;
+  responseParams?: Row[];
   response: string;
   responseLead?: string;
   errorResponse?: string;
@@ -230,6 +231,10 @@ const batchDetailResponse = `{
     "completed_at": null
   }
 }`;
+const batchDetailRequest = `GET /openapi/v2/outbound/batches/4f4f0d65-8d01-48c9-b87f-71569344cb63 HTTP/1.1
+Host: scheduling.paiyide.cc
+X-Access-Token: erp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+X-Request-Id: 9bba018d-36b2-478d-af0a-af3f7d573937`;
 const callChargeResponse = `{
   "code": "OK",
   "message": "success",
@@ -257,6 +262,140 @@ const callChargeResponse = `{
     "next_cursor": null
   }
 }`;
+const callChargeRequest = `GET /openapi/v2/billing/call-charges?company_code=5903679116&occurred_from=2026-09-01T00%3A00%3A00%2B08%3A00&occurred_before=2026-10-01T00%3A00%3A00%2B08%3A00&limit=100 HTTP/1.1
+Host: scheduling.paiyide.cc
+X-Access-Token: erp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+X-Request-Id: 9bba018d-36b2-478d-af0a-af3f7d573937`;
+
+const createBatchResponseParams: Row[] = [
+  ['code', 'Response · string', '是', '成功时固定为 BATCH_ACCEPTED'],
+  ['message', 'Response · string', '是', '可直接展示的受理结果说明'],
+  ['request_id', 'Response · string', '是', '本次请求追踪 ID'],
+  ['data.batch_id', 'Response · uuid', '是', '平台生成的业务批次 ID'],
+  [
+    'data.execution_status',
+    'Response · enum',
+    '是',
+    '批次初始状态，受理成功时为 ACCEPTED',
+  ],
+  ['data.phone_count', 'Response · integer', '是', '本批次受理号码总数'],
+  ['data.task_count', 'Response · integer', '是', '平台拆分出的执行任务数量'],
+  ['data.tasks', 'Response · array', '是', '本批次全部执行任务'],
+  ['data.tasks[].task_id', 'Response · uuid', '是', '平台执行任务 ID'],
+  ['data.tasks[].task_no', 'Response · string', '是', '平台任务编号'],
+  [
+    'data.tasks[].phone_count',
+    'Response · integer',
+    '是',
+    '当前执行任务包含的号码数量',
+  ],
+  [
+    'data.tasks[].status_url',
+    'Response · string',
+    '是',
+    '当前任务状态查询地址',
+  ],
+  ['data.status_url', 'Response · string', '是', '整个批次状态查询地址'],
+];
+
+const batchDetailResponseParams: Row[] = [
+  ['code', 'Response · string', '是', '成功时固定为 OK'],
+  ['message', 'Response · string', '是', '成功时固定为 success'],
+  ['request_id', 'Response · string', '是', '本次请求追踪 ID'],
+  ['data.batch_id', 'Response · uuid', '是', '平台业务批次 ID'],
+  ['data.source', 'Response · integer', '是', '0=ERP，1=CRM'],
+  ['data.company_code', 'Response · string', '是', '影楼 MC code'],
+  ['data.main_category', 'Response · string', '是', '一级分类'],
+  ['data.sub_category', 'Response · string', '是', '二级分类'],
+  ['data.execution_status', 'Response · enum', '是', '批次汇总执行状态'],
+  ['data.phone_count', 'Response · integer', '是', '批次号码总数'],
+  ['data.task_count', 'Response · integer', '是', '执行任务总数'],
+  ['data.tasks', 'Response · array', '是', '批次下全部执行任务及其状态'],
+  ['data.tasks[].task_id', 'Response · uuid', '是', '平台执行任务 ID'],
+  ['data.tasks[].task_no', 'Response · string', '是', '平台任务编号'],
+  [
+    'data.tasks[].execution_status',
+    'Response · enum',
+    '是',
+    '当前执行任务状态',
+  ],
+  ['data.tasks[].status_url', 'Response · string', '是', '任务状态查询地址'],
+  ['data.created_at', 'Response · datetime', '是', '批次创建时间'],
+  [
+    'data.completed_at',
+    'Response · datetime|null',
+    '是',
+    '批次完成时间，未完成时为 null',
+  ],
+];
+
+const callChargeResponseParams: Row[] = [
+  ['code', 'Response · string', '是', '成功时固定为 OK'],
+  ['message', 'Response · string', '是', '成功时固定为 success'],
+  ['request_id', 'Response · string', '是', '本次请求追踪 ID'],
+  ['data.company_code', 'Response · string', '是', '当前影楼 MC code'],
+  ['data.currency', 'Response · string', '是', '固定为 CNY'],
+  ['data.balance', 'Response · decimal string', '是', '当前账面余额'],
+  [
+    'data.available_balance',
+    'Response · decimal string',
+    '是',
+    '扣除活动冻结金额后的当前可用余额',
+  ],
+  [
+    'data.total_count',
+    'Response · integer',
+    '是',
+    '当前时间范围内的通话扣费流水总数',
+  ],
+  [
+    'data.total_charge',
+    'Response · decimal string',
+    '是',
+    '当前时间范围内通话扣费绝对值合计',
+  ],
+  ['data.items', 'Response · array', '是', '按扣费时间倒序的真实账户流水'],
+  ['data.items[].ledger_id', 'Response · uuid', '是', '真实账本流水 ID'],
+  ['data.items[].occurred_at', 'Response · datetime', '是', '扣费入账时间'],
+  ['data.items[].type', 'Response · string', '是', '固定为 CALL_CHARGE'],
+  [
+    'data.items[].amount',
+    'Response · decimal string',
+    '是',
+    '真实账本变动金额，通话扣费为负数',
+  ],
+  [
+    'data.items[].balance_after',
+    'Response · decimal string',
+    '是',
+    '本笔扣费后的账面余额',
+  ],
+  [
+    'data.items[].available_balance_after',
+    'Response · decimal string',
+    '是',
+    '本笔扣费后的可用余额',
+  ],
+  [
+    'data.items[].task_no',
+    'Response · string|null',
+    '是',
+    '关联的平台任务编号',
+  ],
+  [
+    'data.items[].platform_call_id',
+    'Response · uuid|null',
+    '是',
+    '关联的平台通话 ID',
+  ],
+  ['data.items[].remark', 'Response · string|null', '是', '本笔流水说明'],
+  [
+    'data.next_cursor',
+    'Response · string|null',
+    '是',
+    '下一页游标；没有下一页时为 null',
+  ],
+];
 const callbackHeaders: Row[] = [
   [
     'X-Platform-Event-Id',
@@ -416,6 +555,7 @@ const apiDocs: ApiDoc[] = [
       ],
     ],
     request: createBatchRequest,
+    responseParams: createBatchResponseParams,
     response: createBatchResponse,
     errorResponse: insufficientBalanceResponse,
     responseLead:
@@ -455,6 +595,8 @@ const apiDocs: ApiDoc[] = [
       ...requestHeaders,
       ['batchId', 'Path · uuid', '是', '新增外呼批次成功后返回的 batch_id'],
     ],
+    request: batchDetailRequest,
+    responseParams: batchDetailResponseParams,
     response: batchDetailResponse,
     rules: [
       ...requestRules,
@@ -501,6 +643,8 @@ const apiDocs: ApiDoc[] = [
       ['cursor', 'Query · string', '否', '上一页返回的 next_cursor，原样传回'],
       ['limit', 'Query · integer', '否', '每页 1～500 条，默认 100 条'],
     ],
+    request: callChargeRequest,
+    responseParams: callChargeResponseParams,
     response: callChargeResponse,
     responseLead:
       'items 来自不可变真实账户账本，按扣费时间倒序返回；amount 为实际负数扣款。',
@@ -1245,9 +1389,11 @@ function CopyButton({
 function ParameterTable({
   rows,
   firstColumn = '参数名',
+  thirdColumn = '必传',
 }: {
   rows: Row[];
   firstColumn?: string;
+  thirdColumn?: string;
 }) {
   return (
     <div className="api-parameter-table">
@@ -1256,7 +1402,7 @@ function ParameterTable({
           <tr>
             <th>{firstColumn}</th>
             <th>位置 / 类型</th>
-            <th>必传</th>
+            <th>{thirdColumn}</th>
             <th>说明</th>
           </tr>
         </thead>
@@ -1424,6 +1570,15 @@ export function ApiDocumentation({
               <pre className="api-code-block">
                 <code>{active.request}</code>
               </pre>
+            </section>
+          ) : null}
+          {active.responseParams?.length ? (
+            <section className="api-reference-section">
+              <h3>响应参数</h3>
+              <p className="api-section-lead">
+                成功响应的字段、类型和返回规则如下。
+              </p>
+              <ParameterTable rows={active.responseParams} thirdColumn="必返" />
             </section>
           ) : null}
           <section className="api-reference-section">
