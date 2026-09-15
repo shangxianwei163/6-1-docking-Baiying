@@ -31,6 +31,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { UnifiedSelect } from '@/components/ui/unified-select';
 import {
   loadMappingCenter,
+  loadVariableSyncJob,
   platformActorId,
   PlatformApiError,
   publishMappings,
@@ -52,6 +53,9 @@ type SceneStatus =
   | 'STALE_SYNC'
   | 'DISABLED';
 type IssueChange = 'NEW' | 'DRIFT' | 'REMOVED';
+
+const wait = (milliseconds: number) =>
+  new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
 
 type MappingRule = {
   id: string;
@@ -489,9 +493,7 @@ export function MappingView() {
             .filter((scene) => scene.status !== 'DISABLED')
             .flatMap((scene) => scene.variables),
         ),
-      ].sort(
-        (left, right) => left.localeCompare(right, 'zh-CN'),
-      ),
+      ].sort((left, right) => left.localeCompare(right, 'zh-CN')),
     [scenes],
   );
   const sortedScenes = useMemo(
@@ -719,7 +721,37 @@ export function MappingView() {
     try {
       const job = await requestVariableSync();
       setFeedback(
-        `同步任务已进入队列（${job.jobId.slice(0, 8)}），页面状态将在后台完成百应话术变量同步后更新。`,
+        `同步任务已进入队列（${job.jobId.slice(0, 8)}），正在等待后台调用百应接口…`,
+      );
+      const deadline = Date.now() + 120_000;
+      while (Date.now() < deadline) {
+        await wait(1_000);
+        const status = await loadVariableSyncJob(job.jobId);
+        if (status.status === 'SUCCEEDED') {
+          await refreshData();
+          setFeedback(
+            `百应接口同步已完成（${job.jobId.slice(0, 8)}），变量数据已刷新。`,
+          );
+          return;
+        }
+        if (status.status === 'FAILED') {
+          setFeedback(
+            `百应接口同步失败（${job.jobId.slice(0, 8)}）：${status.lastError ?? '后台任务已进入死信，请到异常中心查看'}`,
+          );
+          return;
+        }
+        if (status.status === 'RETRYING') {
+          setFeedback(
+            `百应接口调用失败，后台正在第 ${status.attempts + 1} 次重试：${status.lastError ?? '等待重试'}`,
+          );
+        } else if (status.status === 'RUNNING') {
+          setFeedback(
+            `后台正在调用百应公司、话术及变量接口（${job.jobId.slice(0, 8)}）…`,
+          );
+        }
+      }
+      setFeedback(
+        `同步任务仍在后台执行（${job.jobId.slice(0, 8)}），页面会继续自动刷新最新结果。`,
       );
     } catch (error) {
       setFeedback(
@@ -747,12 +779,16 @@ export function MappingView() {
           disabled={syncing || loading}
         >
           <RefreshCcw size={14} className={syncing ? 'spin' : ''} />
-          {syncing ? '正在提交…' : '同步百应变量'}
+          {syncing ? '正在同步…' : '同步百应变量'}
         </button>
       </header>
       {feedback ? (
         <output className="notice mapping-feedback">
-          <Check size={14} />
+          {syncing ? (
+            <RefreshCcw size={14} className="spin" />
+          ) : (
+            <Check size={14} />
+          )}
           {feedback}
         </output>
       ) : null}

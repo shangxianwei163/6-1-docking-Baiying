@@ -252,6 +252,7 @@ export class TaskOrchestrationService {
       expectedStatuses: retry ? ['BAIYING_CREATING'] : ['ACCEPTED'],
       nextStatus: retry ? undefined : 'BAIYING_CREATING',
       requestPayloadRedacted: request,
+      requestPayloadCiphertext: encryptRequest(this.protector, request),
     });
 
     let result: Awaited<ReturnType<BaiyingCallJobClient['createCallJob']>>;
@@ -290,6 +291,12 @@ export class TaskOrchestrationService {
       message: 'Worker 在保存创建结果前中断，改用确定性任务名查询恢复',
     });
     const callJobName = buildCallJobName(task.taskName);
+    const request = {
+      companyId: task.baiyingCompanyId,
+      jobName: callJobName,
+      pageNum: 1,
+      pageSize: 200,
+    };
     const operation = await this.repository.beginOperation({
       taskId: task.id,
       operationType: 'QUERY',
@@ -299,6 +306,7 @@ export class TaskOrchestrationService {
         companyId: task.baiyingCompanyId,
         callJobName,
       },
+      requestPayloadCiphertext: encryptRequest(this.protector, request),
     });
     let result: Awaited<ReturnType<BaiyingCallJobClient['findCallJobsByName']>>;
     try {
@@ -365,22 +373,22 @@ export class TaskOrchestrationService {
       });
       return;
     }
-    const operation = await this.repository.beginOperation({
-      taskId: task.id,
-      operationType: 'IMPORT',
-      expectedStatuses: retry ? ['IMPORTING'] : ['BAIYING_CREATED'],
-      nextStatus: retry ? undefined : 'IMPORTING',
-      requestPayloadRedacted: {
-        callJobId: task.baiyingCallJobId,
-        companyId: task.baiyingCompanyId,
-        customerCount: task.callItems.length,
-        permitrepeatnum: false,
-      },
-    });
     let customers;
     try {
       customers = materializeCustomers(task, this.protector);
     } catch (error) {
+      const operation = await this.repository.beginOperation({
+        taskId: task.id,
+        operationType: 'IMPORT',
+        expectedStatuses: retry ? ['IMPORTING'] : ['BAIYING_CREATED'],
+        nextStatus: retry ? undefined : 'IMPORTING',
+        requestPayloadRedacted: {
+          callJobId: task.baiyingCallJobId,
+          companyId: task.baiyingCompanyId,
+          customerCount: task.callItems.length,
+          permitrepeatnum: false,
+        },
+      });
       const message =
         error instanceof Error ? error.message : '客户密文解析失败';
       await this.repository.finishOperation({
@@ -402,6 +410,25 @@ export class TaskOrchestrationService {
       });
       return;
     }
+
+    const providerRequest = importProviderRequest(
+      task.baiyingCallJobId,
+      task.baiyingCompanyId,
+      customers,
+    );
+    const operation = await this.repository.beginOperation({
+      taskId: task.id,
+      operationType: 'IMPORT',
+      expectedStatuses: retry ? ['IMPORTING'] : ['BAIYING_CREATED'],
+      nextStatus: retry ? undefined : 'IMPORTING',
+      requestPayloadRedacted: {
+        callJobId: task.baiyingCallJobId,
+        companyId: task.baiyingCompanyId,
+        customerCount: task.callItems.length,
+        permitrepeatnum: false,
+      },
+      requestPayloadCiphertext: encryptRequest(this.protector, providerRequest),
+    });
 
     let result: Awaited<ReturnType<BaiyingCallJobClient['importCustomers']>>;
     try {
@@ -570,6 +597,7 @@ export class TaskOrchestrationService {
       expectedStatuses: retry ? ['STARTING'] : ['IMPORTED'],
       nextStatus: retry ? undefined : 'STARTING',
       requestPayloadRedacted: request,
+      requestPayloadCiphertext: encryptRequest(this.protector, request),
     });
     let result: BaiyingProviderMetadata;
     try {
@@ -660,6 +688,10 @@ export class TaskOrchestrationService {
   }
 
   private async queryJob(task: OrchestrationTask, purpose: string) {
+    const request = {
+      companyId: task.baiyingCompanyId,
+      callJobId: task.baiyingCallJobId!,
+    };
     const operation = await this.repository.beginOperation({
       taskId: task.id,
       operationType: 'QUERY',
@@ -669,6 +701,7 @@ export class TaskOrchestrationService {
         companyId: task.baiyingCompanyId,
         callJobId: task.baiyingCallJobId,
       },
+      requestPayloadCiphertext: encryptRequest(this.protector, request),
     });
     let result: Awaited<ReturnType<BaiyingCallJobClient['getCallJob']>>;
     try {
@@ -708,6 +741,7 @@ export class TaskOrchestrationService {
         ...request,
         reason: 'STARTUP_FAILURE_CLEANUP',
       },
+      requestPayloadCiphertext: encryptRequest(this.protector, request),
     });
     try {
       const result = await this.client.executeCallJob(request);
@@ -772,6 +806,33 @@ export function redactProviderPayload(
   value: Record<string, unknown>,
 ): Record<string, unknown> {
   return redactObject(value, 0) as Record<string, unknown>;
+}
+
+function encryptRequest(
+  protector: Pick<DataProtector, 'encryptUtf8'>,
+  request: Record<string, unknown>,
+) {
+  return protector.encryptUtf8(JSON.stringify(request));
+}
+
+function importProviderRequest(
+  callJobId: string,
+  companyId: string,
+  customers: ReturnType<typeof materializeCustomers>,
+) {
+  return {
+    callJobId,
+    companyId,
+    customerInfoVOList: customers.map((customer) => ({
+      name: customer.name,
+      phone: customer.phone,
+      properties: {
+        ...customer.properties,
+        sx_platform_item_id: customer.platformItemId,
+      },
+    })),
+    permitrepeatnum: false,
+  };
 }
 
 function redactObject(value: unknown, depth: number): unknown {

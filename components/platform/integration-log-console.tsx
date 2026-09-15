@@ -428,7 +428,7 @@ export function IntegrationLogConsole() {
           <DialogHeader>
             <DialogTitle>接口调用详情</DialogTitle>
             <DialogDescription>
-              完整呈现已保存的请求字段、响应正文与平台处理状态。
+              完整呈现请求业务字段、响应正文与平台处理状态；历史请求会从平台加密业务数据中重建。
             </DialogDescription>
           </DialogHeader>
           {detail ? (
@@ -551,7 +551,7 @@ function IntegrationDetail({
                 payload.detailLevel === 'FULL' ? 'is-complete' : 'is-snapshot'
               }
             >
-              {payload.detailLevel === 'FULL' ? '完整记录' : '历史快照'}
+              {payload.detailLevel === 'FULL' ? '完整未脱敏' : '历史快照'}
             </em>
           ) : null}
         </header>

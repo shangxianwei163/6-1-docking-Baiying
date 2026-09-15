@@ -686,16 +686,18 @@ export function createApp(dependencies: AppDependencies) {
   app.get('/api/v1/platform-cost-details', async (context) => {
     requireActor(context.req.header('x-actor-id'));
     const query = parsePlatformCostDetailQuery(context.req.query());
-    const data = await platformCostDetailDependency(dependencies).listDetails(
-      query,
-    );
+    const data =
+      await platformCostDetailDependency(dependencies).listDetails(query);
     return context.json(success(context.get('requestId'), data));
   });
 
   app.get('/api/v1/platform-cost-details/export', async (context) => {
     requireActor(context.req.header('x-actor-id'));
-    const { pageNum: _pageNum, pageSize: _pageSize, ...query } =
-      parsePlatformCostDetailQuery(context.req.query());
+    const {
+      pageNum: _pageNum,
+      pageSize: _pageSize,
+      ...query
+    } = parsePlatformCostDetailQuery(context.req.query());
     const exported =
       await platformCostDetailDependency(dependencies).exportDetails(query);
     return context.body(exported.csv, 200, {
@@ -1272,6 +1274,19 @@ export function createApp(dependencies: AppDependencies) {
       requestedBy: actorId,
     });
     return context.json(success(context.get('requestId'), requested), 202);
+  });
+
+  app.get('/api/v1/variable-sync-jobs/:jobId', async (context) => {
+    const jobId = z.uuid().parse(context.req.param('jobId'));
+    const job = await dependencies.mappingRepository.getVariableSyncJob(jobId);
+    if (!job) {
+      throw new OperationsConsoleFailure(
+        'VARIABLE_SYNC_JOB_NOT_FOUND',
+        '同步任务不存在',
+        404,
+      );
+    }
+    return context.json(success(context.get('requestId'), job));
   });
 
   app.post('/api/v1/internal/scene-variable-observations', async (context) => {

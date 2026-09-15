@@ -6,6 +6,7 @@ import type {
   RemoveMappingDraftInput,
   SceneReadiness,
   SyncSceneObservation,
+  VariableSyncJob,
 } from '@outbound/contracts';
 
 export type StoredDraft = {
@@ -54,6 +55,7 @@ export interface MappingRepository {
     requestedAt: string;
     requestedBy: string;
   }): Promise<void>;
+  getVariableSyncJob(jobId: string): Promise<VariableSyncJob | null>;
   enqueueVariableSyncIfDue(input: {
     jobId: string;
     requestedAt: string;

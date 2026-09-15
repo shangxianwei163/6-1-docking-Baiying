@@ -65,6 +65,7 @@ export interface TaskOrchestrationRepository {
     expectedStatuses: TaskExecutionStatus[];
     nextStatus?: TaskExecutionStatus;
     requestPayloadRedacted: Record<string, unknown>;
+    requestPayloadCiphertext?: string;
   }): Promise<OperationHandle>;
   finishOperation(input: {
     operationId: string;

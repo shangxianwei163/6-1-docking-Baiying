@@ -22,6 +22,9 @@ function createRepository() {
     updatedAt: '2026-09-03T02:00:00.000Z',
   }));
   const enqueueVariableSync = vi.fn(async () => undefined);
+  const getVariableSyncJob = vi.fn<MappingRepository['getVariableSyncJob']>(
+    async () => null,
+  );
   const repository: MappingRepository = {
     variableExistsInLatestSnapshot: vi.fn(async () => true),
     saveDraft,
@@ -33,9 +36,10 @@ function createRepository() {
     recordSuccessfulObservation: vi.fn(),
     listSceneReadiness: vi.fn(async () => []),
     enqueueVariableSync,
+    getVariableSyncJob,
     enqueueVariableSyncIfDue: vi.fn(async () => true),
   };
-  return { repository, saveDraft, enqueueVariableSync };
+  return { repository, saveDraft, enqueueVariableSync, getVariableSyncJob };
 }
 
 const fixedId = '5f9ad46d-d4a7-4cbc-b388-f505b6141724';
@@ -357,6 +361,37 @@ describe('mapping API', () => {
       requestedAt: '2026-09-03T02:00:00.000Z',
       requestedBy: 'admin-1',
     });
+  });
+
+  it('reports whether the Baiying variable sync reached the real worker', async () => {
+    const { repository, getVariableSyncJob } = createRepository();
+    getVariableSyncJob.mockResolvedValue({
+      jobId: fixedId,
+      status: 'SUCCEEDED',
+      requestedAt: '2026-09-03T02:00:00.000Z',
+      startedAt: '2026-09-03T02:00:01.000Z',
+      finishedAt: '2026-09-03T02:00:03.000Z',
+      attempts: 1,
+      lastError: null,
+    });
+    const app = createApp({
+      mappingRepository: repository,
+      consoleOrigin: 'http://localhost:4173',
+      workerSharedSecret: 'a-worker-secret-longer-than-24-characters',
+    });
+
+    const response = await app.request(`/api/v1/variable-sync-jobs/${fixedId}`);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          jobId: fixedId,
+          status: 'SUCCEEDED',
+          attempts: 1,
+        }),
+      }),
+    );
   });
 
   it('protects the worker-only observation endpoint', async () => {

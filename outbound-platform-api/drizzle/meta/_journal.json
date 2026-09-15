@@ -176,6 +176,13 @@
       "when": 1789365600000,
       "tag": "0024_supplier_settlement_automation",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1789443600000,
+      "tag": "0025_full_integration_request_snapshots",
+      "breakpoints": true
     }
   ]
 }

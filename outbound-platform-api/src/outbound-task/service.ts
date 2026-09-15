@@ -484,6 +484,9 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
         idempotencyKey: input.idempotencyKey,
         requestId: input.requestId,
         requestBodySha256: input.requestHash,
+        requestBodyCiphertext: this.protector.encryptUtf8(
+          JSON.stringify(input.request),
+        ),
         taskId,
         processingStatus: 'COMPLETED',
         responseStatus: 202,
@@ -814,6 +817,9 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
           idempotencyKey: input.idempotencyKey,
           requestId: input.requestId,
           requestBodySha256: input.requestHash,
+          requestBodyCiphertext: this.protector.encryptUtf8(
+            JSON.stringify(input.request),
+          ),
           taskId: taskSummaries[0]!.task_id,
           processingStatus: 'COMPLETED',
           responseStatus: 202,
@@ -1230,11 +1236,7 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
       const taskHasIssue = summary?.reconciliation.issues.some(
         (issue) => issue.taskNo === null || issue.taskNo === row.task.taskNo,
       );
-      if (
-        !summary?.tier ||
-        summary.status === 'FINALIZED' ||
-        taskHasIssue
-      ) {
+      if (!summary?.tier || summary.status === 'FINALIZED' || taskHasIssue) {
         return row;
       }
       const platformRate = normalizeMoney(summary.tier.voiceRate);

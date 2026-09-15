@@ -594,6 +594,7 @@ export const idempotencyRecords = pgTable(
     idempotencyKey: varchar('idempotency_key', { length: 128 }).notNull(),
     requestId: varchar('request_id', { length: 128 }).notNull(),
     requestBodySha256: char('request_body_sha256', { length: 64 }),
+    requestBodyCiphertext: text('request_body_ciphertext'),
     taskId: uuid('task_id'),
     processingStatus: idempotencyProcessingStatus('processing_status')
       .notNull()
@@ -1273,9 +1274,7 @@ export const supplierSettlementCloseCycles = pgTable(
   {
     settlementMonth: date('settlement_month', { mode: 'string' }).primaryKey(),
     status: varchar('status', { length: 32 })
-      .$type<
-        'PRE_CLOSING' | 'RECONCILING' | 'BLOCKED' | 'FINALIZED'
-      >()
+      .$type<'PRE_CLOSING' | 'RECONCILING' | 'BLOCKED' | 'FINALIZED'>()
       .notNull(),
     precloseSourceHash: char('preclose_source_hash', { length: 64 }),
     preclosedAt: timestamp('preclosed_at', { withTimezone: true }),
@@ -1448,6 +1447,7 @@ export const taskOperations = pgTable(
       .$type<Record<string, unknown>>()
       .notNull()
       .default(sql`'{}'::jsonb`),
+    requestPayloadCiphertext: text('request_payload_ciphertext'),
     responsePayloadRedacted: jsonb('response_payload_redacted_json').$type<
       Record<string, unknown>
     >(),

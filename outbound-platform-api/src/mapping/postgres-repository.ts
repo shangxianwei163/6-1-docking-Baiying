@@ -7,6 +7,7 @@ import type {
   RemoveMappingDraftInput,
   SceneReadiness,
   SyncSceneObservation,
+  VariableSyncJob,
 } from '@outbound/contracts';
 import type { Database } from '../db/client.js';
 import {
@@ -585,6 +586,51 @@ export class PostgresMappingRepository implements MappingRepository {
       queueName: this.variableSyncQueueName,
       payload: input,
     });
+  }
+
+  async getVariableSyncJob(jobId: string): Promise<VariableSyncJob | null> {
+    const [job] = await this.db
+      .select({
+        id: queueOutbox.id,
+        attempts: queueOutbox.attempts,
+        createdAt: queueOutbox.createdAt,
+        lockedAt: queueOutbox.lockedAt,
+        publishedAt: queueOutbox.publishedAt,
+        lastError: queueOutbox.lastError,
+        deadLetteredAt: queueOutbox.deadLetteredAt,
+      })
+      .from(queueOutbox)
+      .where(
+        and(
+          eq(queueOutbox.id, jobId),
+          eq(queueOutbox.eventType, 'BAIYING_VARIABLE_SYNC_REQUESTED'),
+          eq(queueOutbox.queueName, this.variableSyncQueueName),
+        ),
+      )
+      .limit(1);
+    if (!job) return null;
+
+    const status = job.publishedAt
+      ? 'SUCCEEDED'
+      : job.deadLetteredAt
+        ? 'FAILED'
+        : job.lockedAt
+          ? 'RUNNING'
+          : job.attempts > 0
+            ? 'RETRYING'
+            : 'QUEUED';
+    return {
+      jobId: job.id,
+      status,
+      requestedAt: job.createdAt.toISOString(),
+      startedAt: job.lockedAt?.toISOString() ?? null,
+      finishedAt:
+        job.publishedAt?.toISOString() ??
+        job.deadLetteredAt?.toISOString() ??
+        null,
+      attempts: job.attempts,
+      lastError: job.lastError,
+    };
   }
 
   async enqueueVariableSyncIfDue(input: {

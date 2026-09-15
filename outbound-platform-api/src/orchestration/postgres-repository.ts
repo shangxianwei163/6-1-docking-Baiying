@@ -119,6 +119,7 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
     expectedStatuses: TaskExecutionStatus[];
     nextStatus?: TaskExecutionStatus;
     requestPayloadRedacted: Record<string, unknown>;
+    requestPayloadCiphertext?: string;
   }): Promise<OperationHandle> {
     return this.db.transaction(async (tx) => {
       const task = await lockTask(tx, input.taskId);
@@ -142,6 +143,7 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
           operationType: input.operationType,
           attemptNo: attempts[0]?.nextAttempt ?? 1,
           requestPayloadRedacted: input.requestPayloadRedacted,
+          requestPayloadCiphertext: input.requestPayloadCiphertext,
           status: 'PENDING',
           startedAt: now,
         })

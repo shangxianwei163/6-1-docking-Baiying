@@ -206,3 +206,23 @@ export const variableSyncRequestedSchema = z.object({
   requestedAt: z.iso.datetime({ offset: true }),
 });
 export type VariableSyncRequested = z.infer<typeof variableSyncRequestedSchema>;
+
+export const variableSyncJobStatusSchema = z.enum([
+  'QUEUED',
+  'RUNNING',
+  'RETRYING',
+  'SUCCEEDED',
+  'FAILED',
+]);
+export type VariableSyncJobStatus = z.infer<typeof variableSyncJobStatusSchema>;
+
+export const variableSyncJobSchema = z.object({
+  jobId: z.uuid(),
+  status: variableSyncJobStatusSchema,
+  requestedAt: z.iso.datetime({ offset: true }),
+  startedAt: z.iso.datetime({ offset: true }).nullable(),
+  finishedAt: z.iso.datetime({ offset: true }).nullable(),
+  attempts: z.number().int().nonnegative(),
+  lastError: z.string().nullable(),
+});
+export type VariableSyncJob = z.infer<typeof variableSyncJobSchema>;

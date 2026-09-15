@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   operatorIntegrationLogDetailSchema,
@@ -19,6 +19,9 @@ import {
   deliveryAttempts,
   deliveryEvents,
   idempotencyRecords,
+  intakeBatches,
+  platformTasks,
+  taskCallItems,
   taskOperations,
 } from '../db/schema.js';
 import type { DataProtector } from '../security/data-protector.js';
@@ -396,12 +399,36 @@ export class PostgresIntegrationLogService implements IntegrationLogService {
       .where(eq(taskOperations.id, operationId))
       .limit(1);
     if (!row) return null;
+
+    const storedRequest = this.decryptRequest(row.requestPayloadCiphertext);
+    if (storedRequest !== null) {
+      return operatorIntegrationLogDetailSchema.parse({
+        id,
+        detailLevel: 'FULL',
+        request: storedRequest,
+        response: row.responsePayloadRedacted,
+        note: null,
+      });
+    }
+
+    let reconstructed: Record<string, unknown> | null = null;
+    try {
+      reconstructed = await this.reconstructProviderRequest(
+        row.taskId,
+        row.operationType,
+        row.requestPayloadRedacted,
+      );
+    } catch {
+      reconstructed = null;
+    }
     return operatorIntegrationLogDetailSchema.parse({
       id,
-      detailLevel: 'STORED_SNAPSHOT',
-      request: row.requestPayloadRedacted,
+      detailLevel: reconstructed ? 'FULL' : 'STORED_SNAPSHOT',
+      request: reconstructed ?? row.requestPayloadRedacted,
       response: row.responsePayloadRedacted,
-      note: '百应编排历史记录仅保存了安全快照，无法恢复当时未落库的敏感字段。',
+      note: reconstructed
+        ? '该历史记录未保存完整请求快照，已依据平台任务的加密业务数据重建完整请求。'
+        : '该历史记录缺少可用于重建的任务数据，只能显示当时保存的请求快照。',
     });
   }
 
@@ -425,10 +452,30 @@ export class PostgresIntegrationLogService implements IntegrationLogService {
       )
       .limit(1);
     if (!row) return null;
+
+    const storedRequest = this.decryptRequest(row.requestBodyCiphertext);
+    if (storedRequest !== null) {
+      return operatorIntegrationLogDetailSchema.parse({
+        id,
+        detailLevel: 'FULL',
+        request: storedRequest,
+        response: row.responseBody,
+        note: null,
+      });
+    }
+
+    let reconstructed: Record<string, unknown> | null = null;
+    try {
+      reconstructed = row.taskId
+        ? await this.reconstructTaskIntakeRequest(row.taskId)
+        : null;
+    } catch {
+      reconstructed = null;
+    }
     return operatorIntegrationLogDetailSchema.parse({
       id,
-      detailLevel: 'STORED_SNAPSHOT',
-      request: {
+      detailLevel: reconstructed ? 'FULL' : 'STORED_SNAPSHOT',
+      request: reconstructed ?? {
         sourceSystem: row.sourceSystem,
         clientId: row.clientId,
         idempotencyKey: row.idempotencyKey,
@@ -436,8 +483,174 @@ export class PostgresIntegrationLogService implements IntegrationLogService {
         requestBodySha256: row.requestBodySha256,
       },
       response: row.responseBody,
-      note: '任务受理历史记录仅保存请求摘要与完整响应，原始请求正文未落库。',
+      note: reconstructed
+        ? '该历史记录未保存原始请求快照，已依据平台任务的加密业务数据重建完整请求。'
+        : '该历史记录缺少可用于重建的任务数据，只能显示当时保存的请求摘要。',
     });
+  }
+
+  private decryptRequest(ciphertext: string | null): unknown {
+    if (!ciphertext || !this.protector) return null;
+    try {
+      return parseJsonText(this.protector.decryptUtf8(ciphertext));
+    } catch {
+      return null;
+    }
+  }
+
+  private async reconstructProviderRequest(
+    taskId: string,
+    operationType: string,
+    snapshot: Record<string, unknown>,
+  ): Promise<Record<string, unknown> | null> {
+    if (!this.protector) return null;
+    const [task] = await this.db
+      .select()
+      .from(platformTasks)
+      .where(eq(platformTasks.id, taskId))
+      .limit(1);
+    if (!task) return null;
+
+    if (operationType === 'CREATE') {
+      return {
+        callJobName: task.taskName,
+        callJobType: 2,
+        companyId: task.baiyingCompanyId,
+        robotDefId: task.robotDefId,
+        userPhoneIds: [task.userPhoneId],
+      };
+    }
+    if (operationType === 'IMPORT') {
+      const items = await this.listTaskCallItems(task.id);
+      return {
+        callJobId: task.baiyingCallJobId,
+        companyId: task.baiyingCompanyId,
+        customerInfoVOList: items.map((item) => ({
+          name: item.customerNameCiphertext
+            ? this.protector!.decryptUtf8(item.customerNameCiphertext)
+            : `客户${item.ordinal}`,
+          phone: this.protector!.decryptUtf8(item.phoneCiphertext),
+          properties: {
+            ...parseJsonRecord(
+              this.protector!.decryptUtf8(item.mappedPropertiesCiphertext),
+            ),
+            sx_platform_item_id: item.id,
+          },
+        })),
+        permitrepeatnum: false,
+      };
+    }
+    if (operationType === 'QUERY') {
+      if (snapshot.purpose === 'CREATE_RECOVERY') {
+        return {
+          companyId: task.baiyingCompanyId,
+          jobName: task.taskName,
+          pageNum: 1,
+          pageSize: 200,
+        };
+      }
+      return {
+        companyId: task.baiyingCompanyId,
+        callJobId: task.baiyingCallJobId,
+      };
+    }
+    const command = providerCommand(operationType);
+    if (command !== null) {
+      return {
+        callJobId: task.baiyingCallJobId,
+        companyId: task.baiyingCompanyId,
+        command,
+      };
+    }
+    return snapshot;
+  }
+
+  private async reconstructTaskIntakeRequest(
+    taskId: string,
+  ): Promise<Record<string, unknown> | null> {
+    if (!this.protector) return null;
+    const [task] = await this.db
+      .select()
+      .from(platformTasks)
+      .where(eq(platformTasks.id, taskId))
+      .limit(1);
+    if (!task) return null;
+
+    if (!task.batchId) {
+      const items = await this.listTaskCallItems(task.id);
+      return {
+        schemaVersion: task.contractVersion,
+        externalRequestId: task.externalRequestId,
+        sourceSystem: task.sourceSystem,
+        mcCode: task.mcCodeSnapshot,
+        taskName: task.taskName,
+        customers: items.map((item) => ({
+          externalCustomerId: item.externalCustomerId,
+          ...(item.customerNameCiphertext
+            ? { name: this.protector!.decryptUtf8(item.customerNameCiphertext) }
+            : {}),
+          phone: this.protector!.decryptUtf8(item.phoneCiphertext),
+          dataCategoryId: item.dataCategoryId,
+          fields: parseJsonRecord(
+            this.protector!.decryptUtf8(item.sourceFieldsCiphertext),
+          ),
+        })),
+      };
+    }
+
+    const [batch] = await this.db
+      .select()
+      .from(intakeBatches)
+      .where(eq(intakeBatches.id, task.batchId))
+      .limit(1);
+    if (!batch) return null;
+    const items = await this.listBatchCallItems(task.batchId);
+    const groups = new Map<string, Array<Record<string, unknown>>>();
+    for (const item of items) {
+      const level = item.categorySnapshot?.cLevel ?? '';
+      const customers = groups.get(level) ?? [];
+      customers.push({
+        phone: this.protector.decryptUtf8(item.phoneCiphertext),
+        guid: item.externalCustomerId,
+        ...(item.customerNameCiphertext
+          ? {
+              customer_name: this.protector.decryptUtf8(
+                item.customerNameCiphertext,
+              ),
+            }
+          : {}),
+        ...parseJsonRecord(
+          this.protector.decryptUtf8(item.sourceFieldsCiphertext),
+        ),
+      });
+      groups.set(level, customers);
+    }
+    return {
+      main_category: batch.mainCategory,
+      sub_category: batch.subCategory,
+      source: batch.sourceSystem === 'ERP' ? 0 : 1,
+      company_code: batch.mcCodeSnapshot,
+      customer_list: [...groups].map(([cLevel, customers]) => ({
+        c_level: cLevel,
+        c_info_list: customers,
+      })),
+    };
+  }
+
+  private listTaskCallItems(taskId: string) {
+    return this.db
+      .select()
+      .from(taskCallItems)
+      .where(eq(taskCallItems.taskId, taskId))
+      .orderBy(asc(taskCallItems.ordinal));
+  }
+
+  private listBatchCallItems(batchId: string) {
+    return this.db
+      .select()
+      .from(taskCallItems)
+      .where(eq(taskCallItems.batchId, batchId))
+      .orderBy(asc(taskCallItems.createdAt), asc(taskCallItems.ordinal));
   }
 }
 
@@ -507,6 +720,21 @@ function parseJsonText(value: string | null): unknown {
   } catch {
     return value;
   }
+}
+
+function parseJsonRecord(value: string): Record<string, unknown> {
+  const parsed = parseJsonText(value);
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+    throw new Error('接口日志关联的业务字段不是有效 JSON 对象');
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function providerCommand(operationType: string): 1 | 2 | 3 | null {
+  if (operationType === 'START' || operationType === 'RESUME') return 1;
+  if (operationType === 'PAUSE') return 2;
+  if (operationType === 'TERMINATE') return 3;
+  return null;
 }
 
 function externalDeliveryBody(

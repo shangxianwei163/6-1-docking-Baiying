@@ -55,6 +55,7 @@ import type {
   SupplierPricingPublishResult,
   TaskReconciliationPage,
   TaskReconciliationStatus,
+  VariableSyncJob,
   VariableSyncRequested,
   UpdateOperatorStudioInput,
 } from '@outbound/contracts';
@@ -339,6 +340,10 @@ export function requestVariableSync() {
   return request<VariableSyncRequested>('/api/v1/variable-sync-jobs', {
     method: 'POST',
   });
+}
+
+export function loadVariableSyncJob(jobId: string) {
+  return request<VariableSyncJob>(`/api/v1/variable-sync-jobs/${jobId}`);
 }
 
 export function loadPlannedTasks(
