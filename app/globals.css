@@ -3722,19 +3722,30 @@
   }
   .mapping-center-complete > .inspection-board .inspection-lead {
     align-items: center;
-    padding: 11px 17px 9px;
+    padding: 9px 14px;
+  }
+  .mapping-center-complete > .inspection-board {
+    display: grid;
+    grid-template-columns: minmax(330px, 0.92fr) minmax(0, 1.6fr);
+  }
+  .mapping-center-complete > .inspection-board .inspection-lead {
+    border-right: 1px solid rgba(255, 255, 255, 0.12);
+  }
+  .mapping-center-complete > .inspection-board .inspection-lead .eyebrow {
+    display: none;
   }
   .mapping-center-complete > .inspection-board .inspection-lead h3 {
-    margin-top: 3px;
-    font-size: 20px;
+    margin-top: 0;
+    font-size: 18px;
   }
   .mapping-center-complete
     > .inspection-board
     .inspection-lead
     > div
     > p:last-child {
-    margin-top: 2px;
+    margin-top: 1px;
     font-size: 9px;
+    line-height: 1.35;
   }
   .mapping-center-complete > .inspection-board .sync-stamp b {
     margin: 2px 0;
@@ -3745,23 +3756,30 @@
     font-size: 8px;
   }
   .mapping-center-complete > .inspection-board .inspection-metrics article {
-    padding: 8px 14px;
+    min-width: 0;
+    padding: 9px 8px 8px 12px;
+  }
+  .mapping-center-complete > .inspection-board .inspection-metrics {
+    border-top: 0;
   }
   .mapping-center-complete
     > .inspection-board
     .inspection-metrics
     article::before {
     top: 10px;
-    left: 7px;
-    height: 22px;
+    left: 5px;
+    height: 21px;
   }
   .mapping-center-complete > .inspection-board .inspection-metrics span,
   .mapping-center-complete > .inspection-board .inspection-metrics small {
     font-size: 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .mapping-center-complete > .inspection-board .inspection-metrics b {
     margin: 0;
-    font-size: 20px;
+    font-size: 18px;
   }
   .mapping-center-complete > .mapping-guide {
     gap: 14px;
@@ -3796,6 +3814,15 @@
   }
 }
 @media (max-width: 1100px) {
+  .mapping-center-complete > .inspection-board {
+    display: block;
+  }
+  .mapping-center-complete > .inspection-board .inspection-lead {
+    border-right: 0;
+  }
+  .mapping-center-complete > .inspection-board .inspection-metrics {
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+  }
   .mapping-compact-intro > div {
     grid-template-columns: 1fr;
   }
@@ -14887,8 +14914,7 @@
   border: 1px solid #d8e3dc;
   border-radius: 8px;
   background:
-    linear-gradient(135deg, rgba(238, 247, 242, 0.58), transparent 58%),
-    #fff;
+    linear-gradient(135deg, rgba(238, 247, 242, 0.58), transparent 58%), #fff;
   padding: 12px 13px;
   box-shadow: 0 15px 34px -32px rgba(20, 61, 48, 0.78);
 }
@@ -15285,8 +15311,10 @@
 
 @media (max-width: 1180px) {
   .platform-detail-toolbar {
-    grid-template-columns:
-      minmax(240px, 1fr) minmax(230px, auto) minmax(150px, auto);
+    grid-template-columns: minmax(240px, 1fr) minmax(230px, auto) minmax(
+        150px,
+        auto
+      );
   }
 
   .platform-detail-select,

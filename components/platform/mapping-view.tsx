@@ -28,6 +28,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { toast } from '@/components/ui/toast';
 import { UnifiedSelect } from '@/components/ui/unified-select';
 import {
   loadMappingCenter,
@@ -720,43 +721,67 @@ export function MappingView() {
     setFeedback('');
     try {
       const job = await requestVariableSync();
-      setFeedback(
-        `同步任务已进入队列（${job.jobId.slice(0, 8)}），正在等待后台调用百应接口…`,
-      );
+      const syncToastId = `variable-sync-${job.jobId}`;
+      toast.add({
+        id: syncToastId,
+        title: '同步任务已进入队列',
+        description: `任务 ${job.jobId.slice(0, 8)} 正在等待后台调用百应接口。`,
+        type: 'info',
+        timeout: 4_500,
+      });
       const deadline = Date.now() + 120_000;
       while (Date.now() < deadline) {
         await wait(1_000);
         const status = await loadVariableSyncJob(job.jobId);
         if (status.status === 'SUCCEEDED') {
           await refreshData();
-          setFeedback(
-            `百应接口同步已完成（${job.jobId.slice(0, 8)}），变量数据已刷新。`,
-          );
+          toast.add({
+            id: syncToastId,
+            title: '百应变量同步完成',
+            description: `任务 ${job.jobId.slice(0, 8)} 已完成，页面变量数据已刷新。`,
+            type: 'success',
+            timeout: 4_500,
+          });
           return;
         }
         if (status.status === 'FAILED') {
-          setFeedback(
-            `百应接口同步失败（${job.jobId.slice(0, 8)}）：${status.lastError ?? '后台任务已进入死信，请到异常中心查看'}`,
-          );
+          toast.add({
+            id: syncToastId,
+            title: '百应变量同步失败',
+            description: `${job.jobId.slice(0, 8)}：${status.lastError ?? '后台任务已进入死信，请到异常中心查看'}`,
+            type: 'error',
+            priority: 'high',
+            timeout: 8_000,
+          });
           return;
         }
         if (status.status === 'RETRYING') {
-          setFeedback(
-            `百应接口调用失败，后台正在第 ${status.attempts + 1} 次重试：${status.lastError ?? '等待重试'}`,
-          );
-        } else if (status.status === 'RUNNING') {
-          setFeedback(
-            `后台正在调用百应公司、话术及变量接口（${job.jobId.slice(0, 8)}）…`,
-          );
+          toast.add({
+            id: syncToastId,
+            title: `正在进行第 ${status.attempts + 1} 次重试`,
+            description: status.lastError ?? '百应接口暂未响应，后台正在重试。',
+            type: 'warning',
+            timeout: 5_500,
+          });
         }
       }
-      setFeedback(
-        `同步任务仍在后台执行（${job.jobId.slice(0, 8)}），页面会继续自动刷新最新结果。`,
-      );
+      toast.add({
+        id: syncToastId,
+        title: '同步任务仍在后台执行',
+        description: `任务 ${job.jobId.slice(0, 8)} 尚未结束，请稍后刷新查看最新结果。`,
+        type: 'info',
+        timeout: 6_000,
+      });
     } catch (error) {
-      setFeedback(
-        error instanceof PlatformApiError ? error.message : '同步任务创建失败',
-      );
+      toast.add({
+        id: 'variable-sync-request',
+        title: '同步任务创建失败',
+        description:
+          error instanceof PlatformApiError ? error.message : '请稍后重试。',
+        type: 'error',
+        priority: 'high',
+        timeout: 8_000,
+      });
     } finally {
       setSyncing(false);
     }

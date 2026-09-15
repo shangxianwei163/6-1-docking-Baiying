@@ -18,7 +18,7 @@ def main() -> None:
             executable_path=str(CHROME) if CHROME.exists() else None,
             headless=True,
         )
-        page = browser.new_page(viewport={'width': 1600, 'height': 1000})
+        page = browser.new_page(viewport={'width': 1302, 'height': 964})
         page.on('pageerror', lambda error: page_errors.append(str(error)))
         page.on(
             'request',
@@ -46,14 +46,21 @@ def main() -> None:
             raise AssertionError(f'Variable sync queue returned HTTP {response.status}')
         job_id = response.json()['data']['jobId']
         expect(page.get_by_role('button', name='正在同步…')).to_be_visible()
-        feedback = page.locator('.mapping-feedback')
-        expect(feedback).to_contain_text('百应接口同步已完成', timeout=120_000)
+        toast = page.locator('[data-slot="toast"]')
+        expect(toast).to_contain_text('百应变量同步完成', timeout=120_000)
         expect(page.get_by_role('button', name='同步百应变量')).to_be_enabled()
+
+        inspection_height = page.get_by_role('region', name='变量巡检').bounding_box()
+        if inspection_height is None or inspection_height['height'] > 100:
+            raise AssertionError(
+                f'Variable inspection panel is not compact: {inspection_height}'
+            )
 
         if not any(url.endswith(f'/api/v1/variable-sync-jobs/{job_id}') for url in status_requests):
             raise AssertionError('The page did not poll the real worker job status')
 
         page.screenshot(path=str(SCREENSHOT), full_page=True)
+        expect(toast).to_be_hidden(timeout=8_000)
         browser.close()
 
     if page_errors:
