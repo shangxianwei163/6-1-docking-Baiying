@@ -432,6 +432,9 @@ describe('external outbound task HTTP API', () => {
         idempotencyKey: 'mapping-failure-001',
       }),
     );
+    expect(
+      Object.getPrototypeOf(startExternalRequestLog.mock.calls[0]![0].query),
+    ).toBe(Object.prototype);
     expect(completeExternalRequestLog).toHaveBeenCalledWith(
       expect.objectContaining({
         sourceSystem: 'ERP',

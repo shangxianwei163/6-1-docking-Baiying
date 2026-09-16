@@ -211,7 +211,7 @@ export function createApp(dependencies: AppDependencies) {
         endpointLabel: descriptor.endpointLabel.slice(0, 300),
         method: context.req.method,
         path: context.req.path.slice(0, 1_000),
-        query: context.req.query(),
+        query: { ...context.req.query() },
         idempotencyKey:
           context.req.header('idempotency-key')?.trim().slice(0, 128) ?? null,
         requestHeaders: externalRequestHeaderSummary(context.req.raw.headers),

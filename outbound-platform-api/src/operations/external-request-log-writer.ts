@@ -55,9 +55,9 @@ export class PostgresExternalRequestLogWriter implements ExternalRequestLogWrite
         endpointLabel: input.endpointLabel,
         method: input.method,
         path: input.path,
-        query: input.query,
+        query: { ...input.query },
         idempotencyKey: input.idempotencyKey,
-        requestHeaders: input.requestHeaders,
+        requestHeaders: { ...input.requestHeaders },
         status: 'PENDING',
         startedAt: input.startedAt,
       })
