@@ -92,6 +92,10 @@ import type { PlatformCostDetailService } from '../billing/platform-cost-detail-
 import type { OperatorAuditService } from '../operations/audit-service.js';
 import type { OperationsOverviewService } from '../operations/overview-service.js';
 import type { IntegrationLogService } from '../operations/integration-log-service.js';
+import type {
+  ExternalRequestLogSource,
+  ExternalRequestLogWriter,
+} from '../operations/external-request-log-writer.js';
 import type { RecoveryOperationsService } from '../operations/recovery-service.js';
 import type { TaskControlService } from '../operations/task-control-service.js';
 import type { CallbackPreviewService } from '../operations/callback-preview-service.js';
@@ -104,7 +108,11 @@ import type { OperatorSessionService } from '../security/operator-session.js';
 import type { ReconciliationOperations } from '../reconciliation/postgres-repository.js';
 export { calculateBillingMinutes } from '../callback/schema.js';
 
-type AppVariables = { requestId: string };
+type AppVariables = {
+  requestId: string;
+  externalSourceSystem: ExternalRequestLogSource | undefined;
+  externalClientId: string | undefined;
+};
 const OPERATOR_SESSION_COOKIE = 'outbound_operator_session';
 
 export type AppDependencies = {
@@ -130,6 +138,7 @@ export type AppDependencies = {
   operatorAuditService?: OperatorAuditService;
   operationsOverviewService?: OperationsOverviewService;
   integrationLogService?: IntegrationLogService;
+  externalRequestLogWriter?: ExternalRequestLogWriter;
   recoveryOperationsService?: RecoveryOperationsService;
   taskControlService?: TaskControlService;
   callbackPreviewService?: CallbackPreviewService;
@@ -178,6 +187,83 @@ export function createApp(dependencies: AppDependencies) {
     context.set('requestId', requestId);
     context.header('X-Request-Id', requestId);
     await next();
+  });
+
+  app.use('*', async (context, next) => {
+    const writer = dependencies.externalRequestLogWriter;
+    const descriptor = describeExternalRequest(
+      context.req.method,
+      context.req.path,
+    );
+    if (!writer || !descriptor) {
+      await next();
+      return;
+    }
+
+    const startedAt = clock();
+    const requestBodyPromise = readExternalBodySnapshot(context.req.raw);
+    let logId: string | null = null;
+    try {
+      logId = await writer.start({
+        requestId: context.get('requestId'),
+        sourceSystem: descriptor.sourceSystem,
+        operationCode: descriptor.operationCode,
+        endpointLabel: descriptor.endpointLabel.slice(0, 300),
+        method: context.req.method,
+        path: context.req.path.slice(0, 1_000),
+        query: context.req.query(),
+        idempotencyKey:
+          context.req.header('idempotency-key')?.trim().slice(0, 128) ?? null,
+        requestHeaders: externalRequestHeaderSummary(context.req.raw.headers),
+        startedAt,
+      });
+    } catch (error) {
+      reportExternalLogFailure(
+        'Failed to start external API request log',
+        context.get('requestId'),
+        error,
+      );
+    }
+
+    await next();
+    if (!logId) return;
+
+    const finishedAt = clock();
+    const [requestBody, responseBody] = await Promise.all([
+      requestBodyPromise,
+      readExternalResponseSnapshot(context.res),
+    ]);
+    const parsedRequest = parseJsonValue(requestBody);
+    const parsedResponse = parseJsonValue(responseBody);
+    const responseError = externalResponseError(
+      context.res.status,
+      parsedResponse,
+    );
+    try {
+      await writer.complete({
+        id: logId,
+        sourceSystem:
+          context.get('externalSourceSystem') ??
+          inferExternalSource(parsedRequest) ??
+          descriptor.sourceSystem,
+        clientId: context.get('externalClientId') ?? null,
+        requestBody,
+        responseStatus: context.res.status,
+        responseBody,
+        responseSummary: externalResponseSummary(parsedResponse),
+        taskNo: externalTaskNo(context.req.path, parsedResponse),
+        errorCode: responseError.code,
+        errorMessage: responseError.message,
+        finishedAt,
+        durationMs: finishedAt.getTime() - startedAt.getTime(),
+      });
+    } catch (error) {
+      reportExternalLogFailure(
+        'Failed to complete external API request log',
+        context.get('requestId'),
+        error,
+      );
+    }
   });
 
   app.use('/api/v1/*', async (context, next) => {
@@ -1348,6 +1434,8 @@ export function createApp(dependencies: AppDependencies) {
       authenticator,
       context.req.raw,
     );
+    context.set('externalSourceSystem', principal.sourceSystem);
+    context.set('externalClientId', principal.clientId);
     const idempotencyKey = context.req.header('idempotency-key')?.trim();
     if (
       !idempotencyKey ||
@@ -1421,6 +1509,8 @@ export function createApp(dependencies: AppDependencies) {
       authenticator,
       context.req.raw,
     );
+    context.set('externalSourceSystem', principal.sourceSystem);
+    context.set('externalClientId', principal.clientId);
     const idempotencyKey = context.req.header('idempotency-key')?.trim();
     if (
       !idempotencyKey ||
@@ -1491,6 +1581,8 @@ export function createApp(dependencies: AppDependencies) {
       authenticator,
       context.req.raw,
     );
+    context.set('externalSourceSystem', principal.sourceSystem);
+    context.set('externalClientId', principal.clientId);
     const batchId = z.uuid().parse(context.req.param('batchId'));
     return context.json({
       code: 'OK',
@@ -1505,6 +1597,8 @@ export function createApp(dependencies: AppDependencies) {
       externalAuthenticatorDependency(dependencies),
       context.req.raw,
     );
+    context.set('externalSourceSystem', principal.sourceSystem);
+    context.set('externalClientId', principal.clientId);
     const query = z
       .object({
         company_code: z.string().trim().min(1).max(64),
@@ -1555,6 +1649,8 @@ export function createApp(dependencies: AppDependencies) {
       authenticator,
       context.req.raw,
     );
+    context.set('externalSourceSystem', principal.sourceSystem);
+    context.set('externalClientId', principal.clientId);
     const taskNo = z
       .string()
       .regex(/^PT-\d{8}-\d{5,}$/)
@@ -1574,6 +1670,8 @@ export function createApp(dependencies: AppDependencies) {
       authenticator,
       context.req.raw,
     );
+    context.set('externalSourceSystem', principal.sourceSystem);
+    context.set('externalClientId', principal.clientId);
     const taskNo = z
       .string()
       .regex(/^PT-\d{8}-\d{5,}$/)
@@ -1607,6 +1705,8 @@ export function createApp(dependencies: AppDependencies) {
         externalAuthenticatorDependency(dependencies),
         context.req.raw,
       );
+      context.set('externalSourceSystem', principal.sourceSystem);
+      context.set('externalClientId', principal.clientId);
       if (rawBody.byteLength > 0) {
         throw new ExternalApiFailure(
           'INVALID_REQUEST',
@@ -2061,6 +2161,279 @@ function externalCallChargeDependency(dependencies: AppDependencies) {
     );
   }
   return dependencies.externalCallChargeService;
+}
+
+const EXTERNAL_LOG_BODY_LIMIT_BYTES = 25 * 1024 * 1024;
+
+type ExternalRequestDescriptor = {
+  sourceSystem: ExternalRequestLogSource;
+  operationCode: string;
+  endpointLabel: string;
+};
+
+function describeExternalRequest(
+  method: string,
+  path: string,
+): ExternalRequestDescriptor | null {
+  const normalizedMethod = method.toUpperCase();
+  if (
+    normalizedMethod === 'POST' &&
+    (path === '/api/v1/callbacks/baiying' ||
+      path === '/api/v1/callbacks/baiying/call-instance')
+  ) {
+    return {
+      sourceSystem: 'BAIYING',
+      operationCode: 'BAIYING_CALLBACK_RECEIVE',
+      endpointLabel: `${normalizedMethod} ${path}`,
+    };
+  }
+  if (!path.startsWith('/openapi/')) return null;
+
+  const knownEndpoints: Array<{
+    method: string;
+    pattern: RegExp;
+    operationCode: string;
+    endpointLabel: string;
+  }> = [
+    {
+      method: 'POST',
+      pattern: /^\/openapi\/v2\/outbound\/tasks$/,
+      operationCode: 'CREATE_OUTBOUND_BATCH',
+      endpointLabel: 'POST /openapi/v2/outbound/tasks',
+    },
+    {
+      method: 'POST',
+      pattern: /^\/openapi\/v1\/outbound\/tasks$/,
+      operationCode: 'CREATE_OUTBOUND_TASK',
+      endpointLabel: 'POST /openapi/v1/outbound/tasks',
+    },
+    {
+      method: 'GET',
+      pattern: /^\/openapi\/v2\/outbound\/batches\/[^/]+$/,
+      operationCode: 'GET_OUTBOUND_BATCH',
+      endpointLabel: 'GET /openapi/v2/outbound/batches/{batchId}',
+    },
+    {
+      method: 'GET',
+      pattern: /^\/openapi\/v2\/billing\/call-charges$/,
+      operationCode: 'LIST_CALL_CHARGES',
+      endpointLabel: 'GET /openapi/v2/billing/call-charges',
+    },
+    {
+      method: 'GET',
+      pattern: /^\/openapi\/v1\/outbound\/tasks\/[^/]+\/calls$/,
+      operationCode: 'LIST_OUTBOUND_CALLS',
+      endpointLabel: 'GET /openapi/v1/outbound/tasks/{taskNo}/calls',
+    },
+    {
+      method: 'GET',
+      pattern: /^\/openapi\/v1\/outbound\/tasks\/[^/]+$/,
+      operationCode: 'GET_OUTBOUND_TASK',
+      endpointLabel: 'GET /openapi/v1/outbound/tasks/{taskNo}',
+    },
+    {
+      method: 'POST',
+      pattern: /^\/openapi\/v1\/outbound\/recordings\/[^/]+\/download-url$/,
+      operationCode: 'REISSUE_RECORDING_URL',
+      endpointLabel:
+        'POST /openapi/v1/outbound/recordings/{recordingId}/download-url',
+    },
+  ];
+  const matched = knownEndpoints.find(
+    (endpoint) =>
+      endpoint.method === normalizedMethod && endpoint.pattern.test(path),
+  );
+  return {
+    sourceSystem: 'UNKNOWN',
+    operationCode: matched?.operationCode ?? 'OPENAPI_REQUEST',
+    endpointLabel: matched?.endpointLabel ?? `${normalizedMethod} ${path}`,
+  };
+}
+
+function externalRequestHeaderSummary(headers: Headers) {
+  const allowed = [
+    'content-type',
+    'content-length',
+    'user-agent',
+    'x-request-id',
+    'x-real-ip',
+    'x-forwarded-for',
+  ];
+  return Object.fromEntries(
+    allowed.flatMap((name) => {
+      const value = headers.get(name)?.trim();
+      return value ? [[name, value.slice(0, 1_000)]] : [];
+    }),
+  );
+}
+
+async function readExternalBodySnapshot(request: Request) {
+  if (request.method === 'GET' || request.method === 'HEAD') return null;
+  const declaredLength = Number(request.headers.get('content-length') ?? '0');
+  if (
+    Number.isFinite(declaredLength) &&
+    declaredLength > EXTERNAL_LOG_BODY_LIMIT_BYTES
+  ) {
+    return null;
+  }
+  try {
+    return await readTextStreamWithLimit(
+      request.clone().body,
+      EXTERNAL_LOG_BODY_LIMIT_BYTES,
+    );
+  } catch {
+    return null;
+  }
+}
+
+async function readExternalResponseSnapshot(response: Response) {
+  const declaredLength = Number(response.headers.get('content-length') ?? '0');
+  if (
+    Number.isFinite(declaredLength) &&
+    declaredLength > EXTERNAL_LOG_BODY_LIMIT_BYTES
+  ) {
+    return null;
+  }
+  try {
+    return await readTextStreamWithLimit(
+      response.clone().body,
+      EXTERNAL_LOG_BODY_LIMIT_BYTES,
+    );
+  } catch {
+    return null;
+  }
+}
+
+async function readTextStreamWithLimit(
+  stream: ReadableStream<Uint8Array> | null,
+  maxBytes: number,
+): Promise<string | null> {
+  if (!stream) return null;
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    byteLength += value.byteLength;
+    if (byteLength > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString(
+    'utf8',
+  );
+}
+
+function parseJsonValue(value: string | null): unknown {
+  if (value === null || value === '') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function inferExternalSource(value: unknown): ExternalRequestLogSource | null {
+  if (!isRecord(value)) return null;
+  if (value.sourceSystem === 'ERP' || value.sourceSystem === 'CRM') {
+    return value.sourceSystem;
+  }
+  if (value.source === 0) return 'ERP';
+  if (value.source === 1) return 'CRM';
+  return null;
+}
+
+function externalResponseError(
+  status: number,
+  response: unknown,
+): { code: string | null; message: string | null } {
+  if (status >= 200 && status < 300) return { code: null, message: null };
+  if (isRecord(response)) {
+    const nested = isRecord(response.error) ? response.error : null;
+    const code = stringValue(response.code) ?? stringValue(nested?.code);
+    const message =
+      stringValue(response.message) ?? stringValue(nested?.message);
+    return {
+      code: code ?? `HTTP_${status}`,
+      message: message ?? `外部接口返回 HTTP ${status}`,
+    };
+  }
+  return { code: `HTTP_${status}`, message: `外部接口返回 HTTP ${status}` };
+}
+
+function externalResponseSummary(
+  response: unknown,
+): Record<string, unknown> | null {
+  if (!isRecord(response)) {
+    return response === null ? null : { bodyType: typeof response };
+  }
+  const nestedError = isRecord(response.error) ? response.error : null;
+  const data = isRecord(response.data) ? response.data : null;
+  const details = isRecord(response.details) ? response.details : null;
+  return compactRecord({
+    code: response.code ?? nestedError?.code,
+    message: response.message ?? nestedError?.message,
+    requestId:
+      response.requestId ?? response.request_id ?? nestedError?.requestId,
+    batchId: data?.batch_id,
+    taskId: data?.taskId ?? data?.task_id,
+    taskNo: data?.taskNo ?? data?.task_no,
+    executionStatus: data?.executionStatus ?? data?.execution_status,
+    phoneCount: data?.phoneCount ?? data?.phone_count,
+    taskCount: data?.taskCount ?? data?.task_count,
+    errorCount: details?.errorCount,
+    truncated: details?.truncated,
+  });
+}
+
+function externalTaskNo(path: string, response: unknown): string | null {
+  const pathMatch = /\/(PT-\d{8}-\d{5,})(?:\/|$)/.exec(path);
+  if (pathMatch?.[1]) return pathMatch[1];
+  if (!isRecord(response) || !isRecord(response.data)) return null;
+  const direct = response.data.taskNo ?? response.data.task_no;
+  if (typeof direct === 'string' && /^PT-\d{8}-\d{5,}$/.test(direct)) {
+    return direct;
+  }
+  const tasks = response.data.tasks;
+  if (!Array.isArray(tasks)) return null;
+  const first = tasks.find(
+    (task) => isRecord(task) && typeof task.task_no === 'string',
+  );
+  return isRecord(first) && /^PT-\d{8}-\d{5,}$/.test(String(first.task_no))
+    ? String(first.task_no)
+    : null;
+}
+
+function compactRecord(value: Record<string, unknown>) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, child]) => child !== undefined),
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function stringValue(value: unknown) {
+  return typeof value === 'string' && value ? value : null;
+}
+
+function reportExternalLogFailure(
+  message: string,
+  requestId: string,
+  error: unknown,
+) {
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      message,
+      requestId,
+      error: error instanceof Error ? error.message : String(error),
+    }),
+  );
 }
 
 function authenticateExternal(

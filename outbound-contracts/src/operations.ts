@@ -758,7 +758,12 @@ export const operatorOperationsOverviewSchema = z.object({
   recentTasks: z.array(operatorOverviewRecentTaskSchema).max(8),
 });
 
-export const integrationLogSystemSchema = z.enum(['ERP', 'CRM', 'BAIYING']);
+export const integrationLogSystemSchema = z.enum([
+  'ERP',
+  'CRM',
+  'BAIYING',
+  'UNKNOWN',
+]);
 export const integrationLogDirectionSchema = z.enum(['INBOUND', 'OUTBOUND']);
 export const integrationLogStatusSchema = z.enum([
   'PENDING',
@@ -767,6 +772,7 @@ export const integrationLogStatusSchema = z.enum([
   'UNKNOWN',
 ]);
 export const integrationLogCategorySchema = z.enum([
+  'API_REQUEST',
   'TASK_INTAKE',
   'PROVIDER_OPERATION',
   'CALLBACK',

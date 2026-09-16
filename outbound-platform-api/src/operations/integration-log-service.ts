@@ -18,6 +18,7 @@ import {
   callbackInbox,
   deliveryAttempts,
   deliveryEvents,
+  externalApiRequestLogs,
   idempotencyRecords,
   intakeBatches,
   platformTasks,
@@ -59,7 +60,15 @@ type IntegrationPageRow = {
 };
 
 const operationLabels: Record<string, string> = {
+  CREATE_OUTBOUND_BATCH: '接收新增外呼批次',
   CREATE_OUTBOUND_TASK: '受理外呼任务',
+  GET_OUTBOUND_BATCH: '查询外呼批次',
+  GET_OUTBOUND_TASK: '查询外呼任务',
+  LIST_OUTBOUND_CALLS: '查询外呼明细',
+  LIST_CALL_CHARGES: '查询通话扣费',
+  REISSUE_RECORDING_URL: '重新签发录音地址',
+  BAIYING_CALLBACK_RECEIVE: '接收百应回调',
+  OPENAPI_REQUEST: '外部接口访问',
   CREATE: '创建百应任务',
   IMPORT: '导入外呼名单',
   START: '启动百应任务',
@@ -96,6 +105,36 @@ export class PostgresIntegrationLogService implements IntegrationLogService {
 
     const rows = await this.db.execute<IntegrationPageRow>(sql`
       with integration_logs as (
+        select
+          'external-request:' || request.id::text as id,
+          request.request_id as "requestId",
+          request.source_system::text as "sourceSystem",
+          'INBOUND'::text as direction,
+          'API_REQUEST'::text as category,
+          request.operation_code as "operationCode",
+          request.endpoint_label as "endpointLabel",
+          request.task_no as "taskNo",
+          request.status::text as status,
+          request.response_status as "responseStatus",
+          request.duration_ms as "durationMs",
+          1::int as "attemptNo",
+          request.error_code as "errorCode",
+          request.error_message as "errorMessage",
+          jsonb_build_object(
+            'method', request.method,
+            'path', request.path,
+            'query', request.query_json,
+            'clientId', request.client_id,
+            'idempotencyKey', request.idempotency_key,
+            'headers', request.request_headers_json,
+            'requestBodySha256', request.request_body_sha256
+          ) as "requestDetail",
+          coalesce(request.response_summary_json, '{}'::jsonb) as "responseDetail",
+          request.started_at as "occurredAt"
+        from external_api_request_log request
+
+        union all
+
         select
           'task-intake:' || record.source_system || ':' || record.client_id || ':' || record.idempotency_key as id,
           record.request_id as "requestId",
@@ -230,7 +269,7 @@ export class PostgresIntegrationLogService implements IntegrationLogService {
           and (${direction}::text is null or direction = ${direction})
           and (
             ${keywordPattern}::text is null
-            or concat_ws(' ', "requestId", "operationCode", "endpointLabel", "taskNo") ilike ${keywordPattern}
+            or concat_ws(' ', "requestId", "operationCode", "endpointLabel", "taskNo", "errorCode", "errorMessage") ilike ${keywordPattern}
           )
       ), filtered as (
         select *
@@ -277,6 +316,9 @@ export class PostgresIntegrationLogService implements IntegrationLogService {
   }
 
   async getLogDetail(id: string): Promise<OperatorIntegrationLogDetail | null> {
+    if (id.startsWith('external-request:')) {
+      return this.getExternalRequestDetail(id);
+    }
     if (id.startsWith('callback:')) {
       return this.getCallbackDetail(id);
     }
@@ -290,6 +332,53 @@ export class PostgresIntegrationLogService implements IntegrationLogService {
       return this.getTaskIntakeDetail(id);
     }
     return null;
+  }
+
+  private async getExternalRequestDetail(
+    id: string,
+  ): Promise<OperatorIntegrationLogDetail | null> {
+    const requestLogId = uuidOrNull(id.slice('external-request:'.length));
+    if (!requestLogId) return null;
+    const [row] = await this.db
+      .select()
+      .from(externalApiRequestLogs)
+      .where(eq(externalApiRequestLogs.id, requestLogId))
+      .limit(1);
+    if (!row) return null;
+
+    const requestBody = this.decryptStoredBody(row.requestBodyCiphertext);
+    const responseBody = this.decryptStoredBody(row.responseBodyCiphertext);
+    const failedSnapshots = [
+      requestBody.failed ? '请求正文' : null,
+      responseBody.failed ? '响应正文' : null,
+    ].filter(Boolean);
+    return operatorIntegrationLogDetailSchema.parse({
+      id,
+      detailLevel: failedSnapshots.length ? 'STORED_SNAPSHOT' : 'FULL',
+      request: {
+        method: row.method,
+        path: row.path,
+        query: row.query,
+        headers: row.requestHeaders,
+        clientId: row.clientId,
+        idempotencyKey: row.idempotencyKey,
+        bodySha256: row.requestBodySha256,
+        body: requestBody.value,
+      },
+      response: {
+        httpStatus: row.responseStatus,
+        body: responseBody.failed ? row.responseSummary : responseBody.value,
+        status: row.status,
+        errorCode: row.errorCode,
+        errorMessage: row.errorMessage,
+        durationMs: row.durationMs,
+        startedAt: row.startedAt.toISOString(),
+        finishedAt: row.finishedAt?.toISOString() ?? null,
+      },
+      note: failedSnapshots.length
+        ? `${failedSnapshots.join('、')}解密失败或当前未配置解密器，已显示可用摘要。`
+        : null,
+    });
   }
 
   private async getCallbackDetail(
@@ -495,6 +584,22 @@ export class PostgresIntegrationLogService implements IntegrationLogService {
       return parseJsonText(this.protector.decryptUtf8(ciphertext));
     } catch {
       return null;
+    }
+  }
+
+  private decryptStoredBody(ciphertext: string | null): {
+    value: unknown;
+    failed: boolean;
+  } {
+    if (!ciphertext) return { value: null, failed: false };
+    if (!this.protector) return { value: null, failed: true };
+    try {
+      return {
+        value: parseJsonText(this.protector.decryptUtf8(ciphertext)),
+        failed: false,
+      };
+    } catch {
+      return { value: null, failed: true };
     }
   }
 

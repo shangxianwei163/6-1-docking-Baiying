@@ -26,6 +26,7 @@ import { PostgresPlatformCostDetailService } from './billing/platform-cost-detai
 import { PostgresOperatorAuditService } from './operations/audit-service.js';
 import { PostgresOperationsOverviewService } from './operations/overview-service.js';
 import { PostgresIntegrationLogService } from './operations/integration-log-service.js';
+import { PostgresExternalRequestLogWriter } from './operations/external-request-log-writer.js';
 import { PostgresRecoveryOperationsService } from './operations/recovery-service.js';
 import {
   BaiyingTaskCommandExecutor,
@@ -131,6 +132,10 @@ const integrationLogService = new PostgresIntegrationLogService(
   database.db,
   dataProtector,
 );
+const externalRequestLogWriter = new PostgresExternalRequestLogWriter(
+  database.db,
+  dataProtector,
+);
 const recoveryOperationsService = new PostgresRecoveryOperationsService(
   database.db,
 );
@@ -220,6 +225,7 @@ const app = createApp({
   operatorAuditService,
   operationsOverviewService,
   integrationLogService,
+  externalRequestLogWriter,
   recoveryOperationsService,
   reconciliationOperations,
   taskControlService,

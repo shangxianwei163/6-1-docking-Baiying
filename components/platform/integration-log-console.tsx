@@ -68,6 +68,7 @@ const statusMeta: Record<
 };
 
 const categoryLabels: Record<OperatorIntegrationLog['category'], string> = {
+  API_REQUEST: '接口访问',
   TASK_INTAKE: '任务受理',
   PROVIDER_OPERATION: '百应编排',
   CALLBACK: '百应回调',
@@ -165,7 +166,7 @@ export function IntegrationLogConsole() {
           <h2>接口日志</h2>
           <p>
             统一追踪任务受理、百应编排、供应商回调和 ERP/CRM
-            投递；登录管理员可按需查看完整故障上下文。
+            投递；所有外部接口访问无论成功或失败都会留痕，登录管理员可按需查看完整故障上下文。
           </p>
         </div>
         <button
@@ -240,6 +241,7 @@ export function IntegrationLogConsole() {
               { value: 'ERP', label: 'ERP' },
               { value: 'CRM', label: 'CRM' },
               { value: 'BAIYING', label: '百应' },
+              { value: 'UNKNOWN', label: '未识别来源' },
             ]}
             onValueChange={(value) => {
               setSourceSystem(value as IntegrationLogSystem | 'ALL');

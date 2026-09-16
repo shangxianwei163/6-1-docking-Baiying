@@ -620,6 +620,73 @@ export const idempotencyRecords = pgTable(
   ],
 );
 
+export const externalApiRequestLogs = pgTable(
+  'external_api_request_log',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    requestId: varchar('request_id', { length: 128 }).notNull(),
+    sourceSystem: varchar('source_system', { length: 32 })
+      .notNull()
+      .default('UNKNOWN'),
+    operationCode: varchar('operation_code', { length: 256 }).notNull(),
+    endpointLabel: varchar('endpoint_label', { length: 300 }).notNull(),
+    method: varchar('method', { length: 16 }).notNull(),
+    path: varchar('path', { length: 1_000 }).notNull(),
+    query: jsonb('query_json')
+      .$type<Record<string, string>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    clientId: varchar('client_id', { length: 128 }),
+    idempotencyKey: varchar('idempotency_key', { length: 128 }),
+    requestHeaders: jsonb('request_headers_json')
+      .$type<Record<string, string>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    requestBodySha256: char('request_body_sha256', { length: 64 }),
+    requestBodyCiphertext: text('request_body_ciphertext'),
+    responseStatus: integer('response_status'),
+    responseBodyCiphertext: text('response_body_ciphertext'),
+    responseSummary: jsonb('response_summary_json').$type<
+      Record<string, unknown>
+    >(),
+    taskNo: varchar('task_no', { length: 32 }),
+    status: varchar('status', { length: 32 }).notNull().default('PENDING'),
+    errorCode: varchar('error_code', { length: 256 }),
+    errorMessage: text('error_message'),
+    durationMs: integer('duration_ms'),
+    startedAt: timestamp('started_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+  },
+  (table) => [
+    index('external_api_request_started_idx').on(table.startedAt),
+    index('external_api_request_status_idx').on(table.status, table.startedAt),
+    index('external_api_request_request_id_idx').on(table.requestId),
+    index('external_api_request_idempotency_idx').on(
+      table.sourceSystem,
+      table.clientId,
+      table.idempotencyKey,
+    ),
+    check(
+      'external_api_request_source_ck',
+      sql`${table.sourceSystem} IN ('ERP', 'CRM', 'BAIYING', 'UNKNOWN')`,
+    ),
+    check(
+      'external_api_request_status_ck',
+      sql`${table.status} IN ('PENDING', 'SUCCEEDED', 'FAILED', 'UNKNOWN')`,
+    ),
+    check(
+      'external_api_request_response_status_ck',
+      sql`${table.responseStatus} IS NULL OR ${table.responseStatus} BETWEEN 100 AND 599`,
+    ),
+    check(
+      'external_api_request_duration_ck',
+      sql`${table.durationMs} IS NULL OR ${table.durationMs} >= 0`,
+    ),
+  ],
+);
+
 // Reserved for high-volume source identifiers without JavaScript bigint coercion.
 export const externalSequence = pgTable('external_sequence', {
   name: varchar('name', { length: 64 }).primaryKey(),

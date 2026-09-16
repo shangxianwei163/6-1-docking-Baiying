@@ -59,6 +59,10 @@ const validV2Request = {
 };
 
 function setup() {
+  const startExternalRequestLog = vi.fn(
+    async () => '9ad1229a-7586-4ff5-ac85-1207ba2f7ba2',
+  );
+  const completeExternalRequestLog = vi.fn(async () => undefined);
   const authenticate = vi.fn(async (_input: AuthenticationInput) => principal);
   const listCallCharges = vi.fn(async () => ({
     company_code: '5903679116',
@@ -141,9 +145,21 @@ function setup() {
     externalRequestAuthenticator: authenticator,
     outboundTaskService: taskService,
     externalCallChargeService: { listCallCharges },
+    externalRequestLogWriter: {
+      start: startExternalRequestLog,
+      complete: completeExternalRequestLog,
+    },
     createId: () => 'request-001',
   });
-  return { app, authenticate, accept, acceptV2, listCallCharges };
+  return {
+    app,
+    authenticate,
+    accept,
+    acceptV2,
+    listCallCharges,
+    startExternalRequestLog,
+    completeExternalRequestLog,
+  };
 }
 
 describe('external outbound task HTTP API', () => {
@@ -366,6 +382,70 @@ describe('external outbound task HTTP API', () => {
         reservedAmount: '9.600000',
       },
     });
+  });
+
+  it('records a failed v2 mapping precheck independently from the task transaction', async () => {
+    const {
+      app,
+      acceptV2,
+      startExternalRequestLog,
+      completeExternalRequestLog,
+    } = setup();
+    acceptV2.mockRejectedValueOnce(
+      new ExternalApiFailure(
+        'MAPPING_VALUE_INVALID',
+        '客户字段无法转换为话术变量',
+        422,
+        {
+          issues: [
+            {
+              externalCustomerId: '11111111-1111-4111-8111-111111111101',
+              variable: '客户称呼',
+              reason: '客户称呼: 来源字段 customer_name 为空',
+            },
+          ],
+          errorCount: 1,
+          truncated: false,
+        },
+      ),
+    );
+    const rawBody = JSON.stringify(validV2Request);
+    const response = await app.request('/openapi/v2/outbound/tasks', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-access-token': 'erp-local-access-token',
+        'idempotency-key': 'mapping-failure-001',
+      },
+      body: rawBody,
+    });
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'MAPPING_VALUE_INVALID',
+      details: { errorCount: 1 },
+    });
+    expect(startExternalRequestLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceSystem: 'UNKNOWN',
+        operationCode: 'CREATE_OUTBOUND_BATCH',
+        idempotencyKey: 'mapping-failure-001',
+      }),
+    );
+    expect(completeExternalRequestLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceSystem: 'ERP',
+        clientId: 'erp-local-01',
+        requestBody: rawBody,
+        responseStatus: 422,
+        errorCode: 'MAPPING_VALUE_INVALID',
+        errorMessage: '客户字段无法转换为话术变量',
+        responseSummary: expect.objectContaining({
+          code: 'MAPPING_VALUE_INVALID',
+          errorCount: 1,
+        }),
+      }),
+    );
   });
 
   it('does not leak unexpected failures or switch to the admin error envelope', async () => {

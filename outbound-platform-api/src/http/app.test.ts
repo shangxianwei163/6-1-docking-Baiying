@@ -314,6 +314,45 @@ describe('mapping API', () => {
     });
   });
 
+  it('records a Baiying callback rejected before it reaches the inbox', async () => {
+    const ingest = vi.fn();
+    const start = vi.fn(async () => fixedId);
+    const complete = vi.fn(async () => undefined);
+    const rawBody = JSON.stringify({ code: 200, data: {} });
+    const app = createApp({
+      mappingRepository: createRepository().repository,
+      consoleOrigin: 'http://localhost:4173',
+      workerSharedSecret: 'a-worker-secret-longer-than-24-characters',
+      createId: () => fixedId,
+      baiyingCallbackIngress: { ingest },
+      externalRequestLogWriter: { start, complete },
+    });
+
+    const response = await app.request('/api/v1/callbacks/baiying', {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: rawBody,
+    });
+
+    expect(response.status).toBe(415);
+    expect(ingest).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceSystem: 'BAIYING',
+        operationCode: 'BAIYING_CALLBACK_RECEIVE',
+      }),
+    );
+    expect(complete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceSystem: 'BAIYING',
+        requestBody: rawBody,
+        responseStatus: 415,
+        errorCode: 'UNSUPPORTED_MEDIA_TYPE',
+        errorMessage: '百应回调必须使用 application/json',
+      }),
+    );
+  });
+
   it('saves a direct ERP/CRM draft', async () => {
     const { repository, saveDraft } = createRepository();
     const app = createApp({
