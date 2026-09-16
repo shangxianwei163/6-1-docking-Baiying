@@ -3689,6 +3689,11 @@
   overflow: auto;
   overscroll-behavior: contain;
 }
+.mapping-tab-panel .pending-list,
+.mapping-tab-panel .version-list {
+  align-content: start;
+  grid-auto-rows: max-content;
+}
 .mapping-tab-panel .table-wrap thead th {
   position: sticky;
   z-index: 2;

@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
@@ -18,7 +19,7 @@ def main() -> None:
             executable_path=str(CHROME) if CHROME.exists() else None,
             headless=True,
         )
-        page = browser.new_page(viewport={'width': 1302, 'height': 964})
+        page = browser.new_page(viewport={'width': 1327, 'height': 964})
         page.on('pageerror', lambda error: page_errors.append(str(error)))
         page.on(
             'request',
@@ -34,6 +35,36 @@ def main() -> None:
             setup.click()
         nav.get_by_role('button', name='字段映射', exact=True).click()
         expect(page.get_by_role('heading', name='字段映射中心')).to_be_visible()
+
+        pending_list = page.locator('.pending-list')
+        if pending_list.count():
+            pending_style = pending_list.evaluate(
+                "element => ({ alignContent: getComputedStyle(element).alignContent, gridAutoRows: getComputedStyle(element).gridAutoRows })"
+            )
+            if pending_style != {'alignContent': 'start', 'gridAutoRows': 'max-content'}:
+                raise AssertionError(f'Pending list rows may stretch: {pending_style}')
+            first_pending = pending_list.locator('.pending-item').first.bounding_box()
+            if first_pending is None or first_pending['height'] > 120:
+                raise AssertionError(f'Pending row is not compact: {first_pending}')
+            pending_box = pending_list.bounding_box()
+            if pending_box is None or first_pending['y'] - pending_box['y'] > 2:
+                raise AssertionError('Pending rows do not start at the top of the list')
+
+        page.get_by_role('tab', name=re.compile('版本记录')).click()
+        first_version = page.locator('.version-list article').first
+        expect(first_version).to_be_visible()
+        version_style = page.locator('.version-list').evaluate(
+            "element => ({ alignContent: getComputedStyle(element).alignContent, gridAutoRows: getComputedStyle(element).gridAutoRows })"
+        )
+        if version_style != {'alignContent': 'start', 'gridAutoRows': 'max-content'}:
+            raise AssertionError(f'Version list rows may stretch: {version_style}')
+        version_box = first_version.bounding_box()
+        if version_box is None or version_box['height'] > 120:
+            raise AssertionError(f'Version row is not compact: {version_box}')
+        version_list_box = page.locator('.version-list').bounding_box()
+        if version_list_box is None or version_box['y'] - version_list_box['y'] > 2:
+            raise AssertionError('Version rows do not start at the top of the list')
+        page.get_by_role('tab', name=re.compile('待处理变量')).click()
 
         with page.expect_response(
             lambda response: response.request.method == 'POST'
