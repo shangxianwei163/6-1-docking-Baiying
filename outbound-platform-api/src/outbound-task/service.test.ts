@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ExternalApiFailure } from '../openapi/errors.js';
+import { transformMappedValue } from '../mapping/transform.js';
 import {
   aggregateBatchStatus,
+  buildV2MappingSourceRecord,
   buildPlatformTaskName,
   describeBaiyingJobStatus,
   displayStatusFor,
@@ -11,6 +13,52 @@ import {
 } from './service.js';
 
 describe('outbound task helpers', () => {
+  it('keeps the reserved v2 customer_name field available to mapping rules', () => {
+    const sourceRecord = buildV2MappingSourceRecord(
+      { bbage: '260天' },
+      '詹绍梅',
+    );
+
+    expect(sourceRecord).toEqual({ bbage: '260天', customer_name: '詹绍梅' });
+    expect(
+      transformMappedValue({
+        rule: {
+          id: 'customer-name-rule',
+          baiyingVariableName: '客户称呼',
+          erpField: 'customer_name',
+          crmField: 'customer_salutation',
+          transformConfig: { type: 'TEXT', mode: 'TRIM' },
+          emptyPolicy: 'BLOCK',
+          defaultValue: null,
+          status: 'PUBLISHED',
+          version: 4,
+        },
+        sourceSystem: 'ERP',
+        sourceRecord,
+      }),
+    ).toBe('詹绍梅');
+  });
+
+  it('keeps the existing empty-value policy for a missing customer_name', () => {
+    expect(() =>
+      transformMappedValue({
+        rule: {
+          id: 'customer-name-rule',
+          baiyingVariableName: '客户称呼',
+          erpField: 'customer_name',
+          crmField: 'customer_salutation',
+          transformConfig: { type: 'TEXT', mode: 'TRIM' },
+          emptyPolicy: 'BLOCK',
+          defaultValue: null,
+          status: 'PUBLISHED',
+          version: 4,
+        },
+        sourceSystem: 'ERP',
+        sourceRecord: buildV2MappingSourceRecord({}, null),
+      }),
+    ).toThrow('客户称呼: 来源字段 customer_name 为空');
+  });
+
   it('persists a non-sensitive operations metric when v2 category matching is ambiguous', async () => {
     const failure = new ExternalApiFailure(
       'DATA_CATEGORY_AMBIGUOUS',

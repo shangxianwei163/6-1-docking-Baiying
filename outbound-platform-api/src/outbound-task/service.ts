@@ -1444,7 +1444,10 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
           ...(customer.customerName ? { name: customer.customerName } : {}),
           phone: customer.phone,
           dataCategoryId: customer.category.externalId,
-          fields: customer.variables,
+          fields: buildV2MappingSourceRecord(
+            customer.variables,
+            customer.customerName,
+          ),
         })),
       };
       const configuration = await this.precheck(
@@ -1998,6 +2001,13 @@ function normalizeCategoryPart(value: unknown): string {
     return '';
   }
   return String(value).normalize('NFKC').trim();
+}
+
+export function buildV2MappingSourceRecord(
+  variables: Record<string, string | number | boolean | null>,
+  customerName: string | null,
+): Record<string, string | number | boolean | null> {
+  return { ...variables, customer_name: customerName };
 }
 
 function addDays(value: Date, days: number): Date {
