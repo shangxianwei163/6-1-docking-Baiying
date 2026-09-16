@@ -8,6 +8,7 @@ import type {
 } from '../openapi/authenticator.js';
 import { ExternalApiFailure } from '../openapi/errors.js';
 import { rawBodySha256, stableJsonSha256 } from '../openapi/request-hash.js';
+import type { ExternalRequestLogStartInput } from '../operations/external-request-log-writer.js';
 import type { OutboundTaskService } from '../outbound-task/service.js';
 import { createApp } from './app.js';
 
@@ -60,7 +61,8 @@ const validV2Request = {
 
 function setup() {
   const startExternalRequestLog = vi.fn(
-    async () => '9ad1229a-7586-4ff5-ac85-1207ba2f7ba2',
+    async (_input: ExternalRequestLogStartInput) =>
+      '9ad1229a-7586-4ff5-ac85-1207ba2f7ba2',
   );
   const completeExternalRequestLog = vi.fn(async () => undefined);
   const authenticate = vi.fn(async (_input: AuthenticationInput) => principal);
