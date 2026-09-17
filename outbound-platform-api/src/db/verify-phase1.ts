@@ -8,6 +8,7 @@ import { PostgresConfigurationRepository } from '../configuration/postgres-repos
 import { readConfig } from '../config.js';
 import { PostgresOutboxRepository } from '../outbox/postgres-repository.js';
 import { PostgresScriptRepository } from '../script/postgres-repository.js';
+import { ScriptBindingConflictError } from '../script/repository.js';
 import { createDatabase, type Database } from './client.js';
 import {
   accountLedger,
@@ -41,9 +42,12 @@ type Fixture = {
   businessCode: string;
   mcCode: string;
   robotDefId: string;
+  replacementRobotDefId: string;
+  finalRobotDefId: string;
   userPhoneId: string;
   sourceCategoryId: string;
-  requestIds: [string, string];
+  secondarySourceCategoryId: string;
+  requestIds: [string, string, string, string, string];
   outboxId: string;
 };
 
@@ -206,9 +210,18 @@ function makeFixture(): Fixture {
     businessCode: `VERIFY-${suffix}`,
     mcCode: `MC-VERIFY-${suffix}`,
     robotDefId: `ROBOT-VERIFY-${suffix}`,
+    replacementRobotDefId: `ROBOT-REPLACE-${suffix}`,
+    finalRobotDefId: `ROBOT-FINAL-${suffix}`,
     userPhoneId: `LINE-VERIFY-${suffix}`,
     sourceCategoryId: `CATEGORY-VERIFY-${suffix}`,
-    requestIds: [randomUUID(), randomUUID()],
+    secondarySourceCategoryId: `CATEGORY-KEEP-${suffix}`,
+    requestIds: [
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+    ],
     outboxId: randomUUID(),
   };
 }
@@ -288,13 +301,22 @@ async function insertFixture(db: Database, fixture: Fixture): Promise<void> {
       studioName: '阶段 1 验证影楼',
       updatedBy: 'phase1-verifier',
     });
-    await tx.insert(sourceDataCategories).values({
-      sourceSystem: 'ERP',
-      externalId: fixture.sourceCategoryId,
-      name: '阶段 1 验证分类',
-      categoryPath: '验证/阶段 1',
-      active: true,
-    });
+    await tx.insert(sourceDataCategories).values([
+      {
+        sourceSystem: 'ERP',
+        externalId: fixture.sourceCategoryId,
+        name: '阶段 1 验证分类',
+        categoryPath: '验证/阶段 1',
+        active: true,
+      },
+      {
+        sourceSystem: 'ERP',
+        externalId: fixture.secondarySourceCategoryId,
+        name: '阶段 1 保留分类',
+        categoryPath: '验证/保留分类',
+        active: true,
+      },
+    ]);
     await tx.insert(platformTasks).values(
       fixture.taskIds.map((taskId, index) => ({
         id: taskId,
@@ -360,6 +382,10 @@ async function verifyScriptDualWrite(
         sourceCategoryId: fixture.sourceCategoryId,
         categoryPath: '客户端提交的非权威路径',
       },
+      {
+        sourceCategoryId: fixture.secondarySourceCategoryId,
+        categoryPath: '客户端提交的非权威保留路径',
+      },
     ],
     studioId: fixture.businessCode,
     studioName: '客户端提交的非权威影楼名',
@@ -390,8 +416,106 @@ async function verifyScriptDualWrite(
     .select()
     .from(scriptCategoryBindings)
     .where(eq(scriptCategoryBindings.studioId, fixture.studioId));
-  assert.equal(categories.filter((category) => category.active).length, 1);
-  assert.equal(categories.filter((category) => !category.active).length, 1);
+  assert.equal(categories.filter((category) => category.active).length, 2);
+  assert.equal(categories.filter((category) => !category.active).length, 2);
+
+  const replacementInput = {
+    ...input,
+    robotDefId: fixture.replacementRobotDefId,
+    categories: [input.categories[0]!],
+  };
+  await assert.rejects(
+    repository.saveBinding(
+      replacementInput,
+      'phase1-verifier',
+      fixture.requestIds[2],
+    ),
+    ScriptBindingConflictError,
+    '未确认换绑时必须拒绝占用中的分类',
+  );
+  await repository.saveBinding(
+    { ...replacementInput, replaceConflicts: true },
+    'phase1-verifier',
+    fixture.requestIds[3],
+  );
+  const currentBindings = await repository.listBindings([
+    fixture.robotDefId,
+    fixture.replacementRobotDefId,
+  ]);
+  const originalCurrent = currentBindings.find(
+    (binding) => binding.robotDefId === fixture.robotDefId,
+  );
+  const replacementCurrent = currentBindings.find(
+    (binding) => binding.robotDefId === fixture.replacementRobotDefId,
+  );
+  assert.deepEqual(
+    originalCurrent?.categories.map((category) => category.sourceCategoryId),
+    [fixture.secondarySourceCategoryId],
+    '换绑后原话术必须保留未被替换的分类',
+  );
+  assert.deepEqual(
+    replacementCurrent?.categories.map((category) => category.sourceCategoryId),
+    [fixture.sourceCategoryId],
+    '换绑后的分类必须归属新话术',
+  );
+  const reboundCategories = await db
+    .select({
+      robotDefId: scriptBindings.robotDefId,
+      active: scriptCategoryBindings.active,
+    })
+    .from(scriptCategoryBindings)
+    .innerJoin(
+      scriptBindings,
+      eq(scriptBindings.id, scriptCategoryBindings.scriptBindingId),
+    )
+    .where(eq(scriptCategoryBindings.studioId, fixture.studioId));
+  assert.equal(
+    reboundCategories.filter(
+      (category) =>
+        category.active &&
+        category.robotDefId === fixture.replacementRobotDefId,
+    ).length,
+    1,
+    '确认换绑后分类必须只在新话术上生效',
+  );
+  assert.equal(
+    reboundCategories.filter(
+      (category) =>
+        category.active && category.robotDefId === fixture.robotDefId,
+    ).length,
+    1,
+    '确认换绑后原话术仅保留未被替换的分类',
+  );
+
+  await repository.saveBinding(
+    {
+      ...input,
+      robotDefId: fixture.finalRobotDefId,
+      categories: [input.categories[1]!],
+      replaceConflicts: true,
+    },
+    'phase1-verifier',
+    fixture.requestIds[4],
+  );
+  const afterFullDisplacement = await repository.listBindings([
+    fixture.robotDefId,
+    fixture.replacementRobotDefId,
+    fixture.finalRobotDefId,
+  ]);
+  assert.equal(
+    afterFullDisplacement.some(
+      (binding) => binding.robotDefId === fixture.robotDefId,
+    ),
+    false,
+    '原话术全部分类均被换绑后应解除当前业务绑定',
+  );
+  assert.deepEqual(
+    afterFullDisplacement
+      .find((binding) => binding.robotDefId === fixture.finalRobotDefId)
+      ?.categories.map((category) => category.sourceCategoryId),
+    [fixture.secondarySourceCategoryId],
+    '原话术最后一个分类换绑后必须归属最终话术',
+  );
 }
 
 async function verifyOutboxClaimAndDeadLetter(
@@ -494,7 +618,13 @@ async function cleanFixture(db: Database, fixture: Fixture): Promise<void> {
       .where(eq(scriptBindings.studioId, fixture.studioId));
     await tx
       .delete(baiyingRobotBindings)
-      .where(eq(baiyingRobotBindings.robotDefId, fixture.robotDefId));
+      .where(
+        inArray(baiyingRobotBindings.robotDefId, [
+          fixture.robotDefId,
+          fixture.replacementRobotDefId,
+          fixture.finalRobotDefId,
+        ]),
+      );
     await tx
       .delete(auditLogs)
       .where(inArray(auditLogs.requestId, fixture.requestIds));
@@ -511,7 +641,10 @@ async function cleanFixture(db: Database, fixture: Fixture): Promise<void> {
       .where(
         and(
           eq(sourceDataCategories.sourceSystem, 'ERP'),
-          eq(sourceDataCategories.externalId, fixture.sourceCategoryId),
+          inArray(sourceDataCategories.externalId, [
+            fixture.sourceCategoryId,
+            fixture.secondarySourceCategoryId,
+          ]),
         ),
       );
     await tx

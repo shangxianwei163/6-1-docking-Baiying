@@ -134,7 +134,7 @@ export function ScriptListView() {
     null,
   );
   const [sourceSystem, setSourceSystem] = useState<'ERP' | 'CRM'>('ERP');
-  const [categories, setCategories] = useState<SourceDataCategory[]>([]);
+  const [categories, setCategories] = useState<DataCategory[]>([]);
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([]);
   const [categoryQuery, setCategoryQuery] = useState('');
   const [studioId, setStudioId] = useState('');
@@ -145,6 +145,7 @@ export function ScriptListView() {
   const [lineError, setLineError] = useState('');
   const [savingBinding, setSavingBinding] = useState(false);
   const [bindingError, setBindingError] = useState('');
+  const [replaceConfirmed, setReplaceConfirmed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -177,28 +178,28 @@ export function ScriptListView() {
   }, [pageNum, refreshKey, scope, submittedQuery]);
 
   useEffect(() => {
-    if (!bindingScript) return;
+    if (!bindingScript || !studioId) return;
     let cancelled = false;
-    void loadSourceCategories(sourceSystem)
+    void loadDataCategories(sourceSystem, studioId)
       .then(({ categories: sourceCategories }) => {
         if (cancelled) return;
         setCategories(sourceCategories);
         const savedCategories =
-          bindingScript.binding?.sourceSystem === sourceSystem
+          bindingScript.binding?.sourceSystem === sourceSystem &&
+          bindingScript.binding.studioId === studioId
             ? bindingScript.binding.categories
             : [];
-        if (savedCategories.length) {
-          setSelectedCategoryIds(
-            savedCategories.flatMap((saved) => {
-              const current = sourceCategories.find(
-                (category) =>
-                  category.externalId === saved.sourceCategoryId ||
-                  category.categoryPath === saved.categoryPath,
-              );
-              return current ? [current.externalId] : [];
-            }),
-          );
-        }
+        setSelectedCategoryIds(
+          savedCategories.flatMap((saved) => {
+            const current = sourceCategories.find(
+              (category) =>
+                category.externalId === saved.sourceCategoryId ||
+                category.categoryPath === saved.categoryPath,
+            );
+            return current ? [current.externalId] : [];
+          }),
+        );
+        setReplaceConfirmed(false);
       })
       .catch((requestError: unknown) => {
         if (!cancelled)
@@ -214,7 +215,7 @@ export function ScriptListView() {
     return () => {
       cancelled = true;
     };
-  }, [bindingScript, sourceSystem]);
+  }, [bindingScript, sourceSystem, studioId]);
 
   useEffect(() => {
     if (!bindingScript) return;
@@ -263,6 +264,7 @@ export function ScriptListView() {
     setCategories([]);
     setCategoryLoading(true);
     setBindingError('');
+    setReplaceConfirmed(false);
   };
   const changeSourceSystem = (nextSourceSystem: 'ERP' | 'CRM') => {
     setSourceSystem(nextSourceSystem);
@@ -271,6 +273,7 @@ export function ScriptListView() {
     setCategories([]);
     setCategoryLoading(true);
     setBindingError('');
+    setReplaceConfirmed(false);
   };
   const requestRefresh = () => {
     setLoading(true);
@@ -288,6 +291,19 @@ export function ScriptListView() {
   const selectedCategories = categories.filter((category) =>
     selectedCategoryIds.includes(category.externalId),
   );
+  const conflictingCategories = selectedCategories.flatMap((category) => {
+    const previousOwners = category.boundScripts.filter(
+      (script) => script.robotDefId !== bindingScript?.robotDefId,
+    );
+    return previousOwners.length ? [{ category, previousOwners }] : [];
+  });
+  const displacedScripts = Array.from(
+    new Map(
+      conflictingCategories.flatMap(({ previousOwners }) =>
+        previousOwners.map((script) => [script.robotDefId, script] as const),
+      ),
+    ).values(),
+  );
   const categoryGroups = useMemo(() => {
     const needle = categoryQuery.trim().toLocaleLowerCase('zh-CN');
     const filtered = categories.filter(
@@ -297,7 +313,7 @@ export function ScriptListView() {
           .toLocaleLowerCase('zh-CN')
           .includes(needle),
     );
-    const groups = new Map<string, Map<string, SourceDataCategory[]>>();
+    const groups = new Map<string, Map<string, DataCategory[]>>();
     for (const category of filtered) {
       const pathParts = category.categoryPath.split('-');
       const mainCategory =
@@ -309,7 +325,7 @@ export function ScriptListView() {
           category.fields.sub_category ?? pathParts[1] ?? '未分组',
         ).trim() || '未分组';
       const subgroups =
-        groups.get(mainCategory) ?? new Map<string, SourceDataCategory[]>();
+        groups.get(mainCategory) ?? new Map<string, DataCategory[]>();
       const items = subgroups.get(subCategory) ?? [];
       items.push(category);
       subgroups.set(subCategory, items);
@@ -320,13 +336,16 @@ export function ScriptListView() {
       subgroups: Array.from(subgroups, ([name, items]) => ({ name, items })),
     }));
   }, [categories, categoryQuery]);
-  const toggleCategory = (categoryId: string) =>
+  const toggleCategory = (categoryId: string) => {
+    setReplaceConfirmed(false);
     setSelectedCategoryIds((current) =>
       current.includes(categoryId)
         ? current.filter((id) => id !== categoryId)
         : [...current, categoryId],
     );
-  const toggleSubgroupCategories = (subgroupCategories: SourceDataCategory[]) =>
+  };
+  const toggleSubgroupCategories = (subgroupCategories: DataCategory[]) => {
+    setReplaceConfirmed(false);
     setSelectedCategoryIds((current) => {
       const subgroupIds = subgroupCategories.map(
         (category) => category.externalId,
@@ -337,6 +356,7 @@ export function ScriptListView() {
       const missingIds = subgroupIds.filter((id) => !current.includes(id));
       return [...current, ...missingIds];
     });
+  };
   const selectedStudio = studios.find(
     (studio) => studio.businessCode === studioId,
   );
@@ -345,14 +365,16 @@ export function ScriptListView() {
     bindingScript &&
     selectedCategories.length &&
     selectedStudio &&
-    selectedLine?.isActive,
+    selectedLine?.isActive &&
+    (!conflictingCategories.length || replaceConfirmed),
   );
   const saveBinding = async () => {
     if (
       !bindingScript ||
       !selectedCategories.length ||
       !selectedStudio ||
-      !selectedLine?.isActive
+      !selectedLine?.isActive ||
+      (conflictingCategories.length > 0 && !replaceConfirmed)
     )
       return;
     setSavingBinding(true);
@@ -365,6 +387,7 @@ export function ScriptListView() {
           sourceCategoryId: category.externalId,
           categoryPath: category.categoryPath,
         })),
+        replaceConflicts: replaceConfirmed,
         studioId: selectedStudio.businessCode,
         studioName: selectedStudio.name,
         lineId: selectedLine.userPhoneId,
@@ -377,6 +400,8 @@ export function ScriptListView() {
             : script,
         ),
       );
+      setLoading(true);
+      setRefreshKey((value) => value + 1);
       setBindingScript(null);
     } catch (requestError) {
       setBindingError(
@@ -664,7 +689,14 @@ export function ScriptListView() {
                       label: `${studio.name} · ${studio.businessCode}`,
                       description: studio.mcCode,
                     }))}
-                    onValueChange={setStudioId}
+                    onValueChange={(value) => {
+                      setStudioId(value);
+                      setSelectedCategoryIds([]);
+                      setCategories([]);
+                      setCategoryLoading(true);
+                      setBindingError('');
+                      setReplaceConfirmed(false);
+                    }}
                   />
                 </div>
                 {studioError ? (
@@ -876,9 +908,31 @@ export function ScriptListView() {
                                       selectedCategoryIds.includes(
                                         category.externalId,
                                       );
+                                    const isCurrentBinding =
+                                      category.boundScripts.some(
+                                        (script) =>
+                                          script.robotDefId ===
+                                          bindingScript?.robotDefId,
+                                      );
+                                    const previousOwners =
+                                      category.boundScripts.filter(
+                                        (script) =>
+                                          script.robotDefId !==
+                                          bindingScript?.robotDefId,
+                                      );
+                                    const isOccupied =
+                                      previousOwners.length > 0;
                                     return (
                                       <label
-                                        className={checked ? 'is-selected' : ''}
+                                        className={[
+                                          checked ? 'is-selected' : '',
+                                          isCurrentBinding
+                                            ? 'is-current-binding'
+                                            : '',
+                                          isOccupied ? 'is-occupied' : '',
+                                        ]
+                                          .filter(Boolean)
+                                          .join(' ')}
                                         key={category.externalId}
                                       >
                                         <input
@@ -896,6 +950,27 @@ export function ScriptListView() {
                                               ? category.categoryPath
                                               : `第 ${category.level ?? '—'} 级 · #${category.externalId}`}
                                           </small>
+                                          <em
+                                            className={
+                                              isOccupied
+                                                ? 'category-owner category-owner-occupied'
+                                                : isCurrentBinding
+                                                  ? 'category-owner category-owner-current'
+                                                  : 'category-owner category-owner-available'
+                                            }
+                                          >
+                                            {isOccupied
+                                              ? `已占用 · ${previousOwners
+                                                  .map(
+                                                    (script) =>
+                                                      script.robotName ||
+                                                      `#${script.robotDefId}`,
+                                                  )
+                                                  .join('、')}`
+                                              : isCurrentBinding
+                                                ? '当前话术'
+                                                : '可用'}
+                                          </em>
                                         </span>
                                         {checked ? <Check size={13} /> : null}
                                       </label>
@@ -935,6 +1010,14 @@ export function ScriptListView() {
                       <button
                         type="button"
                         key={category.externalId}
+                        className={
+                          category.boundScripts.some(
+                            (script) =>
+                              script.robotDefId !== bindingScript?.robotDefId,
+                          )
+                            ? 'will-rebind'
+                            : ''
+                        }
                         onClick={() => toggleCategory(category.externalId)}
                         title="移除此分类"
                       >
@@ -947,13 +1030,42 @@ export function ScriptListView() {
                   <p>请至少选择 1 个分类，可同时选择多个。</p>
                 )}
               </div>
+              {conflictingCategories.length ? (
+                <label
+                  className="category-rebind-confirm"
+                  aria-label="确认将已占用分类换绑到当前话术"
+                >
+                  <input
+                    type="checkbox"
+                    checked={replaceConfirmed}
+                    onChange={(event) =>
+                      setReplaceConfirmed(event.target.checked)
+                    }
+                  />
+                  <span>
+                    <b>确认换绑 {conflictingCategories.length} 个已占用分类</b>
+                    <small>
+                      保存后将从{' '}
+                      {displacedScripts
+                        .map(
+                          (script) =>
+                            script.robotName || `话术 #${script.robotDefId}`,
+                        )
+                        .join('、')}{' '}
+                      解绑，并绑定到当前话术；原话术的其他分类不受影响。
+                    </small>
+                  </span>
+                </label>
+              ) : null}
             </section>
           </div>
           <DialogFooter className="script-binding-dialog-footer">
             <p>
               {canSaveBinding
-                ? `将保存 ${selectedCategoryIds.length} 个${sourceSystem}分类、1 家影楼和 1 条线路`
-                : `请完成${[!selectedCategories.length ? '数据分类' : '', !selectedStudio ? '影楼' : '', !selectedLine ? '线路' : ''].filter(Boolean).join('、')}配置`}
+                ? `将保存 ${selectedCategoryIds.length} 个${sourceSystem}分类${conflictingCategories.length ? `，其中 ${conflictingCategories.length} 个执行换绑` : ''}、1 家影楼和 1 条线路`
+                : conflictingCategories.length && !replaceConfirmed
+                  ? '请确认已占用分类的换绑操作'
+                  : `请完成${[!selectedCategories.length ? '数据分类' : '', !selectedStudio ? '影楼' : '', !selectedLine ? '线路' : ''].filter(Boolean).join('、')}配置`}
             </p>
             <div>
               <button
@@ -970,7 +1082,11 @@ export function ScriptListView() {
                 onClick={() => void saveBinding()}
                 disabled={!canSaveBinding || savingBinding}
               >
-                {savingBinding ? '正在保存…' : '保存业务绑定'}
+                {savingBinding
+                  ? '正在保存…'
+                  : conflictingCategories.length
+                    ? '确认换绑并保存'
+                    : '保存业务绑定'}
               </button>
             </div>
           </DialogFooter>

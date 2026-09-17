@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { ScriptBindingInput } from '@outbound/contracts';
 import type { Database } from '../db/client.js';
 import {
@@ -44,9 +44,6 @@ export class PostgresScriptRepository implements ScriptRepository {
   ): Promise<ScriptBinding> {
     const now = this.clock();
     const row = await this.db.transaction(async (tx) => {
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`script-binding:${input.robotDefId}`}, 0))`,
-      );
       const [studio] = await tx
         .select({ id: studios.id, name: studios.name })
         .from(studios)
@@ -125,6 +122,137 @@ export class PostgresScriptRepository implements ScriptRepository {
         categoryPath: categoryById.get(id)!.categoryPath,
       }));
       const primaryCategory = canonicalCategories[0];
+
+      for (const categoryId of [...categoryIds].sort()) {
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${`script-category:${studio.id}:${input.sourceSystem}:${categoryId}`}, 0))`,
+        );
+      }
+      const findConflicts = () =>
+        tx
+          .select({
+            scriptBindingId: scriptCategoryBindings.scriptBindingId,
+            robotDefId: scriptBindings.robotDefId,
+            sourceCategoryId: scriptCategoryBindings.sourceCategoryId,
+            categoryPath: scriptCategoryBindings.categoryPath,
+          })
+          .from(scriptCategoryBindings)
+          .innerJoin(
+            scriptBindings,
+            eq(scriptBindings.id, scriptCategoryBindings.scriptBindingId),
+          )
+          .where(
+            and(
+              eq(scriptCategoryBindings.studioId, studio.id),
+              eq(scriptCategoryBindings.sourceSystem, input.sourceSystem),
+              eq(scriptCategoryBindings.active, true),
+              eq(scriptBindings.status, 'ACTIVE'),
+              inArray(scriptCategoryBindings.sourceCategoryId, categoryIds),
+              ne(scriptBindings.robotDefId, input.robotDefId),
+            ),
+          );
+      const preliminaryConflicts = await findConflicts();
+      const robotDefIdsToLock = Array.from(
+        new Set([
+          input.robotDefId,
+          ...preliminaryConflicts.map((conflict) => conflict.robotDefId),
+        ]),
+      ).sort();
+      for (const robotDefId of robotDefIdsToLock) {
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${`script-binding:${robotDefId}`}, 0))`,
+        );
+      }
+      const conflicts = await findConflicts();
+      if (conflicts.length && !input.replaceConflicts) {
+        const summary = Array.from(
+          new Map(
+            conflicts.map((conflict) => [
+              conflict.sourceCategoryId,
+              `${conflict.categoryPath}（话术 #${conflict.robotDefId}）`,
+            ]),
+          ).values(),
+        ).join('、');
+        throw new ScriptBindingConflictError(
+          `以下分类已被其他话术占用，请确认换绑后再保存：${summary}`,
+        );
+      }
+      if (conflicts.length) {
+        const conflictingBindingIds = Array.from(
+          new Set(conflicts.map((conflict) => conflict.scriptBindingId)),
+        );
+        await tx
+          .update(scriptCategoryBindings)
+          .set({ active: false })
+          .where(
+            and(
+              inArray(
+                scriptCategoryBindings.scriptBindingId,
+                conflictingBindingIds,
+              ),
+              inArray(scriptCategoryBindings.sourceCategoryId, categoryIds),
+              eq(scriptCategoryBindings.active, true),
+            ),
+          );
+
+        for (const bindingId of conflictingBindingIds) {
+          const displaced = conflicts.find(
+            (conflict) => conflict.scriptBindingId === bindingId,
+          )!;
+          const remainingCategories = await tx
+            .select({
+              sourceCategoryId: scriptCategoryBindings.sourceCategoryId,
+              categoryPath: scriptCategoryBindings.categoryPath,
+            })
+            .from(scriptCategoryBindings)
+            .where(
+              and(
+                eq(scriptCategoryBindings.scriptBindingId, bindingId),
+                eq(scriptCategoryBindings.active, true),
+              ),
+            )
+            .orderBy(asc(scriptCategoryBindings.categoryPath));
+          if (remainingCategories.length) {
+            await tx
+              .update(baiyingRobotBindings)
+              .set({
+                sourceCategoryId: remainingCategories[0]!.sourceCategoryId,
+                categoryPath: remainingCategories[0]!.categoryPath,
+                categories: remainingCategories,
+                updatedBy: actorId,
+                updatedAt: now,
+              })
+              .where(eq(baiyingRobotBindings.robotDefId, displaced.robotDefId));
+          } else {
+            await tx
+              .update(scriptBindings)
+              .set({ status: 'RETIRED', retiredAt: now })
+              .where(eq(scriptBindings.id, bindingId));
+            await tx
+              .delete(baiyingRobotBindings)
+              .where(eq(baiyingRobotBindings.robotDefId, displaced.robotDefId));
+          }
+          await tx.insert(auditLogs).values({
+            requestId,
+            actorId,
+            action: 'BAIYING_SCRIPT_CATEGORIES_REBOUND',
+            objectType: 'BAIYING_ROBOT',
+            objectId: displaced.robotDefId,
+            detail: {
+              replacementRobotDefId: input.robotDefId,
+              sourceSystem: input.sourceSystem,
+              studioId: input.studioId,
+              removedSourceCategoryIds: conflicts
+                .filter((conflict) => conflict.scriptBindingId === bindingId)
+                .map((conflict) => conflict.sourceCategoryId),
+              remainingSourceCategoryIds: remainingCategories.map(
+                (category) => category.sourceCategoryId,
+              ),
+            },
+            occurredAt: now,
+          });
+        }
+      }
 
       const activeBindings = await tx
         .select({ id: scriptBindings.id })
@@ -229,6 +357,10 @@ export class PostgresScriptRepository implements ScriptRepository {
           lineId: input.lineId,
           normalizedBindingId: normalizedBinding.id,
           normalizedBindingVersion: (versionRow?.current ?? 0) + 1,
+          replacedBindings: conflicts.map((conflict) => ({
+            robotDefId: conflict.robotDefId,
+            sourceCategoryId: conflict.sourceCategoryId,
+          })),
         },
       });
       return rows[0];

@@ -5400,6 +5400,23 @@
   background: #eef8f2;
   box-shadow: inset 3px 0 #3e936a;
 }
+.category-tree-options label.is-current-binding:not(.is-selected) {
+  border-color: #b8d9c7;
+  background: #f2f9f5;
+}
+.category-tree-options label.is-occupied {
+  border-color: #e6c98e;
+  background: #fffbf2;
+}
+.category-tree-options label.is-occupied:hover {
+  border-color: #ca9c43;
+  background: #fff7e7;
+}
+.category-tree-options label.is-selected.is-occupied {
+  border-color: #d49f37;
+  background: #fff5df;
+  box-shadow: inset 3px 0 #c48622;
+}
 .category-tree-options input {
   width: 14px;
   height: 14px;
@@ -5425,6 +5442,33 @@
   margin-top: 2px;
   color: #89968f;
   font-size: 7px;
+}
+.category-tree-options .category-owner {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 4px;
+  overflow: hidden;
+  border-radius: 99px;
+  padding: 2px 5px;
+  font-size: 7px;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.category-owner-available {
+  background: #edf2ef;
+  color: #708078;
+}
+.category-owner-current {
+  background: #dff1e7;
+  color: #267052;
+}
+.category-owner-occupied {
+  background: #f9e8c4;
+  color: #8a5a13;
 }
 .category-tree-options svg {
   flex: none;
@@ -5485,10 +5529,48 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.selected-category-list > div > button.will-rebind {
+  border-color: #dfbd79;
+  background: #fff5df;
+  color: #825718;
+}
 .selected-category-list > p {
   margin-top: 6px;
   color: #89958f;
   font-size: 8px;
+}
+.category-rebind-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  border: 1px solid #e4c98f;
+  border-radius: 8px;
+  background: #fff9ed;
+  padding: 10px 11px;
+  color: #76501b;
+  cursor: pointer;
+}
+.category-rebind-confirm input {
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+  flex: none;
+  accent-color: #a96f18;
+}
+.category-rebind-confirm span {
+  min-width: 0;
+}
+.category-rebind-confirm b,
+.category-rebind-confirm small {
+  display: block;
+}
+.category-rebind-confirm b {
+  font-size: 9px;
+}
+.category-rebind-confirm small {
+  margin-top: 3px;
+  font-size: 8px;
+  line-height: 1.5;
 }
 .script-binding-dialog-footer {
   display: flex !important;
@@ -5702,7 +5784,7 @@
 .script-binding-main {
   display: grid;
   min-height: 0;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
   align-content: stretch;
   gap: 11px;
   overflow: hidden;

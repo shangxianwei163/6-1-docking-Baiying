@@ -369,8 +369,12 @@ export function loadSourceCategories(sourceSystem: SourceSystem) {
   );
 }
 
-export function loadDataCategories(sourceSystem: SourceSystem) {
+export function loadDataCategories(
+  sourceSystem: SourceSystem,
+  studioId?: string,
+) {
   const search = new URLSearchParams({ sourceSystem });
+  if (studioId) search.set('studioId', studioId);
   return request<DataCategoryResult>(`/api/v1/data-categories?${search}`);
 }
 
@@ -420,6 +424,7 @@ export function saveScriptBinding(input: {
   robotDefId: string;
   sourceSystem: SourceSystem;
   categories: Array<{ sourceCategoryId: string; categoryPath: string }>;
+  replaceConflicts?: boolean;
   studioId: string;
   studioName: string;
   lineId: string;
