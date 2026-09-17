@@ -161,6 +161,7 @@ npm run stage4b:worker
 - 本地对象存储只允许安全对象键，以同目录临时文件原子落盘；对象键只含内部 UUID，不含手机号、姓名或临时 URL。
 - 归档成功后保存内容类型、大小、SHA-256、归档时间和默认 180 天保留期限，并更新任务的发现/归档计数。
 - `POST /api/v1/recordings/{recordingId}/download-url` 为已识别操作人重新签发默认 15 分钟地址；实际下载地址只暴露录音 UUID、不可逆调用方令牌、过期时间和 HMAC，不暴露 Bucket 或对象键，打开记录写入审计。
+- ERP/CRM 录音回调及其重签接口返回的地址有效期与该录音的 `retentionUntil` 一致；内容接口支持单段 HTTP Range、`206 Partial Content` 和内联播放，录音到期或删除后链接立即失效。
 
 本地验收和持续 Worker 均使用 `recording.mock.invalid` 的确定性合成音频，不发起网络请求：
 

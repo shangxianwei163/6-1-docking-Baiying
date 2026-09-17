@@ -6,6 +6,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type {
   PutRecordingObjectInput,
+  RecordingByteRange,
   RecordingObjectStore,
   RecordingObjectReader,
   RecordingObjectDeleter,
@@ -49,16 +50,40 @@ export class LocalRecordingObjectStore
     return this.resolveObjectPath(bucket, objectKey);
   }
 
-  async openObject(input: { bucket: string; objectKey: string }) {
+  async openObject(input: {
+    bucket: string;
+    objectKey: string;
+    range?: RecordingByteRange;
+  }) {
     const path = this.resolveObjectPath(input.bucket, input.objectKey);
     await assertSafeExistingPath(this.rootDirectory, path);
     const stats = await lstat(path);
     if (stats.isSymbolicLink() || !stats.isFile()) {
       throw new Error('本地录音对象不是可读取的普通文件');
     }
+    const range = input.range;
+    if (
+      range &&
+      (range.start < 0n ||
+        range.endInclusive < range.start ||
+        range.endInclusive >= BigInt(stats.size))
+    ) {
+      throw new RangeError('录音字节范围超出本地对象大小');
+    }
+    const sizeBytes = range
+      ? range.endInclusive - range.start + 1n
+      : BigInt(stats.size);
     return {
-      body: createReadStream(path),
-      sizeBytes: BigInt(stats.size),
+      body: createReadStream(
+        path,
+        range
+          ? {
+              start: safeFileOffset(range.start),
+              end: safeFileOffset(range.endInclusive),
+            }
+          : undefined,
+      ),
+      sizeBytes,
     };
   }
 
@@ -92,6 +117,13 @@ export class LocalRecordingObjectStore
     }
     return destination;
   }
+}
+
+function safeFileOffset(value: bigint): number {
+  if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new RangeError('录音字节范围超出本地文件系统支持范围');
+  }
+  return Number(value);
 }
 
 async function ensureSafeDirectory(root: string, destination: string) {

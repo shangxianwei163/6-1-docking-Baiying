@@ -16,12 +16,15 @@ describe('OssRecordingObjectStore', () => {
         for await (const chunk of body) chunks.push(chunk);
         objects.set(key, Buffer.concat(chunks));
       },
-      async getStream(key) {
+      async getStream(key, range) {
         const bytes = objects.get(key);
         if (!bytes) throw new Error('NoSuchKey');
+        const selected = range
+          ? bytes.subarray(Number(range.start), Number(range.endInclusive + 1n))
+          : bytes;
         return {
-          stream: Readable.from([bytes]),
-          headers: { 'content-length': String(bytes.byteLength) },
+          stream: Readable.from([selected]),
+          headers: { 'content-length': String(selected.byteLength) },
         };
       },
       async delete(key) {
@@ -39,6 +42,12 @@ describe('OssRecordingObjectStore', () => {
 
     expect(opened.sizeBytes).toBe(12n);
     await expect(collect(opened.body)).resolves.toBe('first-second');
+    const partial = await store.openObject({
+      ...input,
+      range: { start: 6n, endInclusive: 9n },
+    });
+    expect(partial.sizeBytes).toBe(4n);
+    await expect(collect(partial.body)).resolves.toBe('seco');
     await store.deleteObject(input);
     await expect(store.openObject(input)).rejects.toThrow('NoSuchKey');
   });

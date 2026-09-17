@@ -498,6 +498,7 @@ export function createApp(dependencies: AppDependencies) {
         sig: z.string().regex(/^[a-f0-9]{64}$/),
       })
       .parse(context.req.query());
+    const rangeHeader = context.req.header('range');
     const opened = await recordingAccessDependency(dependencies).openSignedUrl(
       recordingId,
       {
@@ -505,13 +506,20 @@ export function createApp(dependencies: AppDependencies) {
         expiresAtEpochSeconds: query.exp,
         signature: query.sig,
         requestId: context.get('requestId'),
+        ...(rangeHeader ? { rangeHeader } : {}),
       },
     );
     const body = Readable.toWeb(Readable.from(opened.body)) as ReadableStream;
-    return context.body(body, 200, {
+    return context.body(body, opened.range ? 206 : 200, {
+      'Accept-Ranges': 'bytes',
       'Cache-Control': 'private, no-store',
       'Content-Disposition': `inline; filename="recording-${recordingId}.audio"`,
       'Content-Length': opened.sizeBytes.toString(),
+      ...(opened.range
+        ? {
+            'Content-Range': `bytes ${opened.range.start}-${opened.range.endInclusive}/${opened.totalSizeBytes}`,
+          }
+        : {}),
       'Content-Type': opened.contentType,
       'Referrer-Policy': 'no-referrer',
       'X-Content-Type-Options': 'nosniff',

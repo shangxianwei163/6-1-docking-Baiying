@@ -186,6 +186,7 @@ export class PostgresRecordingUrlReissueService implements RecordingUrlReissue {
         audience,
         sha256: asset.sha256!,
         now,
+        expiresAt: asset.retentionUntil!,
       });
       const body = recordingDownloadUrlEnvelopeSchema.parse({
         code: 'OK',

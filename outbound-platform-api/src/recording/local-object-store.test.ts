@@ -34,6 +34,13 @@ describe('LocalRecordingObjectStore', () => {
     });
     expect(opened.sizeBytes).toBe(12n);
     await expect(collect(opened.body)).resolves.toBe('first-second');
+    const partial = await store.openObject({
+      bucket: 'local-recordings',
+      objectKey: 'recordings/studio/task/call/full.mp3',
+      range: { start: 6n, endInclusive: 9n },
+    });
+    expect(partial.sizeBytes).toBe(4n);
+    await expect(collect(partial.body)).resolves.toBe('seco');
     await expect(
       readdir(join(root, 'local-recordings/recordings/studio/task/call')),
     ).resolves.toEqual(['full.mp3']);

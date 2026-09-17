@@ -32,9 +32,17 @@ export class RecordingDownloadUrlIssuer {
     audience: string;
     sha256: string;
     now: Date;
+    expiresAt?: Date;
   }): IssuedRecordingDownload {
-    const expiresAtEpochSeconds =
-      Math.floor(input.now.getTime() / 1_000) + this.ttlSeconds;
+    const expiresAtEpochSeconds = input.expiresAt
+      ? Math.floor(input.expiresAt.getTime() / 1_000)
+      : Math.floor(input.now.getTime() / 1_000) + this.ttlSeconds;
+    if (
+      !Number.isSafeInteger(expiresAtEpochSeconds) ||
+      expiresAtEpochSeconds <= Math.floor(input.now.getTime() / 1_000)
+    ) {
+      throw new TypeError('录音下载 URL 截止时间必须晚于当前时间');
+    }
     const signature = this.signer.sign({
       recordingId: input.recordingId,
       audience: input.audience,

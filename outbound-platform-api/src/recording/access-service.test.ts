@@ -49,6 +49,7 @@ describe('RecordingAccessService', () => {
     expect(opened).toMatchObject({
       contentType: 'audio/mpeg',
       sizeBytes: BigInt(bytes.byteLength),
+      totalSizeBytes: BigInt(bytes.byteLength),
       sha256: archivedAsset.sha256,
     });
     await expect(collect(opened.body)).resolves.toEqual(bytes);
@@ -138,6 +139,7 @@ describe('RecordingAccessService', () => {
       'request-integration',
     );
     expect(issued.downloadUrl).not.toContain(archivedAsset.integrationClientId);
+    expect(issued.expiresAt).toBe(archivedAsset.retentionUntil.toISOString());
     await expect(
       service.issueIntegrationUrl(
         recordingId,
@@ -148,6 +150,97 @@ describe('RecordingAccessService', () => {
         'request-denied',
       ),
     ).rejects.toMatchObject({ code: 'RECORDING_NOT_FOUND', status: 404 });
+  });
+
+  it('keeps an integration URL usable until recording retention expires', async () => {
+    let now = new Date('2026-09-06T12:00:00.000Z');
+    const service = serviceWith(repositoryWith(), () => now);
+    const issued = await service.issueIntegrationUrl(
+      recordingId,
+      {
+        integrationClientId: archivedAsset.integrationClientId,
+        sourceSystem: 'ERP',
+      },
+      'request-integration',
+    );
+    const url = new URL(issued.downloadUrl);
+    now = new Date('2027-03-05T11:59:00.000Z');
+
+    await expect(
+      service.openSignedUrl(recordingId, {
+        audience: url.searchParams.get('aud')!,
+        expiresAtEpochSeconds: Number(url.searchParams.get('exp')),
+        signature: url.searchParams.get('sig')!,
+        requestId: 'request-open',
+      }),
+    ).resolves.toMatchObject({ totalSizeBytes: BigInt(bytes.byteLength) });
+  });
+
+  it('rejects a signed expiry beyond retention and supports a single byte range', async () => {
+    const signer = new LocalRecordingUrlSigner(
+      'test-secret-long-enough-for-signing',
+      'test',
+    );
+    const audience = signer.audienceToken(
+      'INTEGRATION_CLIENT',
+      archivedAsset.integrationClientId,
+    );
+    const excessiveExpiry = Math.floor(
+      new Date('2027-03-06T12:00:00.000Z').getTime() / 1_000,
+    );
+    const service = serviceWith(repositoryWith());
+    await expect(
+      service.openSignedUrl(recordingId, {
+        audience,
+        expiresAtEpochSeconds: excessiveExpiry,
+        signature: signer.sign({
+          recordingId,
+          audience,
+          expiresAtEpochSeconds: excessiveExpiry,
+        }),
+        requestId: 'request-excessive-expiry',
+      }),
+    ).rejects.toMatchObject({ code: 'RECORDING_URL_INVALID' });
+
+    const reader: RecordingObjectReader = {
+      openObject: vi.fn(async (input) => {
+        const start = Number(input.range!.start);
+        const endExclusive = Number(input.range!.endInclusive + 1n);
+        const selected = bytes.subarray(start, endExclusive);
+        return {
+          body: chunks(selected),
+          sizeBytes: BigInt(selected.byteLength),
+        };
+      }),
+    };
+    const rangeService = serviceWith(repositoryWith(), undefined, reader);
+    const issued = await rangeService.issueOperatorUrl(
+      recordingId,
+      'platform-admin',
+      'request-issue',
+    );
+    const url = new URL(issued.downloadUrl);
+    const opened = await rangeService.openSignedUrl(recordingId, {
+      audience: url.searchParams.get('aud')!,
+      expiresAtEpochSeconds: Number(url.searchParams.get('exp')),
+      signature: url.searchParams.get('sig')!,
+      requestId: 'request-range',
+      rangeHeader: 'bytes=3-8',
+    });
+    expect(opened.range).toEqual({ start: 3n, endInclusive: 8n });
+    expect(opened.sizeBytes).toBe(6n);
+    expect(opened.totalSizeBytes).toBe(BigInt(bytes.byteLength));
+    await expect(collect(opened.body)).resolves.toEqual(bytes.subarray(3, 9));
+
+    await expect(
+      rangeService.openSignedUrl(recordingId, {
+        audience: url.searchParams.get('aud')!,
+        expiresAtEpochSeconds: Number(url.searchParams.get('exp')),
+        signature: url.searchParams.get('sig')!,
+        requestId: 'request-multiple-ranges',
+        rangeHeader: 'bytes=0-1,3-4',
+      }),
+    ).rejects.toMatchObject({ code: 'RECORDING_RANGE_INVALID', status: 416 });
   });
 
   it('allows loopback HTTP only outside production', () => {

@@ -2,7 +2,10 @@ import type {
   RecordingAccessAsset,
   RecordingAccessRepository,
 } from './access-repository.js';
-import type { RecordingObjectReader } from './object-store.js';
+import type {
+  RecordingByteRange,
+  RecordingObjectReader,
+} from './object-store.js';
 import { RecordingDownloadUrlIssuer } from './url-issuer.js';
 import type { RecordingUrlSigner } from './url-signer.js';
 
@@ -17,6 +20,8 @@ export type OpenedAuthorizedRecording = {
   body: AsyncIterable<Uint8Array>;
   contentType: string;
   sizeBytes: bigint;
+  totalSizeBytes: bigint;
+  range?: RecordingByteRange;
   sha256: string;
 };
 
@@ -41,6 +46,7 @@ export interface RecordingAccess {
       expiresAtEpochSeconds: number;
       signature: string;
       requestId: string;
+      rangeHeader?: string;
     },
   ): Promise<OpenedAuthorizedRecording>;
 }
@@ -52,9 +58,10 @@ export class RecordingAccessFailure extends Error {
       | 'RECORDING_NOT_ARCHIVED'
       | 'RECORDING_EXPIRED'
       | 'RECORDING_URL_INVALID'
+      | 'RECORDING_RANGE_INVALID'
       | 'RECORDING_OBJECT_UNAVAILABLE',
     message: string,
-    public readonly status: 400 | 404 | 409 | 410 | 503,
+    public readonly status: 400 | 404 | 409 | 410 | 416 | 503,
   ) {
     super(message);
     this.name = 'RecordingAccessFailure';
@@ -127,6 +134,7 @@ export class RecordingAccessService implements RecordingAccess {
       requestId,
       asset,
       now,
+      expiresAt: asset.retentionUntil!,
     });
   }
 
@@ -137,12 +145,14 @@ export class RecordingAccessService implements RecordingAccess {
     requestId: string;
     asset: RecordingAccessAsset;
     now: Date;
+    expiresAt?: Date;
   }): Promise<IssuedRecordingDownload> {
     const issued = this.urlIssuer.issue({
       recordingId: input.recordingId,
       audience: input.audience,
       sha256: input.asset.sha256!,
       now: input.now,
+      expiresAt: input.expiresAt,
     });
     await this.repository.recordAudit({
       requestId: input.requestId,
@@ -167,6 +177,7 @@ export class RecordingAccessService implements RecordingAccess {
       expiresAtEpochSeconds: number;
       signature: string;
       requestId: string;
+      rangeHeader?: string;
     },
   ): Promise<OpenedAuthorizedRecording> {
     const now = this.clock();
@@ -174,8 +185,7 @@ export class RecordingAccessService implements RecordingAccess {
     if (
       !/^[a-f0-9]{64}$/.test(input.audience) ||
       !Number.isSafeInteger(input.expiresAtEpochSeconds) ||
-      input.expiresAtEpochSeconds <= nowEpochSeconds ||
-      input.expiresAtEpochSeconds > nowEpochSeconds + this.urlIssuer.ttlSeconds
+      input.expiresAtEpochSeconds <= nowEpochSeconds
     ) {
       throw invalidUrl();
     }
@@ -192,11 +202,19 @@ export class RecordingAccessService implements RecordingAccess {
       throw invalidUrl();
     }
     const asset = await this.requireAvailableAsset(recordingId, now);
+    const retentionEpochSeconds = Math.floor(
+      asset.retentionUntil!.getTime() / 1_000,
+    );
+    if (input.expiresAtEpochSeconds > retentionEpochSeconds) {
+      throw invalidUrl();
+    }
+    const range = parseRange(input.rangeHeader, asset.sizeBytes!);
     let opened;
     try {
       opened = await this.objectReader.openObject({
         bucket: asset.bucket!,
         objectKey: asset.objectKey!,
+        ...(range ? { range } : {}),
       });
     } catch {
       throw new RecordingAccessFailure(
@@ -205,7 +223,10 @@ export class RecordingAccessService implements RecordingAccess {
         503,
       );
     }
-    if (opened.sizeBytes !== asset.sizeBytes) {
+    const expectedSizeBytes = range
+      ? range.endInclusive - range.start + 1n
+      : asset.sizeBytes!;
+    if (opened.sizeBytes !== expectedSizeBytes) {
       throw new RecordingAccessFailure(
         'RECORDING_OBJECT_UNAVAILABLE',
         '录音对象大小与归档元数据不一致，已拒绝下载',
@@ -221,7 +242,14 @@ export class RecordingAccessService implements RecordingAccess {
         recordingId,
         taskId: asset.taskId,
         audienceTokenPrefix: input.audience.slice(0, 16),
-        sizeBytes: asset.sizeBytes!.toString(),
+        sizeBytes: opened.sizeBytes.toString(),
+        totalSizeBytes: asset.sizeBytes!.toString(),
+        ...(range
+          ? {
+              rangeStart: range.start.toString(),
+              rangeEndInclusive: range.endInclusive.toString(),
+            }
+          : {}),
         sha256: asset.sha256,
       },
       occurredAt: now,
@@ -229,7 +257,9 @@ export class RecordingAccessService implements RecordingAccess {
     return {
       body: opened.body,
       contentType: asset.contentType!,
-      sizeBytes: asset.sizeBytes!,
+      sizeBytes: opened.sizeBytes,
+      totalSizeBytes: asset.sizeBytes!,
+      ...(range ? { range } : {}),
       sha256: asset.sha256!,
     };
   }
@@ -297,5 +327,44 @@ function invalidUrl(): RecordingAccessFailure {
     'RECORDING_URL_INVALID',
     '录音下载地址无效或已过期，请重新获取',
     400,
+  );
+}
+
+function parseRange(
+  header: string | undefined,
+  totalSizeBytes: bigint,
+): RecordingByteRange | undefined {
+  if (header === undefined) return undefined;
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(header.trim());
+  if (!match || (!match[1] && !match[2]) || totalSizeBytes <= 0n) {
+    throw invalidRange();
+  }
+
+  if (!match[1]) {
+    const suffixLength = BigInt(match[2]!);
+    if (suffixLength <= 0n) throw invalidRange();
+    return {
+      start:
+        suffixLength >= totalSizeBytes ? 0n : totalSizeBytes - suffixLength,
+      endInclusive: totalSizeBytes - 1n,
+    };
+  }
+
+  const start = BigInt(match[1]);
+  if (start >= totalSizeBytes) throw invalidRange();
+  const requestedEnd = match[2] ? BigInt(match[2]) : totalSizeBytes - 1n;
+  if (requestedEnd < start) throw invalidRange();
+  return {
+    start,
+    endInclusive:
+      requestedEnd >= totalSizeBytes ? totalSizeBytes - 1n : requestedEnd,
+  };
+}
+
+function invalidRange(): RecordingAccessFailure {
+  return new RecordingAccessFailure(
+    'RECORDING_RANGE_INVALID',
+    '录音播放范围无效',
+    416,
   );
 }

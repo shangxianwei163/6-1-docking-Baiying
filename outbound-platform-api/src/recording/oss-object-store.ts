@@ -3,6 +3,7 @@ import OSS from 'ali-oss';
 import { Readable } from 'node:stream';
 import type {
   PutRecordingObjectInput,
+  RecordingByteRange,
   RecordingObjectDeleter,
   RecordingObjectReader,
   RecordingObjectStore,
@@ -12,7 +13,10 @@ const SAFE_OBJECT_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
 
 export interface RecordingOssClient {
   putStream(objectKey: string, body: Readable): Promise<void>;
-  getStream(objectKey: string): Promise<{
+  getStream(
+    objectKey: string,
+    range?: RecordingByteRange,
+  ): Promise<{
     stream: AsyncIterable<Uint8Array> | undefined;
     headers: Record<string, unknown>;
   }>;
@@ -35,9 +39,13 @@ export class OssRecordingObjectStore
     await this.client.putStream(input.objectKey, Readable.from(input.body));
   }
 
-  async openObject(input: { bucket: string; objectKey: string }) {
+  async openObject(input: {
+    bucket: string;
+    objectKey: string;
+    range?: RecordingByteRange;
+  }) {
     this.assertTarget(input);
-    const response = await this.client.getStream(input.objectKey);
+    const response = await this.client.getStream(input.objectKey, input.range);
     const contentLength = response.headers['content-length'];
     if (
       !response.stream ||
@@ -118,8 +126,17 @@ export async function createEcsRamRoleOssObjectStore(input: {
       async putStream(objectKey, body) {
         await client.putStream(objectKey, body);
       },
-      async getStream(objectKey) {
-        const response = await client.getStream(objectKey);
+      async getStream(objectKey, range) {
+        const response = await client.getStream(
+          objectKey,
+          range
+            ? {
+                headers: {
+                  Range: `bytes=${range.start}-${range.endInclusive}`,
+                },
+              }
+            : undefined,
+        );
         return {
           stream: response.stream,
           headers: response.res.headers as Record<string, unknown>,

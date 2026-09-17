@@ -13,10 +13,16 @@ export type OpenedRecordingObject = {
   sizeBytes: bigint;
 };
 
+export type RecordingByteRange = {
+  start: bigint;
+  endInclusive: bigint;
+};
+
 export interface RecordingObjectReader {
   openObject(input: {
     bucket: string;
     objectKey: string;
+    range?: RecordingByteRange;
   }): Promise<OpenedRecordingObject>;
 }
 

@@ -29,6 +29,7 @@ describe('operator recording access HTTP API', () => {
       body: chunks(bytes),
       contentType: 'audio/mpeg',
       sizeBytes: BigInt(bytes.byteLength),
+      totalSizeBytes: BigInt(bytes.byteLength),
       sha256: 'c'.repeat(64),
     }));
     const app = appWith({
@@ -65,6 +66,7 @@ describe('operator recording access HTTP API', () => {
     expect(content.headers.get('content-length')).toBe(
       bytes.byteLength.toString(),
     );
+    expect(content.headers.get('accept-ranges')).toBe('bytes');
     expect(content.headers.get('x-recording-sha256')).toBe('c'.repeat(64));
     await expect(content.arrayBuffer()).resolves.toEqual(
       bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
@@ -75,6 +77,45 @@ describe('operator recording access HTTP API', () => {
       signature,
       requestId: 'request-recording-001',
     });
+  });
+
+  it('serves an online-playback byte range with a 206 response', async () => {
+    const selected = bytes.subarray(3, 8);
+    const openSignedUrl = vi.fn<RecordingAccess['openSignedUrl']>(async () => ({
+      body: chunks(selected),
+      contentType: 'audio/mpeg',
+      sizeBytes: BigInt(selected.byteLength),
+      totalSizeBytes: BigInt(bytes.byteLength),
+      range: { start: 3n, endInclusive: 7n },
+      sha256: 'c'.repeat(64),
+    }));
+    const app = appWith({
+      issueOperatorUrl: vi.fn(),
+      issueIntegrationUrl: vi.fn(),
+      openSignedUrl,
+    });
+
+    const response = await app.request(
+      `/api/v1/recordings/${recordingId}/content?exp=1788696900&aud=${audience}&sig=${signature}`,
+      { headers: { Range: 'bytes=3-7' } },
+    );
+
+    expect(response.status).toBe(206);
+    expect(response.headers.get('accept-ranges')).toBe('bytes');
+    expect(response.headers.get('content-range')).toBe(
+      `bytes 3-7/${bytes.byteLength}`,
+    );
+    expect(response.headers.get('content-length')).toBe('5');
+    await expect(response.arrayBuffer()).resolves.toEqual(
+      selected.buffer.slice(
+        selected.byteOffset,
+        selected.byteOffset + selected.byteLength,
+      ),
+    );
+    expect(openSignedUrl).toHaveBeenCalledWith(
+      recordingId,
+      expect.objectContaining({ rangeHeader: 'bytes=3-7' }),
+    );
   });
 
   it('returns a stable operator error for invalid or unavailable recordings', async () => {
