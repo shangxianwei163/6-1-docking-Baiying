@@ -198,7 +198,12 @@ export async function bootstrapStage2Local(db: Database, now = new Date()) {
           categoryPath: source.categoryPath,
           level: 3,
           active: true,
-          fields: { fixture: 'STAGE2_LOCAL_MOCK' },
+          fields: {
+            fixture: 'STAGE2_LOCAL_MOCK',
+            main_category: '本地联调',
+            sub_category: '婚礼邀约',
+            c_level: '',
+          },
           syncedAt: now,
         })
         .onConflictDoUpdate({
@@ -210,7 +215,12 @@ export async function bootstrapStage2Local(db: Database, now = new Date()) {
             name: '本地联调婚礼邀约',
             categoryPath: source.categoryPath,
             active: true,
-            fields: { fixture: 'STAGE2_LOCAL_MOCK' },
+            fields: {
+              fixture: 'STAGE2_LOCAL_MOCK',
+              main_category: '本地联调',
+              sub_category: '婚礼邀约',
+              c_level: '',
+            },
             syncedAt: now,
           },
         });

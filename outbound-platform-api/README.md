@@ -108,6 +108,7 @@ npm run db:verify:stage2
 - 一个请求生成一个 `intake_batch`；执行层按实际百应公司、话术、线路、场景和映射版本形成 1～N 个 `platform_task`。
 - 批次内归一化手机号和 `guid` 均唯一；跨批次允许同一手机号，但每次新业务发起必须使用新 `guid`。HTTP 重试必须复用原 GUID、原幂等键和原正文。
 - 号码动态变量不限定为六个示例字段，也没有业务字段数量上限；null 按映射的 `OMIT` 省略，强依赖项使用版本化 `DEFAULT`，同时保留字节数和 `sx_*` 命名空间保护。
+- 单个号码缺少话术强依赖变量或转换失败时只过滤该号码，不再拒绝整个 v2 批次；有效号码照常进入百应，被过滤号码按原业务结果结构逐号码回调，沿用 `CALL_FAILED`、以 `status_text=参数错误` 标识，并在 `summary` 返回原因，且不冻结费用。
 - 所有子任务完成创建和导入后，批次启动屏障才放行；部分启动失败会形成 `FAILED/PARTIAL_FAILED` 并唤醒其他子任务执行补偿终止。
 - 百应号码属性同时携带 `sx_platform_item_id` 和签名 `sx_correlation_token`。v2 实时/补偿回调禁止仅凭手机号匹配，并将 `properties`、`collectProperties`、`taskResult` 分开处理。
 - v2 任务完成后先等待 `RECONCILIATION_STALE_TASK_MS` 真实回调宽限期，再用完成通话分页补缺，避免不完整补偿结果抢先占用 GUID 的唯一最终结果。

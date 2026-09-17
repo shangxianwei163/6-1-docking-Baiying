@@ -21,6 +21,7 @@ import {
   consoleTaskRecordSchema,
   batchAcceptedEnvelopeV2Schema,
   flattenOutboundCustomersV2,
+  outboundCallResultInternalEventV2Schema,
   sourceCodeFromSystemV2,
   sourceSystemFromCodeV2,
   taskAcceptedEnvelopeSchema,
@@ -49,6 +50,7 @@ import {
 } from '../billing/money.js';
 import type { SupplierMonthlySettlementService } from '../billing/monthly-settlement-service.js';
 import { shanghaiSettlementMonth } from '../billing/supplier-settlement.js';
+import { maskPhoneForCallback } from '../callback/schema.js';
 import type { Database } from '../db/client.js';
 import {
   accountLedger,
@@ -190,6 +192,7 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
     private readonly options: {
       baiyingCompanyId: string;
       queueName?: string;
+      deliveryQueueName?: string;
       lowBalanceThreshold?: string;
       supplierMonthlySettlementService?: Pick<
         SupplierMonthlySettlementService,
@@ -566,17 +569,29 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
           batchId,
           now,
         );
-        const reservedAmounts = prepared.routes.map((route) =>
-          multiplyMoneyByInteger(
-            route.configuration.price.voiceRate,
-            route.customers.length * route.configuration.price.frozenMinutes,
-          ),
+        const validPhoneCount = prepared.routes.reduce(
+          (total, route) =>
+            total +
+            route.customers.filter(
+              (customer) => customer.mappingIssues.length === 0,
+            ).length,
+          0,
         );
+        const filteredPhoneCount = prepared.phoneCount - validPhoneCount;
+        const reservedAmounts = prepared.routes.map((route) => {
+          const routeValidCount = route.customers.filter(
+            (customer) => customer.mappingIssues.length === 0,
+          ).length;
+          return multiplyMoneyByInteger(
+            route.configuration.price.voiceRate,
+            routeValidCount * route.configuration.price.frozenMinutes,
+          );
+        });
         const totalReservedAmount = reservedAmounts.reduce(
           (total, value) => addMoney(total, value),
           normalizeMoney('0'),
         );
-        if (moneyToMicros(totalReservedAmount) <= 0n) {
+        if (validPhoneCount > 0 && moneyToMicros(totalReservedAmount) <= 0n) {
           throw new ExternalApiFailure(
             'PRICING_NOT_CONFIGURED',
             '当前价格计算出的冻结金额无效',
@@ -585,7 +600,10 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
         }
 
         const account = await lockAccount(tx, prepared.studio.id);
-        if (account.status === 'DISABLED' || account.status === 'OVERDUE') {
+        if (
+          validPhoneCount > 0 &&
+          (account.status === 'DISABLED' || account.status === 'OVERDUE')
+        ) {
           throw new ExternalApiFailure(
             'INSUFFICIENT_BALANCE',
             `影楼账户状态 ${account.status} 不允许创建任务`,
@@ -596,7 +614,10 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
           account.balance,
           account.activeHoldAmount,
         );
-        if (moneyToMicros(available) < moneyToMicros(totalReservedAmount)) {
+        if (
+          validPhoneCount > 0 &&
+          moneyToMicros(available) < moneyToMicros(totalReservedAmount)
+        ) {
           throw new ExternalApiFailure(
             'INSUFFICIENT_BALANCE',
             '影楼可用余额不足',
@@ -620,9 +641,10 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
           requestBodySha256: input.requestHash,
           phoneCount: prepared.phoneCount,
           taskCount: prepared.routes.length,
-          executionStatus: 'ACCEPTED',
+          executionStatus: validPhoneCount > 0 ? 'ACCEPTED' : 'COMPLETED',
           createdAt: now,
           updatedAt: now,
+          completedAt: validPhoneCount > 0 ? null : now,
         });
 
         const taskSummaries: BatchAcceptedEnvelopeV2['data']['tasks'] = [];
@@ -635,6 +657,10 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
           const route = prepared.routes[routeIndex]!;
           const configuration = route.configuration;
           const reservedAmount = reservedAmounts[routeIndex]!;
+          const routeValidCount = route.customers.filter(
+            (customer) => customer.mappingIssues.length === 0,
+          ).length;
+          const routeFilteredCount = route.customers.length - routeValidCount;
           const taskId = this.createId();
           const taskNo = await nextTaskNo(tx, now);
           const taskCategories = Array.from(
@@ -685,47 +711,103 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
             frozenMinutes: configuration.price.frozenMinutes,
             reservedAmount,
             baiyingCompanyId: configuration.sceneCompanyId,
-            importRequestedCount: route.customers.length,
+            executionStatus: routeValidCount > 0 ? 'ACCEPTED' : 'COMPLETED',
+            billingStatus: routeValidCount > 0 ? 'RESERVED' : 'SETTLED',
+            recordingArchiveStatus:
+              routeValidCount > 0 ? 'PENDING' : 'NOT_AVAILABLE',
+            recordingDeliveryStatus:
+              routeValidCount > 0 ? 'PENDING' : 'NOT_APPLICABLE',
+            importRequestedCount: routeValidCount,
+            importFailedCount: routeFilteredCount,
+            providerCompletedAt: routeValidCount > 0 ? null : now,
+            reconciledAt: routeValidCount > 0 ? null : now,
+            closedAt: routeValidCount > 0 ? null : now,
             createdAt: now,
             acceptedAt: now,
             updatedAt: now,
           });
 
-          const callItems = route.customers.map((customer, index) => {
+          const preparedCallItems = route.customers.map((customer, index) => {
             const phone = normalizePhone(customer.phone);
+            const errorReason = mappingErrorReason(customer.mappingIssues);
+            const resultEventId = errorReason ? this.createId() : null;
             return {
-              id: this.createId(),
-              taskId,
-              batchId,
-              ordinal: index + 1,
-              externalCustomerId: customer.guid,
-              dataCategoryId: customer.category.externalId,
-              categoryPath: customer.category.categoryPath,
-              categorySnapshot: {
-                mainCategory: prepared.mainCategory,
-                subCategory: prepared.subCategory,
-                cLevel: customer.cLevel,
+              row: {
+                id: this.createId(),
+                taskId,
+                batchId,
+                ordinal: index + 1,
+                externalCustomerId: customer.guid,
+                dataCategoryId: customer.category.externalId,
+                categoryPath: customer.category.categoryPath,
+                categorySnapshot: {
+                  mainCategory: prepared.mainCategory,
+                  subCategory: prepared.subCategory,
+                  cLevel: customer.cLevel,
+                },
+                phoneCiphertext: this.protector.encryptUtf8(phone),
+                phoneHmac: this.protector.phoneHmac(phone),
+                phoneTail4: phone.slice(-4),
+                customerNameCiphertext: customer.customerName
+                  ? this.protector.encryptUtf8(customer.customerName)
+                  : null,
+                sourceFieldsCiphertext: this.protector.encryptUtf8(
+                  JSON.stringify(customer.variables),
+                ),
+                mappedPropertiesCiphertext: this.protector.encryptUtf8(
+                  JSON.stringify(customer.mappedProperties),
+                ),
+                resultEventId,
+                importStatus: errorReason
+                  ? ('FAILED' as const)
+                  : ('PENDING' as const),
+                importError: errorReason
+                  ? `[MAPPING_VALUE_INVALID] ${errorReason}`
+                  : null,
+                callStatus: errorReason
+                  ? ('FAILED' as const)
+                  : ('PENDING' as const),
+                createdAt: now,
+                updatedAt: now,
               },
-              phoneCiphertext: this.protector.encryptUtf8(phone),
-              phoneHmac: this.protector.phoneHmac(phone),
-              phoneTail4: phone.slice(-4),
-              customerNameCiphertext: customer.customerName
-                ? this.protector.encryptUtf8(customer.customerName)
-                : null,
-              sourceFieldsCiphertext: this.protector.encryptUtf8(
-                JSON.stringify(customer.variables),
-              ),
-              mappedPropertiesCiphertext: this.protector.encryptUtf8(
-                JSON.stringify(configuration.mappedProperties[index]),
-              ),
-              createdAt: now,
-              updatedAt: now,
+              rejectionEvent:
+                resultEventId && errorReason
+                  ? buildFilteredCustomerResultEvent({
+                      eventId: resultEventId,
+                      occurredAt: now,
+                      sourceSystem,
+                      companyCode: prepared.studio.mcCode,
+                      batchId,
+                      taskNo,
+                      guid: customer.guid,
+                      customerName: customer.customerName,
+                      phone,
+                      errorReason,
+                    })
+                  : null,
             };
           });
+          const callItems = preparedCallItems.map((item) => item.row);
           for (let offset = 0; offset < callItems.length; offset += 500) {
             await tx
               .insert(taskCallItems)
               .values(callItems.slice(offset, offset + 500));
+          }
+          const rejectionEvents = preparedCallItems.flatMap((item) =>
+            item.rejectionEvent ? [item.rejectionEvent] : [],
+          );
+          for (let offset = 0; offset < rejectionEvents.length; offset += 500) {
+            await tx.insert(queueOutbox).values(
+              rejectionEvents.slice(offset, offset + 500).map((event) => ({
+                id: event.eventId,
+                eventType: event.eventType,
+                queueName:
+                  this.options.deliveryQueueName ?? 'callback-delivery-queue',
+                payload: event,
+                availableAt: now,
+                createdAt: now,
+              })),
+            );
           }
 
           await tx.insert(taskMappingSnapshots).values({
@@ -735,77 +817,88 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
             mappingRules: configuration.rules,
             createdAt: now,
           });
-          await tx.insert(fundHolds).values({
-            id: this.createId(),
-            studioId: configuration.studio.id,
-            taskId,
-            originalAmount: reservedAmount,
-            remainingAmount: reservedAmount,
-            createdAt: now,
-          });
-          runningHold = addMoney(runningHold, reservedAmount);
-          const availableAfterTask = subtractMoney(
-            account.balance,
-            runningHold,
-          );
-          await tx.insert(accountLedger).values({
-            id: this.createId(),
-            studioId: configuration.studio.id,
-            taskId,
-            entryType: 'TASK_HOLD',
-            amount: negateMoney(reservedAmount),
-            balanceAfter: normalizeMoney(account.balance),
-            availableBalanceAfter: availableAfterTask,
-            businessKey: `TASK_HOLD:${taskId}`,
-            operatorId: input.principal.clientId,
-            reason: `创建外呼批次 ${batchId} 的执行任务冻结余额`,
-            occurredAt: now,
-          });
-          await tx.insert(queueOutbox).values({
-            id: this.createId(),
-            eventType: 'TASK_ACCEPTED',
-            queueName: this.options.queueName ?? 'task-orchestration-queue',
-            payload: {
-              schemaVersion: '1.0',
+          if (routeValidCount > 0) {
+            await tx.insert(fundHolds).values({
+              id: this.createId(),
+              studioId: configuration.studio.id,
               taskId,
-              taskNo,
-              sourceSystem,
-            },
-            availableAt: now,
-            createdAt: now,
-          });
+              originalAmount: reservedAmount,
+              remainingAmount: reservedAmount,
+              createdAt: now,
+            });
+            runningHold = addMoney(runningHold, reservedAmount);
+            const availableAfterTask = subtractMoney(
+              account.balance,
+              runningHold,
+            );
+            await tx.insert(accountLedger).values({
+              id: this.createId(),
+              studioId: configuration.studio.id,
+              taskId,
+              entryType: 'TASK_HOLD',
+              amount: negateMoney(reservedAmount),
+              balanceAfter: normalizeMoney(account.balance),
+              availableBalanceAfter: availableAfterTask,
+              businessKey: `TASK_HOLD:${taskId}`,
+              operatorId: input.principal.clientId,
+              reason: `创建外呼批次 ${batchId} 的执行任务冻结余额`,
+              occurredAt: now,
+            });
+            await tx.insert(queueOutbox).values({
+              id: this.createId(),
+              eventType: 'TASK_ACCEPTED',
+              queueName: this.options.queueName ?? 'task-orchestration-queue',
+              payload: {
+                schemaVersion: '1.0',
+                taskId,
+                taskNo,
+                sourceSystem,
+              },
+              availableAt: now,
+              createdAt: now,
+            });
+          }
           taskSummaries.push({
             task_id: taskId,
             task_no: taskNo,
             phone_count: route.customers.length,
+            valid_phone_count: routeValidCount,
+            filtered_phone_count: routeFilteredCount,
             status_url: `/openapi/v1/outbound/tasks/${taskNo}`,
           });
         }
 
-        const availableAfter = subtractMoney(account.balance, runningHold);
-        await tx
-          .update(studioAccounts)
-          .set({
-            activeHoldAmount: runningHold,
-            status: accountStatusAfter(
-              account.balance,
-              availableAfter,
-              account.status,
-              this.options.lowBalanceThreshold ?? '500.000000',
-            ),
-            lockVersion: sql`${studioAccounts.lockVersion} + 1`,
-            updatedAt: now,
-          })
-          .where(eq(studioAccounts.studioId, prepared.studio.id));
+        if (validPhoneCount > 0) {
+          const availableAfter = subtractMoney(account.balance, runningHold);
+          await tx
+            .update(studioAccounts)
+            .set({
+              activeHoldAmount: runningHold,
+              status: accountStatusAfter(
+                account.balance,
+                availableAfter,
+                account.status,
+                this.options.lowBalanceThreshold ?? '500.000000',
+              ),
+              lockVersion: sql`${studioAccounts.lockVersion} + 1`,
+              updatedAt: now,
+            })
+            .where(eq(studioAccounts.studioId, prepared.studio.id));
+        }
 
         const body = batchAcceptedEnvelopeV2Schema.parse({
           code: 'BATCH_ACCEPTED',
-          message: '外呼批次已受理',
+          message:
+            filteredPhoneCount > 0
+              ? `外呼批次已受理，已过滤 ${filteredPhoneCount} 个参数异常号码`
+              : '外呼批次已受理',
           request_id: input.requestId,
           data: {
             batch_id: batchId,
             execution_status: 'ACCEPTED',
             phone_count: prepared.phoneCount,
+            valid_phone_count: validPhoneCount,
+            filtered_phone_count: filteredPhoneCount,
             task_count: taskSummaries.length,
             tasks: taskSummaries,
             status_url: `/openapi/v2/outbound/batches/${batchId}`,
@@ -827,7 +920,7 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
           createdAt: now,
           updatedAt: now,
           // 批次终态时会收敛为 completedAt + 180 天；运行期间不得过期。
-          expiresAt: addDays(now, 3_650),
+          expiresAt: addDays(now, validPhoneCount > 0 ? 3_650 : 180),
         });
         return { status: 202, body, replayed: false };
       });
@@ -889,6 +982,7 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
         id: platformTasks.id,
         taskNo: platformTasks.taskNo,
         phoneCount: platformTasks.phoneCount,
+        validPhoneCount: platformTasks.importRequestedCount,
         executionStatus: platformTasks.executionStatus,
       })
       .from(platformTasks)
@@ -905,11 +999,20 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
         batch.executionStatus,
       ),
       phone_count: batch.phoneCount,
+      valid_phone_count: tasks.reduce(
+        (total, task) => total + task.validPhoneCount,
+        0,
+      ),
+      filtered_phone_count:
+        batch.phoneCount -
+        tasks.reduce((total, task) => total + task.validPhoneCount, 0),
       task_count: tasks.length,
       tasks: tasks.map((task) => ({
         task_id: task.id,
         task_no: task.taskNo,
         phone_count: task.phoneCount,
+        valid_phone_count: task.validPhoneCount,
+        filtered_phone_count: task.phoneCount - task.validPhoneCount,
         execution_status: task.executionStatus,
         status_url: `/openapi/v1/outbound/tasks/${task.taskNo}`,
       })),
@@ -1454,6 +1557,7 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
         tx,
         { ...input, request: syntheticRequest },
         now,
+        { allowPartialMappingErrors: true },
       );
       const routeKey = createHash('sha256')
         .update(
@@ -1467,7 +1571,24 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
           'utf8',
         )
         .digest('hex');
-      routes.push({ routeKey, customers: routeCustomers, configuration });
+      const issuesByCustomer = new Map<
+        string,
+        typeof configuration.mappingIssues
+      >();
+      for (const issue of configuration.mappingIssues) {
+        const current = issuesByCustomer.get(issue.externalCustomerId) ?? [];
+        current.push(issue);
+        issuesByCustomer.set(issue.externalCustomerId, current);
+      }
+      routes.push({
+        routeKey,
+        customers: routeCustomers.map((customer, index) => ({
+          ...customer,
+          mappedProperties: configuration.mappedProperties[index]!,
+          mappingIssues: issuesByCustomer.get(customer.guid) ?? [],
+        })),
+        configuration,
+      });
     }
     return {
       studio,
@@ -1478,7 +1599,12 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
     };
   }
 
-  private async precheck(tx: Transaction, input: AcceptTaskInput, now: Date) {
+  private async precheck(
+    tx: Transaction,
+    input: AcceptTaskInput,
+    now: Date,
+    options: { allowPartialMappingErrors?: boolean } = {},
+  ) {
     const [studio] = await tx
       .select()
       .from(studios)
@@ -1735,8 +1861,11 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
       );
     }
 
-    const errors: Array<Record<string, unknown>> = [];
-    let errorCount = 0;
+    const mappingIssues: Array<{
+      externalCustomerId: string;
+      variable: string;
+      reason: string;
+    }> = [];
     const mappedProperties = input.request.customers.map((customer) => {
       const mapped: Record<string, string> = {};
       for (const variable of scene.variables) {
@@ -1749,24 +1878,26 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
           });
           if (mappedValue !== undefined) mapped[variable] = mappedValue;
         } catch (error) {
-          errorCount += 1;
-          if (errors.length < 50) {
-            errors.push({
-              externalCustomerId: customer.externalCustomerId,
-              variable,
-              reason: error instanceof Error ? error.message : '变量转换失败',
-            });
-          }
+          mappingIssues.push({
+            externalCustomerId: customer.externalCustomerId,
+            variable,
+            reason: error instanceof Error ? error.message : '变量转换失败',
+          });
         }
       }
       return mapped;
     });
-    if (errors.length) {
+    if (mappingIssues.length && !options.allowPartialMappingErrors) {
+      const issues = mappingIssues.slice(0, 50);
       throw new ExternalApiFailure(
         'MAPPING_VALUE_INVALID',
         '客户字段无法转换为话术变量',
         422,
-        { issues: errors, errorCount, truncated: errorCount > errors.length },
+        {
+          issues,
+          errorCount: mappingIssues.length,
+          truncated: mappingIssues.length > issues.length,
+        },
       );
     }
 
@@ -1783,6 +1914,7 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
       mappingVersion: { id: mappingVersionId, version: scene.mappingVersion },
       rules,
       mappedProperties,
+      mappingIssues,
     };
   }
 
@@ -2133,6 +2265,81 @@ function failureStage(value: string | null) {
     'RECONCILIATION',
   ] as const;
   return supported.find((item) => item === value) ?? 'RECONCILIATION';
+}
+
+function mappingErrorReason(
+  issues: Array<{ variable: string; reason: string }>,
+): string | null {
+  if (!issues.length) return null;
+  return issues
+    .map((issue) =>
+      issue.reason.startsWith(`${issue.variable}:`)
+        ? issue.reason
+        : `${issue.variable}: ${issue.reason}`,
+    )
+    .join('；')
+    .slice(0, 8_192);
+}
+
+export function buildFilteredCustomerResultEvent(input: {
+  eventId: string;
+  occurredAt: Date;
+  sourceSystem: SourceSystem;
+  companyCode: string;
+  batchId: string;
+  taskNo: string;
+  guid: string;
+  customerName: string | null;
+  phone: string;
+  errorReason: string;
+}) {
+  return outboundCallResultInternalEventV2Schema.parse({
+    schemaVersion: '2.1',
+    eventId: input.eventId,
+    eventType: 'OUTBOUND_CALL_RESULT_V2',
+    occurredAt: input.occurredAt.toISOString(),
+    sourceSystem: input.sourceSystem,
+    mcCode: input.companyCode,
+    taskNo: input.taskNo,
+    result: {
+      event_id: input.eventId,
+      event_type: 'OUTBOUND_CALL_RESULT',
+      occurred_at: input.occurredAt.toISOString(),
+      company_code: input.companyCode,
+      batch_id: input.batchId,
+      task_no: input.taskNo,
+      customer: {
+        guid: input.guid,
+        customer_name: input.customerName,
+        phone_masked: maskPhoneForCallback(input.phone),
+      },
+      customer_result: {
+        result_code: 'CALL_FAILED',
+        result_text: '客户参数错误，未发起外呼',
+        contacted: false,
+        intention_level: null,
+        intention_text: '未发起外呼',
+        summary: input.errorReason.slice(0, 2_000),
+        follow_up_required: false,
+        recommended_action: '请补充或修正该客户的必填参数后重新发起外呼',
+        customer_concerns: [],
+        customer_tags: [],
+        collected_data: {},
+      },
+      call: {
+        status: 'FAILED',
+        status_text: '参数错误',
+        called_at: null,
+        duration_seconds: 0,
+      },
+      conversation_logs: [],
+      billing: {
+        billing_minutes: 0,
+        customer_charge: '0.000000',
+        currency: 'CNY',
+      },
+    },
+  });
 }
 
 function normalizePhone(phone: string): string {

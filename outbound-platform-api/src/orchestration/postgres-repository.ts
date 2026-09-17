@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, count, eq, sql } from 'drizzle-orm';
+import { and, count, eq, ne, sql } from 'drizzle-orm';
 import {
   outboundCallResultInternalEventV2Schema,
   taskStartedEventSchema,
@@ -84,7 +84,7 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
         taskName: platformTasks.taskName,
         sourceSystem: platformTasks.sourceSystem,
         mcCode: platformTasks.mcCodeSnapshot,
-        phoneCount: platformTasks.phoneCount,
+        phoneCount: platformTasks.importRequestedCount,
         baiyingCompanyId: platformTasks.baiyingCompanyId,
         baiyingCallJobId: platformTasks.baiyingCallJobId,
         robotDefId: platformTasks.robotDefId,
@@ -108,7 +108,12 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
         mappedPropertiesCiphertext: taskCallItems.mappedPropertiesCiphertext,
       })
       .from(taskCallItems)
-      .where(eq(taskCallItems.taskId, taskId))
+      .where(
+        and(
+          eq(taskCallItems.taskId, taskId),
+          ne(taskCallItems.importStatus, 'FAILED'),
+        ),
+      )
       .orderBy(taskCallItems.ordinal);
     return { ...task, sourceSystem: task.sourceSystem, callItems };
   }
@@ -284,14 +289,19 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
       await tx
         .update(taskCallItems)
         .set({ importStatus: 'SUCCEEDED', importError: null, updatedAt: now })
-        .where(eq(taskCallItems.taskId, taskId));
+        .where(
+          and(
+            eq(taskCallItems.taskId, taskId),
+            eq(taskCallItems.importStatus, 'PENDING'),
+          ),
+        );
       await tx
         .update(platformTasks)
         .set({
           executionStatus: 'IMPORTED',
           importRequestedCount: summary.total,
           importSucceededCount: summary.successNum,
-          importFailedCount: summary.placeFailNum,
+          importFailedCount: sql`${platformTasks.importFailedCount} + ${summary.placeFailNum}`,
           importRepeatedCount: summary.repeatNum,
           updatedAt: now,
           lockVersion: sql`${platformTasks.lockVersion} + 1`,
@@ -343,7 +353,9 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
       }
 
       const ready = children.every(({ executionStatus }) =>
-        ['IMPORTED', 'STARTING', 'CALLING', 'PAUSED'].includes(executionStatus),
+        ['IMPORTED', 'STARTING', 'CALLING', 'PAUSED', 'COMPLETED'].includes(
+          executionStatus,
+        ),
       );
       const now = this.clock();
       if (!ready) {
@@ -502,7 +514,12 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
             importError: message,
             updatedAt: now,
           })
-          .where(eq(taskCallItems.taskId, input.taskId));
+          .where(
+            and(
+              eq(taskCallItems.taskId, input.taskId),
+              eq(taskCallItems.importStatus, 'PENDING'),
+            ),
+          );
       }
       await tx
         .update(platformTasks)
@@ -521,7 +538,7 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
             ? {
                 importRequestedCount: input.importSummary.total,
                 importSucceededCount: input.importSummary.successNum,
-                importFailedCount: input.importSummary.placeFailNum,
+                importFailedCount: sql`${platformTasks.importFailedCount} + ${input.importSummary.placeFailNum}`,
                 importRepeatedCount: input.importSummary.repeatNum,
               }
             : {}),

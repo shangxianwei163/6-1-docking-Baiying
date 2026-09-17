@@ -138,18 +138,24 @@ HTTP 状态码：`202 Accepted`
     "batch_id": "4f4f0d65-8d01-48c9-b87f-71569344cb63",
     "execution_status": "ACCEPTED",
     "phone_count": 2,
+    "valid_phone_count": 2,
+    "filtered_phone_count": 0,
     "task_count": 2,
     "tasks": [
       {
         "task_id": "c5f1d5e0-1c67-4d02-a7a3-58666ea55792",
         "task_no": "PT-20260909-00025",
         "phone_count": 1,
+        "valid_phone_count": 1,
+        "filtered_phone_count": 0,
         "status_url": "/openapi/v1/outbound/tasks/PT-20260909-00025"
       },
       {
         "task_id": "0871e61e-7749-4684-9cb6-aad28c220a5a",
         "task_no": "PT-20260909-00026",
         "phone_count": 1,
+        "valid_phone_count": 1,
+        "filtered_phone_count": 0,
         "status_url": "/openapi/v1/outbound/tasks/PT-20260909-00026"
       }
     ],
@@ -158,7 +164,9 @@ HTTP 状态码：`202 Accepted`
 }
 ```
 
-`202` 只表示平台已经完整受理，不表示百应已经拨号。`task_count` 可能为 1，也可能大于 1。
+`202` 只表示平台已经完整受理，不表示百应已经拨号。`task_count` 可能为 1，也可能大于 1。`phone_count` 是 ERP/CRM 提交的号码总数，`valid_phone_count` 是实际进入百应拨打的号码数，`filtered_phone_count` 是因话术变量缺失或转换失败而被过滤的号码数；三者满足 `phone_count = valid_phone_count + filtered_phone_count`。
+
+客户级参数错误不会再导致整批失败：平台会继续处理其他有效号码，并针对每个被过滤号码投递一次业务结果回调。分类不存在、分类未绑定话术、映射未发布、线路不可用等批次级配置错误仍会直接返回 `4xx`，不会创建批次。
 
 影楼可用余额不足时返回 `409 Conflict`，ERP/CRM 可以直接展示 `recharge_qr_code_url` 指向的图片供用户扫码充值：
 
@@ -352,6 +360,52 @@ Content-Type: application/json
 }
 ```
 
+被过滤号码的回调仍使用同一地址、签名和完整的业务结果结构。平台针对每个被过滤号码分别投递一次，`Data.customer.guid` 原样返回 ERP/CRM 发起批次时传入的 `guid`：
+
+```json
+{
+  "Token": "^******^",
+  "Data": {
+    "event_id": "8d87e451-8aad-4a48-90a1-b6e38429a965",
+    "event_type": "OUTBOUND_CALL_RESULT",
+    "occurred_at": "2026-09-17T12:00:00+08:00",
+    "company_code": "5903679116",
+    "batch_id": "59fd515e-00f2-4d62-93ec-8883fb3aa090",
+    "task_no": "PT-20260917-00001",
+    "customer": {
+      "guid": "11111111-1111-4111-8111-111111111101",
+      "customer_name": null,
+      "phone_masked": "135****0001"
+    },
+    "customer_result": {
+      "result_code": "CALL_FAILED",
+      "result_text": "客户参数错误，未发起外呼",
+      "contacted": false,
+      "intention_level": null,
+      "intention_text": "未发起外呼",
+      "summary": "客户称呼: 来源字段 customer_name 为空",
+      "follow_up_required": false,
+      "recommended_action": "请补充或修正该客户的必填参数后重新发起外呼",
+      "customer_concerns": [],
+      "customer_tags": [],
+      "collected_data": {}
+    },
+    "call": {
+      "status": "FAILED",
+      "status_text": "参数错误",
+      "called_at": null,
+      "duration_seconds": 0
+    },
+    "conversation_logs": [],
+    "billing": {
+      "billing_minutes": 0,
+      "customer_charge": "0.000000",
+      "currency": "CNY"
+    }
+  }
+}
+```
+
 顶层 `Token` 固定为 `^******^`，必须按原始字面值发送，不转义、不掩码、不派生。ERP/CRM 应优先读取 `Data.customer_result`，不需要自行分析百应状态码或对话内容：
 
 | 字段                                         | 类型          | 说明                                                        |
@@ -389,17 +443,17 @@ Content-Type: application/json
 
 `result_code` 的取值：
 
-| 值              | 含义                                     |
-| --------------- | ---------------------------------------- |
-| `HIGH_INTENT`   | 高意向客户                               |
-| `MEDIUM_INTENT` | 中意向客户                               |
-| `LOW_INTENT`    | 低意向客户                               |
-| `NO_INTENT`     | 当前无意向                               |
-| `UNREACHED`     | 未接通客户                               |
-| `CALL_FAILED`   | 外呼任务或线路失败                       |
-| `UNKNOWN`       | 已接通但意向暂不明确，或没有足够数据判断 |
+| 值                | 含义                                     |
+| ----------------- | ---------------------------------------- |
+| `HIGH_INTENT`     | 高意向客户                               |
+| `MEDIUM_INTENT`   | 中意向客户                               |
+| `LOW_INTENT`      | 低意向客户                               |
+| `NO_INTENT`       | 当前无意向                               |
+| `UNREACHED`       | 未接通客户                               |
+| `CALL_FAILED`     | 外呼任务、线路失败或号码参数错误         |
+| `UNKNOWN`         | 已接通但意向暂不明确，或没有足够数据判断 |
 
-默认意向映射为：`A/S/HIGH/高意向` → `HIGH_INTENT`，`B/MEDIUM/中意向` → `MEDIUM_INTENT`，`C/LOW/低意向` → `LOW_INTENT`，`D/NONE/无意向/不感兴趣` → `NO_INTENT`。未接通和外呼失败分别优先归为 `UNREACHED` 和 `CALL_FAILED`；未识别的自定义意向原值仍保留在 `intention_level`，同时将 `result_code` 设为 `UNKNOWN`。
+默认意向映射为：`A/S/HIGH/高意向` → `HIGH_INTENT`，`B/MEDIUM/中意向` → `MEDIUM_INTENT`，`C/LOW/低意向` → `LOW_INTENT`，`D/NONE/无意向/不感兴趣` → `NO_INTENT`。未接通和外呼失败分别优先归为 `UNREACHED` 和 `CALL_FAILED`；未识别的自定义意向原值仍保留在 `intention_level`，同时将 `result_code` 设为 `UNKNOWN`。客户在拨号前因必填变量缺失或转换失败被过滤时，沿用 `CALL_FAILED`，将 `call.status` 设为 `FAILED`、`call.status_text` 设为 `参数错误`，并在现有 `customer_result.summary` 中返回具体原因；该号码不会导入百应，也不会产生费用。
 
 每个 `guid` 只投递一个最终业务结果。`summary` 和 `recommended_action` 优先采用百应任务结果或采集字段；百应没有返回对应内容时，平台根据通话状态、意向和关注点生成固定规则文案。Body 不包含完整手机号、呼叫前原始动态变量、百应任务/机器人/线路 ID 或平台内部 `sx_*` 字段。
 

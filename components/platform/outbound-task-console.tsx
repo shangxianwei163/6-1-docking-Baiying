@@ -720,7 +720,26 @@ function TaskSummary({
           icon={PhoneCall}
           label="号码 / 通话"
           value={`${task.counts.callInstances.toLocaleString('zh-CN')} / ${task.phoneCount.toLocaleString('zh-CN')}`}
-          note={`成功导入 ${task.importSummary.succeeded.toLocaleString('zh-CN')}`}
+          note={
+            <span className="real-task-import-breakdown">
+              <span>
+                成功导入{' '}
+                <strong>
+                  {task.importSummary.succeeded.toLocaleString('zh-CN')}
+                </strong>
+              </span>
+              <span
+                className={
+                  task.importSummary.failed > 0 ? 'has-import-failures' : undefined
+                }
+              >
+                导入失败{' '}
+                <strong>
+                  {task.importSummary.failed.toLocaleString('zh-CN')}
+                </strong>
+              </span>
+            </span>
+          }
         />
         <SummaryMetric
           icon={FileAudio}
@@ -1096,7 +1115,7 @@ function SummaryMetric({
   icon: typeof PhoneCall;
   label: string;
   value: string;
-  note: string;
+  note: React.ReactNode;
 }) {
   return (
     <article>

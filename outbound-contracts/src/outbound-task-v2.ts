@@ -140,6 +140,8 @@ export const batchTaskSummaryV2Schema = z.object({
   task_id: z.uuid(),
   task_no: z.string().regex(/^PT-\d{8}-\d{5,}$/),
   phone_count: z.number().int().positive().max(10_000),
+  valid_phone_count: z.number().int().nonnegative().max(10_000).optional(),
+  filtered_phone_count: z.number().int().nonnegative().max(10_000).optional(),
   status_url: z.string().startsWith('/openapi/v1/outbound/tasks/'),
 });
 
@@ -147,6 +149,8 @@ export const batchAcceptedV2Schema = z.object({
   batch_id: z.uuid(),
   execution_status: z.literal('ACCEPTED'),
   phone_count: z.number().int().positive().max(10_000),
+  valid_phone_count: z.number().int().nonnegative().max(10_000).optional(),
+  filtered_phone_count: z.number().int().nonnegative().max(10_000).optional(),
   task_count: z.number().int().positive(),
   tasks: z.array(batchTaskSummaryV2Schema).min(1),
   status_url: z.string().startsWith('/openapi/v2/outbound/batches/'),
@@ -167,6 +171,8 @@ export const batchDetailV2Schema = z.object({
   sub_category: z.string().min(1).max(200),
   execution_status: intakeBatchStatusSchema,
   phone_count: z.number().int().positive().max(10_000),
+  valid_phone_count: z.number().int().nonnegative().max(10_000).optional(),
+  filtered_phone_count: z.number().int().nonnegative().max(10_000).optional(),
   task_count: z.number().int().positive(),
   tasks: z.array(
     batchTaskSummaryV2Schema.extend({

@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { eq, inArray, sql } from 'drizzle-orm';
 import {
+  batchAcceptedEnvelopeV2Schema,
   externalApiErrorSchema,
+  outboundCallResultInternalEventV2Schema,
   outboundCallPageEnvelopeSchema,
   taskAcceptedEnvelopeSchema,
   taskDetailEnvelopeSchema,
@@ -13,6 +15,7 @@ import { readConfig } from '../config.js';
 import { createApp } from '../http/app.js';
 import { PostgresMappingRepository } from '../mapping/postgres-repository.js';
 import { PostgresExternalRequestAuthenticator } from '../openapi/authenticator.js';
+import { PostgresTaskOrchestrationRepository } from '../orchestration/postgres-repository.js';
 import { PostgresOutboundTaskService } from '../outbound-task/service.js';
 import { LocalDataProtector } from '../security/data-protector.js';
 import { bootstrapStage2Local } from './bootstrap-stage2-local.js';
@@ -21,6 +24,7 @@ import {
   accountLedger,
   fundHolds,
   idempotencyRecords,
+  intakeBatches,
   platformTasks,
   queueOutbox,
   studioAccounts,
@@ -38,6 +42,10 @@ async function main() {
   const database = createDatabase(config.DATABASE_URL);
   let taskId: string | undefined;
   let reservedAmount: string | undefined;
+  let v2BatchId: string | undefined;
+  let v2TaskId: string | undefined;
+  let v2TaskNo: string | undefined;
+  let v2ReservedAmount: string | undefined;
   try {
     await bootstrapStage2Local(database.db);
     const app = createApp({
@@ -56,6 +64,7 @@ async function main() {
         {
           baiyingCompanyId: config.BAIYING_COMPANY_ID ?? 'LOCAL-MOCK',
           queueName: config.TASK_ORCHESTRATION_QUEUE_NAME,
+          deliveryQueueName: config.CALLBACK_DELIVERY_QUEUE_NAME,
         },
       ),
     });
@@ -312,6 +321,149 @@ async function main() {
     assert.ok(!storedItem.phoneCiphertext.includes('13800138000'));
     assert.ok(!storedItem.sourceFieldsCiphertext.includes('陈顾问'));
 
+    const v2GuidValid = `v2-valid-${suffix}`;
+    const v2GuidFiltered = `v2-filtered-${suffix}`;
+    const v2Response = await tokenRequest({
+      app,
+      accessToken,
+      method: 'POST',
+      path: '/openapi/v2/outbound/tasks',
+      rawBody: Buffer.from(
+        JSON.stringify({
+          main_category: '本地联调',
+          sub_category: '婚礼邀约',
+          source: 0,
+          company_code: 'MC-ZTY-001',
+          customer_list: [
+            {
+              c_level: '',
+              c_info_list: [
+                {
+                  phone: '13800138001',
+                  guid: v2GuidValid,
+                  customer_name: '有效客户',
+                  salutation: '李女士',
+                  appointment_date: '2026-09-21',
+                  consultant_name: '陈顾问',
+                },
+                {
+                  phone: '13800138002',
+                  guid: v2GuidFiltered,
+                  customer_name: null,
+                  appointment_date: '2026-09-22',
+                  consultant_name: '陈顾问',
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+      idempotencyKey: `verify-v2-${suffix}`,
+    });
+    assert.equal(v2Response.status, 202);
+    const v2Accepted = batchAcceptedEnvelopeV2Schema.parse(
+      await v2Response.json(),
+    );
+    v2BatchId = v2Accepted.data.batch_id;
+    v2TaskId = v2Accepted.data.tasks[0]!.task_id;
+    v2TaskNo = v2Accepted.data.tasks[0]!.task_no;
+    assert.equal(v2Accepted.data.phone_count, 2);
+    assert.equal(v2Accepted.data.valid_phone_count, 1);
+    assert.equal(v2Accepted.data.filtered_phone_count, 1);
+    assert.equal(v2Accepted.data.tasks[0]!.valid_phone_count, 1);
+    assert.equal(v2Accepted.data.tasks[0]!.filtered_phone_count, 1);
+
+    const [v2Task] = await database.db
+      .select({
+        reservedAmount: platformTasks.reservedAmount,
+        phoneCount: platformTasks.phoneCount,
+        importRequestedCount: platformTasks.importRequestedCount,
+        importFailedCount: platformTasks.importFailedCount,
+      })
+      .from(platformTasks)
+      .where(eq(platformTasks.id, v2TaskId))
+      .limit(1);
+    assert.ok(v2Task);
+    v2ReservedAmount = v2Task.reservedAmount;
+    assert.equal(v2Task.phoneCount, 2);
+    assert.equal(v2Task.importRequestedCount, 1);
+    assert.equal(v2Task.importFailedCount, 1);
+
+    const v2Items = await database.db
+      .select({
+        id: taskCallItems.id,
+        externalCustomerId: taskCallItems.externalCustomerId,
+        importStatus: taskCallItems.importStatus,
+        importError: taskCallItems.importError,
+        callStatus: taskCallItems.callStatus,
+        resultEventId: taskCallItems.resultEventId,
+      })
+      .from(taskCallItems)
+      .where(eq(taskCallItems.taskId, v2TaskId));
+    const validItem = v2Items.find(
+      (item) => item.externalCustomerId === v2GuidValid,
+    );
+    const filteredItem = v2Items.find(
+      (item) => item.externalCustomerId === v2GuidFiltered,
+    );
+    assert.equal(validItem?.importStatus, 'PENDING');
+    assert.equal(validItem?.resultEventId, null);
+    assert.equal(filteredItem?.importStatus, 'FAILED');
+    assert.equal(filteredItem?.callStatus, 'FAILED');
+    assert.match(
+      filteredItem?.importError ?? '',
+      /^\[MAPPING_VALUE_INVALID\]/,
+    );
+    assert.ok(filteredItem?.resultEventId);
+
+    const orchestrationTask = await new PostgresTaskOrchestrationRepository(
+      database.db,
+    ).getTask(v2TaskId);
+    assert.equal(orchestrationTask?.phoneCount, 1);
+    assert.equal(orchestrationTask?.callItems.length, 1);
+    assert.equal(orchestrationTask?.callItems[0]?.id, validItem?.id);
+
+    const v2Outbox = await database.db
+      .select({
+        eventType: queueOutbox.eventType,
+        payload: queueOutbox.payload,
+      })
+      .from(queueOutbox)
+      .where(sql`${queueOutbox.payload}->>'taskNo' = ${v2TaskNo}`);
+    assert.equal(
+      v2Outbox.filter((event) => event.eventType === 'TASK_ACCEPTED').length,
+      1,
+    );
+    const parameterErrorEvent = v2Outbox.find(
+      (event) => event.eventType === 'OUTBOUND_CALL_RESULT_V2',
+    );
+    assert.ok(parameterErrorEvent);
+    const parameterErrorPayload = outboundCallResultInternalEventV2Schema.parse(
+      parameterErrorEvent.payload,
+    );
+    assert.equal(parameterErrorPayload.schemaVersion, '2.1');
+    if (parameterErrorPayload.schemaVersion !== '2.1') {
+      throw new Error('参数错误结果回调必须使用 2.1 合约');
+    }
+    assert.equal(
+      parameterErrorPayload.result.customer_result.result_code,
+      'CALL_FAILED',
+    );
+    assert.equal(parameterErrorPayload.result.customer.guid, v2GuidFiltered);
+    assert.equal(parameterErrorPayload.result.call.status_text, '参数错误');
+    assert.match(
+      parameterErrorPayload.result.customer_result.summary,
+      /salutation 为空/,
+    );
+    assert.equal(
+      Object.hasOwn(parameterErrorPayload.result.customer_result, 'error_reason'),
+      false,
+    );
+    assert.equal(
+      parameterErrorPayload.result.billing.customer_charge,
+      '0.000000',
+    );
+
     console.info(
       JSON.stringify(
         {
@@ -324,6 +476,8 @@ async function main() {
             'task, call item, snapshot, hold, ledger, idempotency and Outbox commit atomically',
             'task detail and pre-provider empty call page satisfy contracts',
             'phone and customer fields are encrypted at rest',
+            'v2 filters only mapping-invalid customers before Baiying import',
+            'filtered customers receive zero-charge business-result callbacks',
           ],
           taskNo: accepted.data.taskNo,
           reservedAmount,
@@ -333,6 +487,15 @@ async function main() {
       ),
     );
   } finally {
+    if (v2BatchId && v2TaskId && v2TaskNo && v2ReservedAmount) {
+      await cleanup(
+        database.db,
+        v2TaskId,
+        v2ReservedAmount,
+        v2BatchId,
+        v2TaskNo,
+      );
+    }
     if (taskId && reservedAmount) {
       await cleanup(database.db, taskId, reservedAmount);
     }
@@ -366,6 +529,8 @@ async function cleanup(
   db: ReturnType<typeof createDatabase>['db'],
   taskId: string,
   reservedAmount: string,
+  batchId?: string,
+  taskNo?: string,
 ) {
   await db.transaction(async (tx) => {
     const [task] = await tx
@@ -378,7 +543,11 @@ async function cleanup(
       .where(eq(idempotencyRecords.taskId, taskId));
     await tx
       .delete(queueOutbox)
-      .where(sql`${queueOutbox.payload}->>'taskId' = ${taskId}`);
+      .where(
+        taskNo
+          ? sql`${queueOutbox.payload}->>'taskId' = ${taskId} OR ${queueOutbox.payload}->>'taskNo' = ${taskNo}`
+          : sql`${queueOutbox.payload}->>'taskId' = ${taskId}`,
+      );
     await tx.delete(accountLedger).where(eq(accountLedger.taskId, taskId));
     await tx.delete(fundHolds).where(eq(fundHolds.taskId, taskId));
     await tx
@@ -386,6 +555,9 @@ async function cleanup(
       .where(eq(taskMappingSnapshots.taskId, taskId));
     await tx.delete(taskCallItems).where(eq(taskCallItems.taskId, taskId));
     await tx.delete(platformTasks).where(eq(platformTasks.id, taskId));
+    if (batchId) {
+      await tx.delete(intakeBatches).where(eq(intakeBatches.id, batchId));
+    }
     if (task) {
       await tx
         .update(studioAccounts)

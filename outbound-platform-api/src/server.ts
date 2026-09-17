@@ -110,6 +110,7 @@ const outboundTaskService = new PostgresOutboundTaskService(
   {
     baiyingCompanyId: config.BAIYING_COMPANY_ID ?? 'LOCAL-MOCK',
     queueName: config.TASK_ORCHESTRATION_QUEUE_NAME,
+    deliveryQueueName: config.CALLBACK_DELIVERY_QUEUE_NAME,
     supplierMonthlySettlementService,
   },
 );

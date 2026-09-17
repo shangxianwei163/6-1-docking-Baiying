@@ -626,7 +626,9 @@ export class PostgresIntegrationLogService implements IntegrationLogService {
       };
     }
     if (operationType === 'IMPORT') {
-      const items = await this.listTaskCallItems(task.id);
+      const items = (await this.listTaskCallItems(task.id)).filter(
+        (item) => !item.importError?.startsWith('[MAPPING_VALUE_INVALID] '),
+      );
       return {
         callJobId: task.baiyingCallJobId,
         companyId: task.baiyingCompanyId,

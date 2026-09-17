@@ -119,12 +119,16 @@ function setup() {
         batch_id: 'b37dd640-3b48-4e9c-b719-cf650fc9907a',
         execution_status: 'ACCEPTED' as const,
         phone_count: 1,
+        valid_phone_count: 1,
+        filtered_phone_count: 0,
         task_count: 1,
         tasks: [
           {
             task_id: 'cf9806bb-2166-43b0-8fdc-c7bb48115880',
             task_no: 'PT-20260906-00001',
             phone_count: 1,
+            valid_phone_count: 1,
+            filtered_phone_count: 0,
             status_url: '/openapi/v1/outbound/tasks/PT-20260906-00001',
           },
         ],
@@ -196,7 +200,7 @@ describe('external outbound task HTTP API', () => {
   });
 
   it('accepts the nested v2 batch and hashes its normalized contract', async () => {
-    const { app, authenticate, acceptV2 } = setup();
+    const { app, authenticate, acceptV2, completeExternalRequestLog } = setup();
     const rawBody = JSON.stringify(validV2Request);
     const response = await app.request('/openapi/v2/outbound/tasks', {
       method: 'POST',
@@ -224,6 +228,16 @@ describe('external outbound task HTTP API', () => {
         idempotencyKey: 'idempotency-v2-001',
         requestHash: rawBodySha256(new TextEncoder().encode(rawBody)),
         request: expect.objectContaining({ company_code: '5903679116' }),
+      }),
+    );
+    expect(completeExternalRequestLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        responseStatus: 202,
+        responseSummary: expect.objectContaining({
+          phoneCount: 1,
+          validPhoneCount: 1,
+          filteredPhoneCount: 0,
+        }),
       }),
     );
   });

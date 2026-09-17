@@ -2391,6 +2391,8 @@ function externalResponseSummary(
     taskNo: data?.taskNo ?? data?.task_no,
     executionStatus: data?.executionStatus ?? data?.execution_status,
     phoneCount: data?.phoneCount ?? data?.phone_count,
+    validPhoneCount: data?.validPhoneCount ?? data?.valid_phone_count,
+    filteredPhoneCount: data?.filteredPhoneCount ?? data?.filtered_phone_count,
     taskCount: data?.taskCount ?? data?.task_count,
     errorCount: details?.errorCount,
     truncated: details?.truncated,

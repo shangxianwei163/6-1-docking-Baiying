@@ -62,7 +62,7 @@ const commonErrors: Row[] = [
   ['404', 'HTTP', '否', '资源不存在，或当前客户端无权访问'],
   ['409', 'HTTP', '否', '幂等冲突、余额不足、状态冲突或重放请求'],
   ['413', 'HTTP', '否', '请求体超过 25 MiB 上限'],
-  ['422', 'HTTP', '否', '分类、话术、线路、映射或业务规则未通过'],
+  ['422', 'HTTP', '否', '批次级分类、话术、线路、映射配置或业务规则未通过'],
   ['503', 'HTTP', '否', '依赖暂时不可用，原幂等键退避重试'],
 ];
 const requestRules: Rule[] = [
@@ -177,18 +177,24 @@ const createBatchResponse = `{
     "batch_id": "4f4f0d65-8d01-48c9-b87f-71569344cb63",
     "execution_status": "ACCEPTED",
     "phone_count": 2,
+    "valid_phone_count": 2,
+    "filtered_phone_count": 0,
     "task_count": 2,
     "tasks": [
       {
         "task_id": "c5f1d5e0-1c67-4d02-a7a3-58666ea55792",
         "task_no": "PT-20260909-00025",
         "phone_count": 1,
+        "valid_phone_count": 1,
+        "filtered_phone_count": 0,
         "status_url": "/openapi/v1/outbound/tasks/PT-20260909-00025"
       },
       {
         "task_id": "0871e61e-7749-4684-9cb6-aad28c220a5a",
         "task_no": "PT-20260909-00026",
         "phone_count": 1,
+        "valid_phone_count": 1,
+        "filtered_phone_count": 0,
         "status_url": "/openapi/v1/outbound/tasks/PT-20260909-00026"
       }
     ],
@@ -217,12 +223,16 @@ const batchDetailResponse = `{
     "sub_category": "孕妈",
     "execution_status": "RUNNING",
     "phone_count": 2,
+    "valid_phone_count": 2,
+    "filtered_phone_count": 0,
     "task_count": 2,
     "tasks": [
       {
         "task_id": "c5f1d5e0-1c67-4d02-a7a3-58666ea55792",
         "task_no": "PT-20260909-00025",
         "phone_count": 1,
+        "valid_phone_count": 1,
+        "filtered_phone_count": 0,
         "execution_status": "CALLING",
         "status_url": "/openapi/v1/outbound/tasks/PT-20260909-00025"
       }
@@ -279,6 +289,18 @@ const createBatchResponseParams: Row[] = [
     '批次初始状态，受理成功时为 ACCEPTED',
   ],
   ['data.phone_count', 'Response · integer', '是', '本批次受理号码总数'],
+  [
+    'data.valid_phone_count',
+    'Response · integer',
+    '是',
+    '校验通过并会导入百应的号码数',
+  ],
+  [
+    'data.filtered_phone_count',
+    'Response · integer',
+    '是',
+    '因话术变量缺失或转换失败而过滤的号码数',
+  ],
   ['data.task_count', 'Response · integer', '是', '平台拆分出的执行任务数量'],
   ['data.tasks', 'Response · array', '是', '本批次全部执行任务'],
   ['data.tasks[].task_id', 'Response · uuid', '是', '平台执行任务 ID'],
@@ -288,6 +310,12 @@ const createBatchResponseParams: Row[] = [
     'Response · integer',
     '是',
     '当前执行任务包含的号码数量',
+  ],
+  [
+    'data.tasks[].valid_phone_count / filtered_phone_count',
+    'Response · integer',
+    '是',
+    '当前任务实际拨打与参数错误过滤的号码数',
   ],
   [
     'data.tasks[].status_url',
@@ -309,10 +337,22 @@ const batchDetailResponseParams: Row[] = [
   ['data.sub_category', 'Response · string', '是', '二级分类'],
   ['data.execution_status', 'Response · enum', '是', '批次汇总执行状态'],
   ['data.phone_count', 'Response · integer', '是', '批次号码总数'],
+  [
+    'data.valid_phone_count / filtered_phone_count',
+    'Response · integer',
+    '是',
+    '实际拨打与参数错误过滤的号码数',
+  ],
   ['data.task_count', 'Response · integer', '是', '执行任务总数'],
   ['data.tasks', 'Response · array', '是', '批次下全部执行任务及其状态'],
   ['data.tasks[].task_id', 'Response · uuid', '是', '平台执行任务 ID'],
   ['data.tasks[].task_no', 'Response · string', '是', '平台任务编号'],
+  [
+    'data.tasks[].valid_phone_count / filtered_phone_count',
+    'Response · integer',
+    '是',
+    '当前任务实际拨打与参数错误过滤的号码数',
+  ],
   [
     'data.tasks[].execution_status',
     'Response · enum',
@@ -575,6 +615,10 @@ const apiDocs: ApiDoc[] = [
         '业务字段种类和数量不设固定上限；仍限制变量名 128 字节、单值 8 KiB、单号码变量 128 KiB、请求体 25 MiB。',
       ],
       [
+        '客户级参数错误',
+        '话术必填变量缺失或转换失败时只过滤对应号码，其余号码继续执行；每个被过滤号码均使用原业务结果结构单独回调，原样返回 guid，以 status_text=参数错误 标识，并在 summary 返回原因。',
+      ],
+      [
         '全批屏障',
         '所有子任务全部创建并导入成功后才统一启动；任一子任务失败时不会放行剩余任务。',
       ],
@@ -816,6 +860,10 @@ const apiDocs: ApiDoc[] = [
       [
         '业务分类',
         'result_code 为 HIGH_INTENT、MEDIUM_INTENT、LOW_INTENT、NO_INTENT、UNREACHED、CALL_FAILED 或 UNKNOWN。',
+      ],
+      [
+        '参数错误号码',
+        '不会导入百应或产生费用；每个号码单独回传，Data.customer.guid 原样返回入参 guid，result_code 沿用 CALL_FAILED，call.status_text 为“参数错误”，具体原因读取 customer_result.summary。',
       ],
       [
         '数据范围',

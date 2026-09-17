@@ -3,6 +3,7 @@ import { ExternalApiFailure } from '../openapi/errors.js';
 import { transformMappedValue } from '../mapping/transform.js';
 import {
   aggregateBatchStatus,
+  buildFilteredCustomerResultEvent,
   buildV2MappingSourceRecord,
   buildPlatformTaskName,
   describeBaiyingJobStatus,
@@ -57,6 +58,44 @@ describe('outbound task helpers', () => {
         sourceRecord: buildV2MappingSourceRecord({}, null),
       }),
     ).toThrow('客户称呼: 来源字段 customer_name 为空');
+  });
+
+  it('builds an immediate non-billable callback for a filtered customer', () => {
+    const event = buildFilteredCustomerResultEvent({
+      eventId: '22222222-2222-4222-8222-222222222222',
+      occurredAt: new Date('2026-09-17T04:00:00.000Z'),
+      sourceSystem: 'ERP',
+      companyCode: '5903679116',
+      batchId: '33333333-3333-4333-8333-333333333333',
+      taskNo: 'PT-20260917-00001',
+      guid: 'customer-missing-name',
+      customerName: null,
+      phone: '13500000001',
+      errorReason: '客户称呼: 来源字段 customer_name 为空',
+    });
+    expect(event.schemaVersion).toBe('2.1');
+    if (event.schemaVersion !== '2.1') {
+      throw new Error('参数错误回调必须使用 2.1 合约');
+    }
+
+    expect(event.result.customer_result).toMatchObject({
+      result_code: 'CALL_FAILED',
+      contacted: false,
+      summary: '客户称呼: 来源字段 customer_name 为空',
+    });
+    expect(event.result.customer_result).not.toHaveProperty('error_reason');
+    expect(event.result.customer.guid).toBe('customer-missing-name');
+    expect(event.result.call).toEqual({
+      status: 'FAILED',
+      status_text: '参数错误',
+      called_at: null,
+      duration_seconds: 0,
+    });
+    expect(event.result.billing).toEqual({
+      billing_minutes: 0,
+      customer_charge: '0.000000',
+      currency: 'CNY',
+    });
   });
 
   it('persists a non-sensitive operations metric when v2 category matching is ambiguous', async () => {

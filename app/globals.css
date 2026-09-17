@@ -9218,6 +9218,24 @@
   font-size: 8px;
   font-style: normal;
 }
+.real-task-import-breakdown {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+.real-task-import-breakdown > span + span {
+  border-left: 1px solid #dce6e0;
+  padding-left: 7px;
+}
+.real-task-import-breakdown strong {
+  color: #52675d;
+  font-weight: 700;
+}
+.real-task-import-breakdown .has-import-failures,
+.real-task-import-breakdown .has-import-failures strong {
+  color: #b34d43;
+}
 .real-task-failure {
   display: flex;
   gap: 10px;

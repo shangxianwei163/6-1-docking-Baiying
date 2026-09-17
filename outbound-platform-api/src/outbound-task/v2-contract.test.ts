@@ -192,6 +192,71 @@ describe('ERP/CRM v2 outbound contract', () => {
     ).toBe(false);
   });
 
+  it('uses only existing callback fields for customers filtered before dialing', () => {
+    const result = {
+      event_id: '22222222-2222-4222-8222-222222222224',
+      event_type: 'OUTBOUND_CALL_RESULT',
+      occurred_at: '2026-09-17T12:00:00+08:00',
+      company_code: '5903679116',
+      batch_id: '59fd515e-00f2-4d62-93ec-8883fb3aa090',
+      task_no: 'PT-20260917-00001',
+      customer: {
+        guid: 'customer-missing-name',
+        customer_name: null,
+        phone_masked: '135****0001',
+      },
+      customer_result: {
+        result_code: 'CALL_FAILED',
+        result_text: '客户参数错误，未发起外呼',
+        contacted: false,
+        intention_level: null,
+        intention_text: '未发起外呼',
+        summary: '客户称呼: 来源字段 customer_name 为空',
+        follow_up_required: false,
+        recommended_action: '请补充或修正该客户的必填参数后重新发起外呼',
+        customer_concerns: [],
+        customer_tags: [],
+        collected_data: {},
+      },
+      call: {
+        status: 'FAILED',
+        status_text: '参数错误',
+        called_at: null,
+        duration_seconds: 0,
+      },
+      conversation_logs: [],
+      billing: {
+        billing_minutes: 0,
+        customer_charge: '0.000000',
+        currency: 'CNY',
+      },
+    };
+    const parsed = outboundCallResultV2Schema.parse(result);
+
+    expect(parsed.customer_result.result_code).toBe('CALL_FAILED');
+    expect(parsed.customer_result.summary).toContain('customer_name');
+    expect(parsed.customer_result).not.toHaveProperty('error_reason');
+    expect(parsed.customer.guid).toBe('customer-missing-name');
+    expect(
+      outboundCallResultV2Schema.safeParse({
+        ...result,
+        customer_result: {
+          ...result.customer_result,
+          error_reason: '客户称呼: 来源字段 customer_name 为空',
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      outboundCallResultV2Schema.safeParse({
+        ...result,
+        customer_result: {
+          ...result.customer_result,
+          result_code: 'PARAMETER_ERROR',
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   it('accepts only the fixed-token minimal recording callback', () => {
     const data = {
       event_id: '22222222-2222-4222-8222-222222222223',
