@@ -11,6 +11,7 @@ import {
   TaskNotFoundError,
   type OperationHandle,
   type OrchestrationTask,
+  type TaskOperationFailure,
   type TaskOrchestrationRepository,
 } from './repository.js';
 
@@ -237,7 +238,8 @@ export class TaskOrchestrationService {
   }
 
   private async createCallJob(task: OrchestrationTask, retry: boolean) {
-    const callJobName = buildCallJobName(task.taskName);
+    const callJobName = await this.validatedCallJobName(task);
+    if (!callJobName) return;
     const request = {
       callJobName,
       // 使用手动任务；定时任务（1）必须额外传 startDate，不适合平台异步编排。
@@ -285,12 +287,30 @@ export class TaskOrchestrationService {
   }
 
   private async recoverCreate(task: OrchestrationTask) {
+    const previousFailure = await this.repository.getLatestOperationFailure(
+      task.id,
+      'CREATE',
+    );
+    if (isPermanentCreateOperationFailure(previousFailure)) {
+      await this.repository.recordFailure({
+        taskId: task.id,
+        executionStatus: 'CREATE_FAILED',
+        stage: 'BAIYING_CREATE',
+        code: previousFailure.errorCode ?? 'BAIYING_CREATE_PERMANENT_FAILURE',
+        message:
+          previousFailure.errorMessage ?? '百应明确拒绝创建外呼任务',
+        retryable: false,
+        releaseHold: true,
+      });
+      return;
+    }
     await this.repository.markPendingOperationsUnknown({
       taskId: task.id,
       operationType: 'CREATE',
       message: 'Worker 在保存创建结果前中断，改用确定性任务名查询恢复',
     });
-    const callJobName = buildCallJobName(task.taskName);
+    const callJobName = await this.validatedCallJobName(task);
+    if (!callJobName) return;
     const request = {
       companyId: task.baiyingCompanyId,
       jobName: callJobName,
@@ -358,6 +378,25 @@ export class TaskOrchestrationService {
       );
     }
     await this.createCallJob(task, true);
+  }
+
+  private async validatedCallJobName(
+    task: OrchestrationTask,
+  ): Promise<string | null> {
+    try {
+      return buildCallJobName(task.taskName);
+    } catch (error) {
+      await this.repository.recordFailure({
+        taskId: task.id,
+        executionStatus: 'CREATE_FAILED',
+        stage: 'BAIYING_CREATE',
+        code: 'BAIYING_TASK_NAME_INVALID',
+        message: error instanceof Error ? error.message : '平台任务名称无效',
+        retryable: false,
+        releaseHold: true,
+      });
+      return null;
+    }
   }
 
   private async importCustomers(task: OrchestrationTask, retry: boolean) {
@@ -770,7 +809,7 @@ export class TaskOrchestrationService {
         ? redactProviderPayload(failure.metadata.response)
         : undefined,
       providerRequestId: failure.metadata.requestId,
-      errorClass: 'BAIYING_PROVIDER_ERROR',
+      errorClass: `BAIYING_PROVIDER_${failure.kind}`,
       errorCode: failure.code,
       errorMessage: failure.message,
     });
@@ -784,10 +823,23 @@ export class TaskOrchestrationService {
 }
 
 export function buildCallJobName(taskName: string): string {
-  if (!taskName.trim() || taskName.length > 200) {
-    throw new Error('平台任务名称必须为 1～200 个字符');
+  if (!taskName.trim() || Array.from(taskName).length > 50) {
+    throw new Error('百应任务名称必须为 1～50 个字符');
   }
   return taskName;
+}
+
+export function isPermanentCreateOperationFailure(
+  failure: TaskOperationFailure | null,
+): failure is TaskOperationFailure {
+  if (!failure || failure.status !== 'FAILED') return false;
+  if (failure.errorClass === 'BAIYING_PROVIDER_PERMANENT') return true;
+  if (failure.errorClass !== 'BAIYING_PROVIDER_ERROR') return false;
+  const code = failure.errorCode ?? '';
+  if (/^BAIYING_HTTP_4\d\d$/.test(code)) {
+    return code !== 'BAIYING_HTTP_429';
+  }
+  return /^BAIYING_(?!429$)\d+$/.test(code);
 }
 
 export function isStrictImportSuccess(

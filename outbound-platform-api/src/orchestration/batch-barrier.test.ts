@@ -97,6 +97,7 @@ function repositoryFor(
     finishOperation: vi.fn(),
     markPendingOperationsUnknown: vi.fn(),
     countOperations: vi.fn(async () => 0),
+    getLatestOperationFailure: vi.fn(async () => null),
     recordCreated: vi.fn(),
     recordImported: vi.fn(),
     isBatchAborted: vi.fn(async () => false),

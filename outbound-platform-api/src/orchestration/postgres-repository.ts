@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, count, eq, ne, sql } from 'drizzle-orm';
+import { and, count, desc, eq, isNull, ne, sql } from 'drizzle-orm';
 import {
   outboundCallResultInternalEventV2Schema,
   taskStartedEventSchema,
@@ -31,6 +31,7 @@ import {
   TaskStateConflictError,
   type OperationHandle,
   type OrchestrationTask,
+  type TaskOperationFailure,
   type TaskOperationType,
   type TaskOrchestrationRepository,
 } from './repository.js';
@@ -241,6 +242,38 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
         ),
       );
     return Number(row?.value ?? 0);
+  }
+
+  async getLatestOperationFailure(
+    taskId: string,
+    operationType: TaskOperationType,
+  ): Promise<TaskOperationFailure | null> {
+    const [operation] = await this.db
+      .select({
+        status: taskOperations.status,
+        errorClass: taskOperations.errorClass,
+        errorCode: taskOperations.errorCode,
+        errorMessage: taskOperations.errorMessage,
+      })
+      .from(taskOperations)
+      .where(
+        and(
+          eq(taskOperations.taskId, taskId),
+          eq(taskOperations.operationType, operationType),
+          ne(taskOperations.status, 'SUCCEEDED'),
+          ne(taskOperations.status, 'PENDING'),
+        ),
+      )
+      .orderBy(desc(taskOperations.attemptNo))
+      .limit(1);
+    if (!operation) return null;
+    if (operation.status === 'FAILED') {
+      return { ...operation, status: 'FAILED' };
+    }
+    if (operation.status === 'UNKNOWN') {
+      return { ...operation, status: 'UNKNOWN' };
+    }
+    return null;
   }
 
   async recordCreated(taskId: string, callJobId: string): Promise<void> {
@@ -547,26 +580,29 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
         })
         .where(eq(platformTasks.id, input.taskId));
       if (task.contractVersion === '2.0') {
-        const unresolved = await tx.execute<{
-          id: string;
-          externalCustomerId: string;
-          phoneTail4: string;
-          resultEventId: string;
-        }>(sql`
-          UPDATE ${taskCallItems}
-          SET
-            result_event_id = gen_random_uuid(),
-            call_status = 'FAILED',
-            updated_at = ${now}
-          WHERE ${taskCallItems.taskId} = ${input.taskId}
-            AND ${taskCallItems.resultEventId} IS NULL
-          RETURNING
-            ${taskCallItems.id} AS "id",
-            ${taskCallItems.externalCustomerId} AS "externalCustomerId",
-            ${taskCallItems.phoneTail4} AS "phoneTail4",
-            ${taskCallItems.resultEventId} AS "resultEventId"
-        `);
+        const unresolved = await tx
+          .update(taskCallItems)
+          .set({
+            resultEventId: sql`gen_random_uuid()`,
+            callStatus: 'FAILED',
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(taskCallItems.taskId, input.taskId),
+              isNull(taskCallItems.resultEventId),
+            ),
+          )
+          .returning({
+            id: taskCallItems.id,
+            externalCustomerId: taskCallItems.externalCustomerId,
+            phoneTail4: taskCallItems.phoneTail4,
+            resultEventId: taskCallItems.resultEventId,
+          });
         const failureResults = unresolved.map((item) => {
+          if (!item.resultEventId) {
+            throw new Error(`任务客户 ${item.id} 未生成结果事件 ID`);
+          }
           const event = outboundCallResultInternalEventV2Schema.parse({
             schemaVersion: '2.1',
             eventId: item.resultEventId,

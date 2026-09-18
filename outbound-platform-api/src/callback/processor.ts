@@ -519,26 +519,31 @@ async function queueMissingV2FailureResults(
   protector: DataProtector,
   deliveryQueueName: string,
 ): Promise<void> {
-  const unresolved = await tx.execute<{
-    externalCustomerId: string;
-    phoneCiphertext: string;
-    customerNameCiphertext: string | null;
-    resultEventId: string;
-  }>(sql`
-    UPDATE ${taskCallItems}
-    SET
-      result_event_id = gen_random_uuid(),
-      call_status = 'FAILED',
-      updated_at = ${now}
-    WHERE ${taskCallItems.taskId} = ${task.id}
-      AND ${taskCallItems.resultEventId} IS NULL
-    RETURNING
-      ${taskCallItems.externalCustomerId} AS "externalCustomerId",
-      ${taskCallItems.phoneCiphertext} AS "phoneCiphertext",
-      ${taskCallItems.customerNameCiphertext} AS "customerNameCiphertext",
-      ${taskCallItems.resultEventId} AS "resultEventId"
-  `);
+  const unresolved = await tx
+    .update(taskCallItems)
+    .set({
+      resultEventId: sql`gen_random_uuid()`,
+      callStatus: 'FAILED',
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(taskCallItems.taskId, task.id),
+        isNull(taskCallItems.resultEventId),
+      ),
+    )
+    .returning({
+      externalCustomerId: taskCallItems.externalCustomerId,
+      phoneCiphertext: taskCallItems.phoneCiphertext,
+      customerNameCiphertext: taskCallItems.customerNameCiphertext,
+      resultEventId: taskCallItems.resultEventId,
+    });
   const events = unresolved.map((item) => {
+    if (!item.resultEventId) {
+      throw new Error(
+        `任务客户 ${item.externalCustomerId} 未生成结果事件 ID`,
+      );
+    }
     const event = outboundCallResultInternalEventV2Schema.parse({
       schemaVersion: '2.1',
       eventId: item.resultEventId,

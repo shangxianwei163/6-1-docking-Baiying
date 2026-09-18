@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildCallJobName,
+  isPermanentCreateOperationFailure,
   isStrictImportSuccess,
   redactProviderPayload,
 } from './service.js';
@@ -11,8 +12,36 @@ import { buildCallItemCorrelationToken } from '../security/correlation-token.js'
 
 describe('task orchestration helpers', () => {
   it('uses the exact platform task name for the Baiying call job', () => {
-    const taskName = '20260911排档孕妈-00003';
+    const taskName = '20260911排档孕妈00003';
     expect(buildCallJobName(taskName)).toBe(taskName);
+    expect(() => buildCallJobName('超'.repeat(51))).toThrow('1～50');
+  });
+
+  it('recognizes both new and legacy persisted permanent create failures', () => {
+    expect(
+      isPermanentCreateOperationFailure({
+        status: 'FAILED',
+        errorClass: 'BAIYING_PROVIDER_PERMANENT',
+        errorCode: 'BAIYING_CREATE_INVALID_RESPONSE',
+        errorMessage: '参数错误',
+      }),
+    ).toBe(true);
+    expect(
+      isPermanentCreateOperationFailure({
+        status: 'FAILED',
+        errorClass: 'BAIYING_PROVIDER_ERROR',
+        errorCode: 'BAIYING_10000401',
+        errorMessage: '任务名称超长',
+      }),
+    ).toBe(true);
+    expect(
+      isPermanentCreateOperationFailure({
+        status: 'FAILED',
+        errorClass: 'BAIYING_PROVIDER_RETRYABLE',
+        errorCode: 'BAIYING_RATE_LIMITED',
+        errorMessage: '限流',
+      }),
+    ).toBe(false);
   });
 
   it('binds a callback token to task, item and normalized phone hash', () => {

@@ -47,6 +47,13 @@ export type OperationHandle = {
   attemptNo: number;
 };
 
+export type TaskOperationFailure = {
+  status: 'FAILED' | 'UNKNOWN';
+  errorClass: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+};
+
 export type TaskFailureStage =
   | 'BAIYING_CREATE'
   | 'BAIYING_IMPORT'
@@ -85,6 +92,10 @@ export interface TaskOrchestrationRepository {
     taskId: string,
     operationType: TaskOperationType,
   ): Promise<number>;
+  getLatestOperationFailure(
+    taskId: string,
+    operationType: TaskOperationType,
+  ): Promise<TaskOperationFailure | null>;
   recordCreated(taskId: string, callJobId: string): Promise<void>;
   recordImported(taskId: string, summary: BaiyingImportSummary): Promise<void>;
   isBatchAborted(batchId: string): Promise<boolean>;

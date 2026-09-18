@@ -2404,7 +2404,8 @@ export function buildPlatformTaskName(
     throw new Error('无法使用空的数据分类生成任务名称');
   }
   const [date, sequence] = taskNumber.slice(1);
-  const categoryLength = 200 - date!.length - sequence!.length;
+  // 百应限制任务名称最多 50 个字符；日期与五位序号共占 13 个字符。
+  const categoryLength = 50 - date!.length - sequence!.length;
   const normalizedCategoryName = Array.from(categoryName)
     .slice(0, categoryLength)
     .join('');

@@ -212,6 +212,11 @@ describe('outbound task helpers', () => {
         '排挡-3周-SR1',
       ]),
     ).toBe('20260918排挡3周SS100021');
+    const capped = buildPlatformTaskName('PT-20260918-00025', [
+      '超长分类'.repeat(20),
+    ]);
+    expect(Array.from(capped)).toHaveLength(50);
+    expect(capped).toMatch(/^20260918.*00025$/);
   });
 
   it('accepts multiple categories bound to the same script and line', () => {

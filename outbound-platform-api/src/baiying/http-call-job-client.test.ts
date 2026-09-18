@@ -322,6 +322,37 @@ describe('HttpBaiyingCallJobClient', () => {
     expect(fetch).toHaveBeenCalledOnce();
   });
 
+  it('classifies an explicit Baiying business rejection as permanent', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+      json({
+        code: 10000401,
+        requestId: 'provider-request-1',
+        resultMsg: '任务名称不能超过50个字符',
+      }),
+    );
+    const client = new HttpBaiyingCallJobClient({
+      baseUrl: 'https://open.byai.com',
+      tokenProvider: tokenProvider(),
+      fetch,
+    });
+
+    await expect(
+      client.createCallJob({
+        callJobName: 'overlong-name',
+        callJobType: 2,
+        companyId: '263120',
+        robotDefId: '4845020',
+        userPhoneIds: ['1788320'],
+      }),
+    ).rejects.toMatchObject({
+      kind: 'PERMANENT',
+      code: 'BAIYING_10000401',
+      message: '任务名称不能超过50个字符',
+      metadata: { requestId: 'provider-request-1' },
+    } satisfies Partial<BaiyingProviderError>);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it('classifies query timeout as retryable and write timeout as unknown outcome', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>((_url, init) => {
       return new Promise<Response>((_resolve, reject) => {
