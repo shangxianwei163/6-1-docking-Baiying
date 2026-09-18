@@ -202,17 +202,16 @@ describe('outbound task helpers', () => {
     expect(shanghaiDate(new Date('2026-09-05T16:30:00.000Z'))).toBe('20260906');
   });
 
-  it('builds the task name from its real data category paths', () => {
+  it('builds the task name from the first real data category path', () => {
     expect(buildPlatformTaskName('PT-20260907-00023', ['排挡-百天-SS1'])).toBe(
-      '20260907排挡百天SS1-00023',
+      '20260907排挡百天SS100023',
     );
     expect(
-      buildPlatformTaskName('PT-20260907-00024', [
-        '排挡/百天/SS1',
-        '邀约-周岁-SS2',
-        '排挡/百天/SS1',
+      buildPlatformTaskName('PT-20260918-00021', [
+        '排挡/3周/SS1',
+        '排挡-3周-SR1',
       ]),
-    ).toBe('20260907排挡百天SS1+邀约周岁SS2-00024');
+    ).toBe('20260918排挡3周SS100021');
   });
 
   it('accepts multiple categories bound to the same script and line', () => {

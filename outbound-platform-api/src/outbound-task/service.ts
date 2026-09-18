@@ -2397,22 +2397,18 @@ export function buildPlatformTaskName(
   if (!taskNumber) {
     throw new Error(`无法从任务编号 ${taskNo} 生成任务名称`);
   }
-  const categoryNames = Array.from(
-    new Set(
-      categoryPaths
-        .map((path) => path.normalize('NFKC').replace(/[\s/\\>›_-]+/gu, ''))
-        .filter(Boolean),
-    ),
-  );
-  if (!categoryNames.length) {
+  const categoryName = categoryPaths
+    .map((path) => path.normalize('NFKC').replace(/[\s/\\>›_-]+/gu, ''))
+    .find(Boolean);
+  if (!categoryName) {
     throw new Error('无法使用空的数据分类生成任务名称');
   }
   const [date, sequence] = taskNumber.slice(1);
-  const categoryLength = 200 - date!.length - sequence!.length - 1;
-  const categoryName = Array.from(categoryNames.join('+'))
+  const categoryLength = 200 - date!.length - sequence!.length;
+  const normalizedCategoryName = Array.from(categoryName)
     .slice(0, categoryLength)
     .join('');
-  return `${date}${categoryName}-${sequence}`;
+  return `${date}${normalizedCategoryName}${sequence}`;
 }
 
 export function selectConsistentCategoryBinding(
