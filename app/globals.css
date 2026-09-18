@@ -8808,6 +8808,10 @@
 .real-task-table-wrap {
   position: relative;
   min-height: 230px;
+  overscroll-behavior: contain;
+  scrollbar-color: #b5c8be transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
 }
 .real-task-table {
   min-width: 1380px;
@@ -8817,7 +8821,11 @@
   padding: 11px 12px;
 }
 .real-task-table th {
+  position: sticky;
+  z-index: 2;
+  top: 0;
   background: #f7f9f8;
+  box-shadow: inset 0 -1px #dfe8e3;
   color: #718078;
   font-size: 8px;
   letter-spacing: 0.02em;
@@ -9046,6 +9054,36 @@
 }
 .real-task-pagination button:disabled {
   opacity: 0.4;
+}
+
+@media (min-width: 721px) {
+  .task-list-view {
+    overflow: hidden;
+  }
+  .task-list-view > .real-task-panel {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+  }
+  .task-list-view > .real-task-panel > .panel-heading,
+  .real-task-tabs,
+  .real-task-toolbar,
+  .real-task-feedback,
+  .real-task-pagination {
+    flex: 0 0 auto;
+  }
+  .task-list-view > .real-task-panel > .panel-body {
+    display: flex;
+    min-height: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .real-task-table-wrap {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow: auto;
+  }
 }
 
 .real-task-detail-dialog.real-task-detail-dialog {

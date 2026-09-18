@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -141,6 +141,7 @@ export function OutboundTaskConsole() {
   const [error, setError] = useState('');
   const [refreshToken, setRefreshToken] = useState(0);
   const [selectedTaskNo, setSelectedTaskNo] = useState<string | null>(null);
+  const tableViewportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -187,6 +188,10 @@ export function OutboundTaskConsole() {
       cancelled = true;
     };
   }, [endDate, keyword, pageNum, pageSize, refreshToken, startDate, status]);
+
+  useEffect(() => {
+    if (tableViewportRef.current) tableViewportRef.current.scrollTop = 0;
+  }, [endDate, keyword, pageNum, pageSize, startDate, status]);
 
   const selectedTask = useMemo(
     () => page.tasks.find((task) => task.taskNo === selectedTaskNo) ?? null,
@@ -345,7 +350,12 @@ export function OutboundTaskConsole() {
           </div>
         ) : null}
 
-        <div className="table-wrap real-task-table-wrap" aria-busy={loading}>
+        <div
+          ref={tableViewportRef}
+          className="table-wrap real-task-table-wrap"
+          aria-busy={loading}
+          aria-label="外呼任务数据列表"
+        >
           <table className="data-table real-task-table">
             <caption className="sr-only">数据库中的外呼任务</caption>
             <thead>
@@ -396,7 +406,7 @@ export function OutboundTaskConsole() {
         <footer className="real-task-pagination">
           <span>
             第 {page.total ? page.pageNum + 1 : 0} / {page.pages} 页 · 当前显示{' '}
-            {page.tasks.length} 条
+            {page.tasks.length} 条 · 每页 {page.pageSize} 条
           </span>
           <div>
             <button
