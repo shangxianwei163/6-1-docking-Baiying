@@ -3,8 +3,13 @@ import { Toaster } from '@/components/ui/toast';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: '6+1 智能外呼平台 · 运营后台',
+  title: '图形AI外呼调度平台',
+  applicationName: '图形AI外呼调度平台',
   description: 'ERP/CRM 与百应智能外呼的统一运营、账务、对账与异常处理平台。',
+  icons: {
+    icon: [{ url: '/favicon.svg?v=2', type: 'image/svg+xml' }],
+    shortcut: '/favicon.svg?v=2',
+  },
 };
 
 export default function RootLayout({
