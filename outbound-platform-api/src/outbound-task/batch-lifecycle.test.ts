@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { deriveIntakeBatchLifecycle } from './batch-lifecycle.js';
+import {
+  deriveIntakeBatchLifecycle,
+  NO_IMPORTABLE_CUSTOMERS_CODE,
+} from './batch-lifecycle.js';
 
 describe('deriveIntakeBatchLifecycle', () => {
   it('keeps a batch preparing until every child is ready', () => {
@@ -39,6 +42,26 @@ describe('deriveIntakeBatchLifecycle', () => {
         { executionStatus: 'START_FAILED' },
       ]),
     ).toEqual({ executionStatus: 'PARTIAL_FAILED', allTerminal: true });
+  });
+
+  it('lets valid sibling routes continue when one route has no importable numbers', () => {
+    const filtered = {
+      executionStatus: 'IMPORT_FAILED' as const,
+      failureCode: NO_IMPORTABLE_CUSTOMERS_CODE,
+    };
+    expect(
+      deriveIntakeBatchLifecycle([filtered, { executionStatus: 'IMPORTED' }]),
+    ).toEqual({ executionStatus: 'PREPARING', allTerminal: false });
+    expect(
+      deriveIntakeBatchLifecycle([filtered, { executionStatus: 'CALLING' }]),
+    ).toEqual({ executionStatus: 'RUNNING', allTerminal: false });
+    expect(
+      deriveIntakeBatchLifecycle([filtered, { executionStatus: 'COMPLETED' }]),
+    ).toEqual({ executionStatus: 'PARTIAL_FAILED', allTerminal: true });
+    expect(deriveIntakeBatchLifecycle([filtered])).toEqual({
+      executionStatus: 'FAILED',
+      allTerminal: true,
+    });
   });
 
   it.each([

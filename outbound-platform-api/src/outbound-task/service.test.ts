@@ -12,6 +12,7 @@ import {
   selectConsistentCategoryBinding,
   shanghaiDate,
 } from './service.js';
+import { NO_IMPORTABLE_CUSTOMERS_CODE } from './batch-lifecycle.js';
 
 describe('outbound task helpers', () => {
   it('keeps the reserved v2 customer_name field available to mapping rules', () => {
@@ -189,6 +190,21 @@ describe('outbound task helpers', () => {
       '执行完成',
     );
     expect(displayStatusFor('IMPORT_FAILED')).toBe('执行失败');
+  });
+
+  it('reports a mixed batch as running while unaffected routes are calling', () => {
+    expect(
+      aggregateBatchStatus(['IMPORT_FAILED', 'CALLING'], 'RUNNING', [
+        NO_IMPORTABLE_CUSTOMERS_CODE,
+        null,
+      ]),
+    ).toBe('RUNNING');
+    expect(
+      aggregateBatchStatus(['IMPORT_FAILED', 'COMPLETED'], 'RUNNING', [
+        NO_IMPORTABLE_CUSTOMERS_CODE,
+        null,
+      ]),
+    ).toBe('PARTIAL_FAILED');
   });
 
   it('describes the original Baiying job status without hiding new values', () => {

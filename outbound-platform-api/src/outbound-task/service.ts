@@ -51,6 +51,12 @@ import {
 import type { SupplierMonthlySettlementService } from '../billing/monthly-settlement-service.js';
 import { shanghaiSettlementMonth } from '../billing/supplier-settlement.js';
 import { maskPhoneForCallback } from '../callback/schema.js';
+import {
+  deriveIntakeBatchLifecycle,
+  isPrecheckOnlyFailure,
+  NO_IMPORTABLE_CUSTOMERS_CODE,
+  NO_IMPORTABLE_CUSTOMERS_MESSAGE,
+} from './batch-lifecycle.js';
 import type { Database } from '../db/client.js';
 import {
   accountLedger,
@@ -641,7 +647,11 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
           requestBodySha256: input.requestHash,
           phoneCount: prepared.phoneCount,
           taskCount: prepared.routes.length,
-          executionStatus: validPhoneCount > 0 ? 'ACCEPTED' : 'COMPLETED',
+          executionStatus: validPhoneCount > 0 ? 'ACCEPTED' : 'FAILED',
+          failureCode:
+            validPhoneCount > 0 ? null : NO_IMPORTABLE_CUSTOMERS_CODE,
+          failureMessage:
+            validPhoneCount > 0 ? null : NO_IMPORTABLE_CUSTOMERS_MESSAGE,
           createdAt: now,
           updatedAt: now,
           completedAt: validPhoneCount > 0 ? null : now,
@@ -711,7 +721,13 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
             frozenMinutes: configuration.price.frozenMinutes,
             reservedAmount,
             baiyingCompanyId: configuration.sceneCompanyId,
-            executionStatus: routeValidCount > 0 ? 'ACCEPTED' : 'COMPLETED',
+            executionStatus: routeValidCount > 0 ? 'ACCEPTED' : 'IMPORT_FAILED',
+            failureStage: routeValidCount > 0 ? null : 'BAIYING_IMPORT',
+            failureCode:
+              routeValidCount > 0 ? null : NO_IMPORTABLE_CUSTOMERS_CODE,
+            failureMessage:
+              routeValidCount > 0 ? null : NO_IMPORTABLE_CUSTOMERS_MESSAGE,
+            failureRetryable: routeValidCount > 0 ? null : false,
             billingStatus: routeValidCount > 0 ? 'RESERVED' : 'SETTLED',
             recordingArchiveStatus:
               routeValidCount > 0 ? 'PENDING' : 'NOT_AVAILABLE',
@@ -719,8 +735,8 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
               routeValidCount > 0 ? 'PENDING' : 'NOT_APPLICABLE',
             importRequestedCount: routeValidCount,
             importFailedCount: routeFilteredCount,
-            providerCompletedAt: routeValidCount > 0 ? null : now,
-            reconciledAt: routeValidCount > 0 ? null : now,
+            providerCompletedAt: null,
+            reconciledAt: null,
             closedAt: routeValidCount > 0 ? null : now,
             createdAt: now,
             acceptedAt: now,
@@ -984,6 +1000,7 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
         phoneCount: platformTasks.phoneCount,
         validPhoneCount: platformTasks.importRequestedCount,
         executionStatus: platformTasks.executionStatus,
+        failureCode: platformTasks.failureCode,
       })
       .from(platformTasks)
       .where(eq(platformTasks.batchId, batch.id))
@@ -997,6 +1014,7 @@ export class PostgresOutboundTaskService implements OutboundTaskService {
       execution_status: aggregateBatchStatus(
         tasks.map((task) => task.executionStatus),
         batch.executionStatus,
+        tasks.map((task) => task.failureCode),
       ),
       phone_count: batch.phoneCount,
       valid_phone_count: tasks.reduce(
@@ -2149,10 +2167,28 @@ function addDays(value: Date, days: number): Date {
 export function aggregateBatchStatus(
   statuses: TaskExecutionStatus[],
   stored: BatchDetailV2['execution_status'],
+  failureCodes?: Array<string | null>,
 ): BatchDetailV2['execution_status'] {
   if (statuses.length === 0) return stored;
   if (['FAILED', 'PARTIAL_FAILED', 'COMPLETED', 'CANCELLED'].includes(stored)) {
     return stored;
+  }
+  if (
+    failureCodes?.some((failureCode, index) =>
+      isPrecheckOnlyFailure({
+        executionStatus: statuses[index]!,
+        failureCode,
+      }),
+    )
+  ) {
+    return (
+      deriveIntakeBatchLifecycle(
+        statuses.map((executionStatus, index) => ({
+          executionStatus,
+          failureCode: failureCodes[index],
+        })),
+      )?.executionStatus ?? stored
+    );
   }
   if (statuses.every((status) => status === 'COMPLETED')) return 'COMPLETED';
   if (

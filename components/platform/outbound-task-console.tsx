@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  Copy,
   Download,
   ExternalLink,
   FileAudio,
@@ -43,6 +44,7 @@ import {
 } from '@/components/ui/dialog';
 import { UnifiedSelect } from '@/components/ui/unified-select';
 import { UnifiedDateRangePicker } from '@/components/ui/unified-date-picker';
+import { toast } from '@/components/ui/toast';
 import { Panel, Status } from './shared';
 
 type DetailTab = 'summary' | 'calls';
@@ -456,9 +458,12 @@ function TaskRow({
   return (
     <tr>
       <td>
-        <button type="button" className="real-task-number" onClick={onOpen}>
-          {task.taskNo}
-        </button>
+        <span className="real-task-number-group">
+          <button type="button" className="real-task-number" onClick={onOpen}>
+            {task.taskNo}
+          </button>
+          <CopyTaskNoButton taskNo={task.taskNo} />
+        </span>
         <span className="table-meta">
           {formatDateTime(task.timestamps.createdAt)}
         </span>
@@ -740,7 +745,9 @@ function TaskSummary({
               </span>
               <span
                 className={
-                  task.importSummary.failed > 0 ? 'has-import-failures' : undefined
+                  task.importSummary.failed > 0
+                    ? 'has-import-failures'
+                    : undefined
                 }
               >
                 导入失败{' '}
@@ -837,7 +844,12 @@ function TaskSummary({
 
       <div className="real-task-summary-grid">
         <DetailSection title="任务身份" eyebrow="IDENTITY">
-          <DetailPair label="平台任务编号" value={task.taskNo} code />
+          <DetailPair
+            label="平台任务编号"
+            value={task.taskNo}
+            code
+            copyTaskNo
+          />
           <DetailPair
             label="外部请求编号"
             value={task.externalRequestId}
@@ -1166,18 +1178,61 @@ function DetailPair({
   value,
   note,
   code = false,
+  copyTaskNo = false,
 }: {
   label: string;
   value: string;
   note?: string;
   code?: boolean;
+  copyTaskNo?: boolean;
 }) {
   return (
     <div>
       <dt>{label}</dt>
-      <dd className={code ? 'is-code' : undefined}>{value}</dd>
+      <dd className={code ? 'is-code' : undefined}>
+        {copyTaskNo ? (
+          <span className="real-task-number-group">
+            <span>{value}</span>
+            <CopyTaskNoButton taskNo={value} />
+          </span>
+        ) : (
+          value
+        )}
+      </dd>
       {note ? <small>{note}</small> : null}
     </div>
+  );
+}
+
+function CopyTaskNoButton({ taskNo }: { taskNo: string }) {
+  const copyTaskNo = async () => {
+    try {
+      await navigator.clipboard.writeText(taskNo);
+      toast.add({
+        title: '任务编号复制成功',
+        type: 'success',
+        timeout: 3_000,
+      });
+    } catch {
+      toast.add({
+        title: '任务编号复制失败',
+        description: '请重试或手动选择任务编号。',
+        type: 'error',
+        timeout: 4_500,
+      });
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      className="real-task-copy-button"
+      aria-label={`复制任务编号 ${taskNo}`}
+      title="复制任务编号"
+      onClick={() => void copyTaskNo()}
+    >
+      <Copy size={12} aria-hidden="true" />
+    </button>
   );
 }
 

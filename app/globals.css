@@ -8878,6 +8878,12 @@
 .real-task-table td:last-child {
   min-width: 85px;
 }
+.real-task-number-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+}
 .real-task-number {
   border: 0;
   background: transparent;
@@ -8893,6 +8899,27 @@
 .real-task-number:hover {
   color: #124b39;
   text-decoration-color: #357b5e;
+}
+.real-task-copy-button {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #6f9681;
+  cursor: pointer;
+}
+.real-task-copy-button:hover,
+.real-task-copy-button:focus-visible {
+  background: #e8f3ec;
+  color: #1e6c50;
+}
+.real-task-copy-button:focus-visible {
+  outline: 2px solid #5b9778;
+  outline-offset: 1px;
 }
 .real-task-source,
 .real-task-state-detail,

@@ -25,7 +25,10 @@ import {
   taskCallItems,
   taskOperations,
 } from '../db/schema.js';
-import { refreshIntakeBatchLifecycle } from '../outbound-task/batch-lifecycle.js';
+import {
+  isPrecheckOnlyFailure,
+  refreshIntakeBatchLifecycle,
+} from '../outbound-task/batch-lifecycle.js';
 import {
   TaskNotFoundError,
   TaskStateConflictError,
@@ -371,24 +374,28 @@ export class PostgresTaskOrchestrationRepository implements TaskOrchestrationRep
           taskNo: platformTasks.taskNo,
           sourceSystem: platformTasks.sourceSystem,
           executionStatus: platformTasks.executionStatus,
+          failureCode: platformTasks.failureCode,
         })
         .from(platformTasks)
         .where(eq(platformTasks.batchId, input.batchId));
       if (
-        children.some(({ executionStatus }) =>
-          ['CREATE_FAILED', 'IMPORT_FAILED', 'START_FAILED'].includes(
-            executionStatus,
-          ),
+        children.some(
+          (child) =>
+            ['CREATE_FAILED', 'IMPORT_FAILED', 'START_FAILED'].includes(
+              child.executionStatus,
+            ) && !isPrecheckOnlyFailure(child),
         )
       ) {
         await refreshIntakeBatchLifecycle(tx, input.batchId, this.clock());
         return 'FAILED';
       }
 
-      const ready = children.every(({ executionStatus }) =>
-        ['IMPORTED', 'STARTING', 'CALLING', 'PAUSED', 'COMPLETED'].includes(
-          executionStatus,
-        ),
+      const ready = children.every(
+        (child) =>
+          isPrecheckOnlyFailure(child) ||
+          ['IMPORTED', 'STARTING', 'CALLING', 'PAUSED', 'COMPLETED'].includes(
+            child.executionStatus,
+          ),
       );
       const now = this.clock();
       if (!ready) {
