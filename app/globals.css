@@ -12888,6 +12888,42 @@
   align-items: center;
   gap: 4px;
 }
+.integration-table .integration-retry-action {
+  margin-right: 8px;
+  color: #a26825;
+}
+.integration-retry-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid #b9dfc6;
+  border-radius: 8px;
+  background: #f1faf3;
+  color: #276846;
+  font-size: 12px;
+}
+.integration-retry-dialog.ops-dialog {
+  width: min(480px, calc(100vw - 32px));
+}
+.integration-retry-reason {
+  display: grid;
+  gap: 8px;
+  color: #405e4c;
+  font-size: 12px;
+  font-weight: 650;
+}
+.integration-retry-reason textarea {
+  min-height: 86px;
+  resize: vertical;
+  border: 1px solid #d5e0d8;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #264434;
+  background: #fff;
+  font: inherit;
+}
 .integration-detail-dialog.ops-dialog {
   width: min(1080px, calc(100vw - 40px));
   max-width: 1080px;

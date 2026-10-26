@@ -43,6 +43,7 @@ import {
   operatorDeadLetterStatusSchema,
   operatorTaskCommandInputSchema,
   operatorTaskRetryInputSchema,
+  operatorFailedEventRetryResultSchema,
   platformCostDetailStatusSchema,
   replayDeadLetterInputSchema,
   repairTaskReconciliationInputSchema,
@@ -897,6 +898,32 @@ export function createApp(dependencies: AppDependencies) {
     );
     return context.json(success(context.get('requestId'), data), 202);
   });
+
+  app.post(
+    '/api/v1/failed-events/:sourceType/:sourceId/retry',
+    async (context) => {
+      const actorId = requireActor(context.req.header('x-actor-id'));
+      const sourceType = z
+        .enum(['CALLBACK', 'DELIVERY'])
+        .parse(context.req.param('sourceType'));
+      const sourceId = z.uuid().parse(context.req.param('sourceId'));
+      const input = replayDeadLetterInputSchema.parse(await context.req.json());
+      const data = await recoveryDependency(dependencies).retryFailedEvent(
+        sourceType,
+        sourceId,
+        input,
+        actorId,
+        context.get('requestId'),
+      );
+      return context.json(
+        success(
+          context.get('requestId'),
+          operatorFailedEventRetryResultSchema.parse(data),
+        ),
+        202,
+      );
+    },
+  );
 
   app.post('/api/v1/dead-letters/:deadLetterId/ignore', async (context) => {
     const actorId = requireActor(context.req.header('x-actor-id'));

@@ -798,6 +798,12 @@ export const operatorIntegrationLogSchema = z.object({
   attemptNo: z.number().int().nonnegative().nullable(),
   errorCode: z.string().max(256).nullable(),
   errorMessage: z.string().max(2000).nullable(),
+  manualRetry: z
+    .object({
+      kind: z.enum(['DEAD_LETTER', 'TASK', 'CALLBACK_EVENT', 'DELIVERY_EVENT']),
+      ref: z.string().min(1).max(600),
+    })
+    .nullable(),
   detail: z.record(z.string(), auditDetailValueSchema),
   occurredAt: z.iso.datetime({ offset: true }),
 });
@@ -897,6 +903,10 @@ const operatorRecoveryActionBaseSchema = z
 
 export const replayDeadLetterInputSchema = operatorRecoveryActionBaseSchema;
 export const ignoreDeadLetterInputSchema = operatorRecoveryActionBaseSchema;
+export const operatorFailedEventRetryResultSchema = z.object({
+  message: z.string().min(1).max(500),
+  idempotentReplay: z.boolean(),
+});
 
 export const operatorDeadLetterActionResultSchema = z.object({
   deadLetter: operatorDeadLetterSchema,

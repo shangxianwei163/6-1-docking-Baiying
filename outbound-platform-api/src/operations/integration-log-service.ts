@@ -39,8 +39,15 @@ export type IntegrationLogListInput = {
 
 type IntegrationDbRow = Omit<
   OperatorIntegrationLog,
-  'operationLabel' | 'detail' | 'occurredAt'
+  'operationLabel' | 'detail' | 'occurredAt' | 'manualRetry'
 > & {
+  retryKind:
+    | 'DEAD_LETTER'
+    | 'TASK'
+    | 'CALLBACK_EVENT'
+    | 'DELIVERY_EVENT'
+    | null;
+  retryRef: string | null;
   requestDetail: Record<string, unknown> | null;
   responseDetail: Record<string, unknown> | null;
   occurredAt: Date | string;
@@ -130,7 +137,9 @@ export class PostgresIntegrationLogService implements IntegrationLogService {
             'requestBodySha256', request.request_body_sha256
           ) as "requestDetail",
           coalesce(request.response_summary_json, '{}'::jsonb) as "responseDetail",
-          request.started_at as "occurredAt"
+          request.started_at as "occurredAt",
+          null::text as "retryKind",
+          null::text as "retryRef"
         from external_api_request_log request
 
         union all
@@ -161,7 +170,9 @@ export class PostgresIntegrationLogService implements IntegrationLogService {
             'requestBodySha256', record.request_body_sha256
           ) as "requestDetail",
           record.response_body_json as "responseDetail",
-          record.created_at as "occurredAt"
+          record.created_at as "occurredAt",
+          null::text,
+          null::text
         from idempotency_record record
         left join platform_task task on task.id = record.task_id
         where record.source_system in ('ERP', 'CRM')
@@ -188,7 +199,15 @@ export class PostgresIntegrationLogService implements IntegrationLogService {
           operation.error_message,
           operation.request_payload_redacted_json,
           operation.response_payload_redacted_json,
-          operation.started_at
+          operation.started_at,
+          case when operation.status = 'FAILED'
+            and task.execution_status in ('CREATE_FAILED', 'START_FAILED')
+            and task.failure_retryable = true
+            then 'TASK' else null end::text,
+          case when operation.status = 'FAILED'
+            and task.execution_status in ('CREATE_FAILED', 'START_FAILED')
+            and task.failure_retryable = true
+            then task.task_no else null end::text
         from task_operation operation
         join platform_task task on task.id = operation.task_id
 
@@ -231,8 +250,20 @@ export class PostgresIntegrationLogService implements IntegrationLogService {
             'processStatus', inbox.process_status,
             'deadLettered', inbox.dead_lettered_at is not null
           ),
-          inbox.received_at
+          inbox.received_at,
+          case when inbox.process_status = 'FAILED' and dead.status = 'OPEN'
+            then 'DEAD_LETTER'
+            when inbox.process_status = 'FAILED' and inbox.dead_lettered_at is null
+              and inbox.locked_at is null then 'CALLBACK_EVENT'
+            else null end::text,
+          case when inbox.process_status = 'FAILED' and dead.status = 'OPEN'
+            then dead.id::text
+            when inbox.process_status = 'FAILED' and inbox.dead_lettered_at is null
+              and inbox.locked_at is null then inbox.id::text
+            else null end::text
         from callback_inbox inbox
+        left join dead_letter_event dead on dead.source_type = 'CALLBACK'
+          and dead.source_id = inbox.id
 
         union all
 
@@ -258,10 +289,26 @@ export class PostgresIntegrationLogService implements IntegrationLogService {
             'eventKey', event.event_key
           ),
           jsonb_build_object('summary', attempt.response_summary),
-          attempt.requested_at
+          attempt.requested_at,
+          case when attempt.status <> 'SUCCEEDED' and attempt.attempt_no = event.attempt_count
+            and event.status = 'DEAD_LETTERED' and dead.status = 'OPEN'
+            then 'DEAD_LETTER'
+            when attempt.status <> 'SUCCEEDED' and attempt.attempt_no = event.attempt_count
+              and event.status = 'FAILED' and event.locked_at is null
+            then 'DELIVERY_EVENT'
+            else null end::text,
+          case when attempt.status <> 'SUCCEEDED' and attempt.attempt_no = event.attempt_count
+            and event.status = 'DEAD_LETTERED' and dead.status = 'OPEN'
+            then dead.id::text
+            when attempt.status <> 'SUCCEEDED' and attempt.attempt_no = event.attempt_count
+              and event.status = 'FAILED' and event.locked_at is null
+            then event.id::text
+            else null end::text
         from delivery_attempt attempt
         join delivery_event event on event.id = attempt.delivery_event_id
         join platform_task task on task.id = event.task_id
+        left join dead_letter_event dead on dead.source_type = 'DELIVERY'
+          and dead.source_id = event.id
       ), base_filtered as (
         select *
         from integration_logs
@@ -783,6 +830,10 @@ function toOperatorLog(row: IntegrationDbRow): OperatorIntegrationLog {
     attemptNo: row.attemptNo,
     errorCode: row.errorCode,
     errorMessage: redactOperatorText(row.errorMessage),
+    manualRetry:
+      row.retryKind && row.retryRef
+        ? { kind: row.retryKind, ref: row.retryRef }
+        : null,
     detail: sanitizeOperatorDetail(details),
     occurredAt: toIso(row.occurredAt),
   };

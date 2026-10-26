@@ -70,6 +70,7 @@ import {
   operatorIntegrationLogDetailSchema,
   operatorIntegrationLogPageSchema,
   operatorDeadLetterActionResultSchema,
+  operatorFailedEventRetryResultSchema,
   operatorDeadLetterPageSchema,
   operatorTaskActionResultSchema,
   operatorLedgerPageSchema,
@@ -767,6 +768,19 @@ export async function replayDeadLetter(
       { method: 'POST', body: JSON.stringify(input) },
     ),
   ) as OperatorDeadLetterActionResult;
+}
+
+export async function retryFailedEvent(
+  sourceType: 'CALLBACK' | 'DELIVERY',
+  sourceId: string,
+  input: { reason: string; idempotencyKey: string },
+) {
+  return operatorFailedEventRetryResultSchema.parse(
+    await request<unknown>(
+      `/api/v1/failed-events/${sourceType}/${encodeURIComponent(sourceId)}/retry`,
+      { method: 'POST', body: JSON.stringify(input) },
+    ),
+  );
 }
 
 export async function ignoreDeadLetter(

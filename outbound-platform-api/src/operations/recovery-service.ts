@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq, ilike, or, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, ilike, isNull, or, sql, type SQL } from 'drizzle-orm';
 import {
   operatorDeadLetterActionResultSchema,
   operatorDeadLetterPageSchema,
@@ -51,6 +51,13 @@ export interface RecoveryOperationsService {
     actorId: string,
     requestId: string,
   ): Promise<OperatorDeadLetterActionResult>;
+  retryFailedEvent(
+    sourceType: 'CALLBACK' | 'DELIVERY',
+    sourceId: string,
+    input: ReplayDeadLetterInput,
+    actorId: string,
+    requestId: string,
+  ): Promise<{ message: string; idempotentReplay: boolean }>;
   ignoreDeadLetter(
     deadLetterId: string,
     input: IgnoreDeadLetterInput,
@@ -191,6 +198,115 @@ export class PostgresRecoveryOperationsService implements RecoveryOperationsServ
         ? '该死信重放请求已提交，无需重复操作'
         : '原事件已恢复到待处理队列；处理成功后会自动标记为已解决',
     });
+  }
+
+  async retryFailedEvent(
+    sourceType: 'CALLBACK' | 'DELIVERY',
+    sourceId: string,
+    input: ReplayDeadLetterInput,
+    actorId: string,
+    requestId: string,
+  ): Promise<{ message: string; idempotentReplay: boolean }> {
+    const idempotentReplay = await this.db.transaction(async (tx) => {
+      await advisoryLock(tx, `recovery-action:${input.idempotencyKey}`);
+      const prior = await tx.execute<{
+        sourceType: string;
+        sourceId: string;
+      }>(sql`
+        select detail_json->>'sourceType' as "sourceType",
+               detail_json->>'sourceId' as "sourceId"
+        from audit_log
+        where action = 'INTEGRATION_FAILURE_RETRY_REQUESTED'
+          and detail_json->>'idempotencyKey' = ${input.idempotencyKey}
+        limit 1
+      `);
+      if (prior[0]) {
+        if (
+          prior[0].sourceType !== sourceType ||
+          prior[0].sourceId !== sourceId
+        ) {
+          throw idempotencyConflict();
+        }
+        return true;
+      }
+      await assertNoOtherRecoveryAction(tx, input.idempotencyKey);
+      const now = this.clock();
+      if (sourceType === 'CALLBACK') {
+        const changed = await tx
+          .update(callbackInbox)
+          .set({
+            parseStatus: 'PENDING',
+            processStatus: 'PENDING',
+            processAttempts: 0,
+            availableAt: now,
+            parseError: null,
+            processError: null,
+            processedAt: null,
+          })
+          .where(
+            and(
+              eq(callbackInbox.id, sourceId),
+              eq(callbackInbox.processStatus, 'FAILED'),
+              isNull(callbackInbox.deadLetteredAt),
+              isNull(callbackInbox.lockedAt),
+            ),
+          )
+          .returning({ id: callbackInbox.id });
+        if (!changed.length) throw failedEventStateConflict();
+      } else {
+        const changed = await tx
+          .update(deliveryEvents)
+          .set({
+            status: 'PENDING',
+            retryCycleAttemptCount: 0,
+            availableAt: now,
+            lastError: null,
+          })
+          .where(
+            and(
+              eq(deliveryEvents.id, sourceId),
+              eq(deliveryEvents.status, 'FAILED'),
+              isNull(deliveryEvents.lockedAt),
+            ),
+          )
+          .returning({ id: deliveryEvents.id });
+        if (!changed.length) throw failedEventStateConflict();
+        await tx.execute(sql`
+          update platform_task as task
+          set result_delivery_status = case when event.target = 'RESULT'
+                then 'PENDING'::result_delivery_status else task.result_delivery_status end,
+              recording_delivery_status = case when event.target = 'RECORDING'
+                then 'PENDING'::recording_delivery_status else task.recording_delivery_status end,
+              updated_at = ${now.toISOString()}::timestamptz,
+              lock_version = task.lock_version + 1
+          from delivery_event as event
+          where event.id = ${sourceId} and task.id = event.task_id
+        `);
+      }
+      await tx.insert(auditLogs).values({
+        id: this.createId(),
+        requestId,
+        actorId,
+        action: 'INTEGRATION_FAILURE_RETRY_REQUESTED',
+        objectType:
+          sourceType === 'CALLBACK' ? 'CALLBACK_INBOX' : 'DELIVERY_EVENT',
+        objectId: sourceId,
+        detail: {
+          sourceType,
+          sourceId,
+          reason: input.reason,
+          idempotencyKey: input.idempotencyKey,
+        },
+        occurredAt: now,
+      });
+      return false;
+    });
+    return {
+      idempotentReplay,
+      message: idempotentReplay
+        ? '该重试请求已提交，无需重复操作'
+        : '失败事件已恢复为待处理，Worker 将立即重试',
+    };
   }
 
   async ignoreDeadLetter(
@@ -604,7 +720,7 @@ async function assertNoOtherRecoveryAction(
   const rows = await tx.execute<{ id: string }>(sql`
     select id
     from audit_log
-    where action in ('DEAD_LETTER_REPLAY_REQUESTED', 'DEAD_LETTER_IGNORED')
+    where action in ('DEAD_LETTER_REPLAY_REQUESTED', 'DEAD_LETTER_IGNORED', 'INTEGRATION_FAILURE_RETRY_REQUESTED')
       and detail_json->>'idempotencyKey' = ${idempotencyKey}
     limit 1
   `);
@@ -631,7 +747,15 @@ async function advisoryLock(tx: Transaction, key: string) {
 function idempotencyConflict() {
   return new OperationsConsoleFailure(
     'IDEMPOTENCY_CONFLICT',
-    '同一幂等键已用于不同的死信操作',
+    '同一幂等键已用于不同的恢复操作',
+    409,
+  );
+}
+
+function failedEventStateConflict() {
+  return new OperationsConsoleFailure(
+    'INTEGRATION_FAILURE_STATE_CONFLICT',
+    '事件已不处于可手动重试的失败状态，请刷新列表',
     409,
   );
 }

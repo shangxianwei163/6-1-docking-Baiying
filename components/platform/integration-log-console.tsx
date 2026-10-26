@@ -12,6 +12,7 @@ import {
   FileJson2,
   Fingerprint,
   RefreshCw,
+  RotateCcw,
   Search,
   TriangleAlert,
 } from 'lucide-react';
@@ -27,6 +28,9 @@ import {
   loadIntegrationLogDetail,
   loadIntegrationLogs,
   PlatformApiError,
+  replayDeadLetter,
+  retryFailedEvent,
+  retryOutboundTask,
 } from '@/lib/platform-api';
 import {
   Dialog,
@@ -96,6 +100,45 @@ export function IntegrationLogConsole() {
     useState<OperatorIntegrationLogDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
+  const [retryItem, setRetryItem] = useState<OperatorIntegrationLog | null>(
+    null,
+  );
+  const [retryReason, setRetryReason] = useState('');
+  const [retrying, setRetrying] = useState(false);
+  const [retryMessage, setRetryMessage] = useState('');
+  const [retryError, setRetryError] = useState('');
+
+  const submitRetry = async () => {
+    if (!retryItem?.manualRetry || retrying || retryReason.trim().length < 2)
+      return;
+    setRetrying(true);
+    setRetryError('');
+    try {
+      const input = {
+        reason: retryReason.trim(),
+        idempotencyKey: window.crypto.randomUUID(),
+      };
+      const action = retryItem.manualRetry;
+      const result =
+        action.kind === 'DEAD_LETTER'
+          ? await replayDeadLetter(action.ref, input)
+          : action.kind === 'TASK'
+            ? await retryOutboundTask(action.ref, input)
+            : await retryFailedEvent(
+                action.kind === 'CALLBACK_EVENT' ? 'CALLBACK' : 'DELIVERY',
+                action.ref,
+                input,
+              );
+      setRetryMessage(result.message);
+      setRetryItem(null);
+      setRetryReason('');
+      setRefreshToken((current) => current + 1);
+    } catch (caught) {
+      setRetryError(apiErrorMessage(caught));
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   const openDetail = (item: OperatorIntegrationLog) => {
     setDetail(item);
@@ -220,8 +263,15 @@ export function IntegrationLogConsole() {
           <FileJson2 aria-hidden="true" size={14} />
           <span>
             列表保持轻量；点击“详情”后再单独读取完整请求与处理结果，便于定位字段、状态码和回传异常。
+            可安全恢复且当前仍失败的回调、投递或任务请求，会显示“手动重试”。
           </span>
         </div>
+        {retryMessage ? (
+          <output className="integration-retry-notice">
+            <Check aria-hidden="true" size={14} />
+            {retryMessage}
+          </output>
+        ) : null}
         <div className="ops-toolbar integration-toolbar">
           <label className="search-box ops-search">
             <Search aria-hidden="true" size={15} />
@@ -350,6 +400,20 @@ export function IntegrationLogConsole() {
                     ) : null}
                   </td>
                   <td>
+                    {item.manualRetry ? (
+                      <button
+                        type="button"
+                        className="table-action integration-retry-action"
+                        onClick={() => {
+                          setRetryItem(item);
+                          setRetryReason('人工确认失败原因后重新触发');
+                          setRetryError('');
+                        }}
+                      >
+                        <RotateCcw aria-hidden="true" size={12} />
+                        手动重试
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="table-action"
@@ -415,6 +479,56 @@ export function IntegrationLogConsole() {
           </span>
         </footer>
       </Panel>
+
+      <Dialog
+        open={Boolean(retryItem)}
+        onOpenChange={(open) => {
+          if (!open && !retrying) setRetryItem(null);
+        }}
+      >
+        <DialogContent className="ops-dialog integration-retry-dialog">
+          <DialogHeader>
+            <DialogTitle>确认手动重试</DialogTitle>
+            <DialogDescription>
+              {retryItem?.manualRetry?.kind === 'TASK'
+                ? '将按任务恢复规则重新排队；不会直接重放单次百应请求。'
+                : '将恢复原事件并交给 Worker 投递；接收端应按事件 ID 做幂等处理。'}
+            </DialogDescription>
+          </DialogHeader>
+          <label className="integration-retry-reason">
+            操作原因
+            <textarea
+              value={retryReason}
+              maxLength={500}
+              onChange={(event) => setRetryReason(event.target.value)}
+              disabled={retrying}
+            />
+          </label>
+          {retryError ? (
+            <div className="ops-error-banner" role="alert">
+              {retryError}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <button
+              type="button"
+              className="filter-button"
+              disabled={retrying}
+              onClick={() => setRetryItem(null)}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              disabled={retrying || retryReason.trim().length < 2}
+              onClick={() => void submitRetry()}
+            >
+              {retrying ? '提交中…' : '确认重试'}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={Boolean(detail)}

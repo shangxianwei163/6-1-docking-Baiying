@@ -79,6 +79,58 @@ function reconciliation(status: 'MANUAL_REVIEW' | 'PENDING' = 'MANUAL_REVIEW') {
 }
 
 describe('operator recovery APIs', () => {
+  it('requires an actor and a reason before retrying a failed callback', async () => {
+    const retryFailedEvent = vi.fn<
+      RecoveryOperationsService['retryFailedEvent']
+    >(async () => ({
+      message: '失败事件已恢复为待处理',
+      idempotentReplay: false,
+    }));
+    const app = createApp({
+      mappingRepository: mappingRepository(),
+      consoleOrigin: 'http://localhost:4173',
+      workerSharedSecret: 'a-worker-secret-longer-than-24-characters',
+      createId: () => fixedId,
+      recoveryOperationsService: {
+        listDeadLetters: vi.fn(),
+        replayDeadLetter: vi.fn(),
+        retryFailedEvent,
+        ignoreDeadLetter: vi.fn(),
+      },
+    });
+    const path = `/api/v1/failed-events/CALLBACK/${fixedId}/retry`;
+    const body = JSON.stringify({
+      reason: '接收依赖已恢复',
+      idempotencyKey: secondId,
+    });
+    expect(
+      (
+        await app.request(path, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body,
+        })
+      ).status,
+    ).toBe(401);
+    const response = await app.request(path, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-actor-id': 'operator-1',
+        'x-request-id': 'request-failed-callback-1',
+      },
+      body,
+    });
+    expect(response.status).toBe(202);
+    expect(retryFailedEvent).toHaveBeenCalledWith(
+      'CALLBACK',
+      fixedId,
+      { reason: '接收依赖已恢复', idempotencyKey: secondId },
+      'operator-1',
+      'request-failed-callback-1',
+    );
+  });
+
   it('lists reconciliation mismatches and submits an audited manual repair', async () => {
     const listReconciliations = vi.fn<
       ReconciliationOperations['listReconciliations']
@@ -232,6 +284,7 @@ describe('operator recovery APIs', () => {
       recoveryOperationsService: {
         listDeadLetters,
         replayDeadLetter,
+        retryFailedEvent: vi.fn(),
         ignoreDeadLetter: vi.fn(),
       },
     });
@@ -333,6 +386,7 @@ describe('operator recovery APIs', () => {
       recoveryOperationsService: {
         listDeadLetters: vi.fn(),
         replayDeadLetter: vi.fn(),
+        retryFailedEvent: vi.fn(),
         ignoreDeadLetter,
       },
     });
